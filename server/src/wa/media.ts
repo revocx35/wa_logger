@@ -199,6 +199,7 @@ export async function downloadMessageMedia(ctx: AppContext, page: Page, messageI
 /* ------------------------------------------------------------------ queue */
 
 const MAX_ATTEMPTS = 4;
+const MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024;
 const BACKOFF_MS = [5_000, 30_000, 120_000, 600_000];
 
 export class MediaQueue {
@@ -208,6 +209,7 @@ export class MediaQueue {
   private running = 0;
   private paused = true;
   private readonly timers = new Set<NodeJS.Timeout>();
+  private lowDiskWarned = false;
 
   constructor(
     private readonly ctx: AppContext,
@@ -280,6 +282,21 @@ export class MediaQueue {
     if (!page) {
       // Not connected: keep it pending; restorePending() picks it up on the next "ready".
       return;
+    }
+    // Keep headroom on the data filesystem (it may be a dedicated, size-capped volume): never let media
+    // downloads fill it up — the database must always be able to write. Checked again on every retry.
+    try {
+      const st = await fs.statfs(this.ctx.config.mediaDir);
+      const free = Number(st.bavail) * Number(st.bsize);
+      if (free < MIN_FREE_BYTES + (row.media_size ?? 0)) {
+        if (!this.lowDiskWarned) log.warn({ freeMb: Math.round(free / 1048576) }, 'low disk space: media downloads paused');
+        this.lowDiskWarned = true;
+        this.retryLater(id, BACKOFF_MS.length);
+        return;
+      }
+      this.lowDiskWarned = false;
+    } catch {
+      /* statfs unsupported: carry on */
     }
     const attempts = row.media_attempts + 1;
     const finish = (patch: Parameters<typeof repo.updateMessage>[1]) => {
