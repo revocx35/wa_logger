@@ -176,6 +176,30 @@ h3 {
   color: var(--muted);
 }
 
+/* ------------------------------------------------------------ boot fallback (static HTML in index.html) */
+
+.boot {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
+}
+.boot-help {
+  max-width: 460px;
+  opacity: 0;
+  animation: boot-help-show 0.3s ease-in 10s forwards; /* CSS only: no inline script under the CSP */
+}
+@keyframes boot-help-show {
+  to {
+    opacity: 1;
+  }
+}
+
 /* ------------------------------------------------------------ buttons */
 
 .btn {

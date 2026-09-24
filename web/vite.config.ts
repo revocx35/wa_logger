@@ -2,7 +2,16 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      // The bundle is always same-origin. Vite's `crossorigin` attribute makes browsers fetch it in CORS
+      // mode, which some (e.g. Safari) refuse on a self-signed certificate even after the user accepted
+      // the warning — leaving a blank page. Plain same-origin script/style tags avoid that.
+      name: 'wa-logger-strip-crossorigin',
+      transformIndexHtml: (html) => html.replace(/ crossorigin(="[^"]*")?/g, ''),
+    },
+  ],
   build: {
     target: 'es2022',
     outDir: 'dist',
