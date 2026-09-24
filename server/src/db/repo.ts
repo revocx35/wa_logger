@@ -524,6 +524,18 @@ export class Repo implements DataKeyStore {
     return out;
   }
 
+  /** Resolves a quoted message (WhatsApp only gives the stanza id) to our message id within a chat. */
+  findByStanza(chatId: string, stanzaId: string): string | null {
+    if (!/^[A-Za-z0-9]{1,128}$/.test(stanzaId)) return null;
+    const r = this.db
+      .prepare(
+        `SELECT id FROM messages WHERE chat_id = @chat
+           AND (instr(id, '_' || @s || '_') > 0 OR substr(id, -(length(@s) + 1)) = '_' || @s) LIMIT 1`,
+      )
+      .get({ chat: chatId, s: stanzaId }) as { id: string } | undefined;
+    return r?.id ?? null;
+  }
+
   /** Inserts if absent. Returns true when a row was inserted. */
   insertMessage(m: NewMessage): boolean {
     const cols = Object.keys(m);

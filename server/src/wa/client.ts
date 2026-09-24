@@ -251,6 +251,10 @@ export class WaService implements WaController {
     return true;
   }
 
+  onDataWiped(): void {
+    this.ingest.resetCaches();
+  }
+
   async stop(): Promise<void> {
     this.stopped = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);

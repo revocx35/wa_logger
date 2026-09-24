@@ -16,6 +16,8 @@ export interface WaController {
   logout(): Promise<void>;
   /** Re-queues a media download. Returns false if the message has no retryable media. */
   retryMedia(messageId: string): boolean;
+  /** Called after all logged data was wiped (drop in-memory caches). */
+  onDataWiped(): void;
   stop(): Promise<void>;
 }
 
@@ -61,5 +63,6 @@ export class NullWa implements WaController {
   retryMedia(): boolean {
     return false;
   }
+  onDataWiped(): void {}
   async stop(): Promise<void> {}
 }

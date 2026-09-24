@@ -115,7 +115,8 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
 
   /* ------------------------------------------------ security headers */
   app.addHook('onSend', async (req, reply, payload) => {
-    reply.header('Content-Security-Policy', CSP);
+    // Routes may set a stricter CSP (e.g. media responses use a sandbox policy).
+    if (!reply.hasHeader('content-security-policy')) reply.header('Content-Security-Policy', CSP);
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('X-Frame-Options', 'DENY');
     reply.header('Referrer-Policy', 'no-referrer');

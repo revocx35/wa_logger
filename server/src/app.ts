@@ -1,4 +1,8 @@
 import type { FastifyInstance } from 'fastify';
+import { registerAdminRoutes } from './api/admin.js';
+import { registerChatRoutes } from './api/chats.js';
+import { registerEventRoutes } from './api/events.js';
+import { registerMediaRoutes } from './api/media.js';
 import { registerStateRoutes } from './api/state.js';
 import { registerAuthRoutes } from './auth/routes.js';
 import type { Config } from './config.js';
@@ -9,6 +13,7 @@ import { EventBus } from './events.js';
 import { buildServer } from './http/server.js';
 import type { Logger } from './log.js';
 import { SettingsStore } from './settings.js';
+import { registerVncRoutes } from './vnc/bridge.js';
 
 export interface BuiltApp {
   ctx: AppContext;
@@ -28,6 +33,11 @@ export async function createApp(
   const app = await buildServer(ctx);
   registerStateRoutes(app, ctx);
   registerAuthRoutes(app, ctx);
+  registerChatRoutes(app, ctx);
+  registerMediaRoutes(app, ctx);
+  registerEventRoutes(app, ctx);
+  registerAdminRoutes(app, ctx);
+  registerVncRoutes(app, ctx);
   opts.routes?.(app, ctx);
   app.addHook('onClose', async () => {
     await ctx.wa.stop();
