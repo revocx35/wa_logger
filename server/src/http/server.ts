@@ -186,7 +186,7 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
   });
 
   /* ---------------------------------------------------- health check */
-  app.get('/healthz', { config: { public: true, rateLimit: false } }, async () => ({ ok: true }));
+  app.get('/healthz', { logLevel: 'silent', config: { public: true, rateLimit: false } }, async () => ({ ok: true }));
 
   /* ------------------------------------------------ static web UI */
   const webDir = config.webDir;

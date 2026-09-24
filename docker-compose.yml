@@ -1,0 +1,117 @@
+# wa_logger — docker compose stack.
+#   caddy    : TLS termination, the only service with published ports
+#   app      : Node server + web UI (no internet access: internal networks only)
+#   chromium : WhatsApp Web in a sandboxed, policy-locked Chromium (only this talks to WhatsApp)
+#
+# First run:  scripts/setup.sh   (creates .env)   then   docker compose up -d --build
+
+name: ${COMPOSE_PROJECT_NAME:-wa_logger}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+  logging: *logging
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    <<: *hardening
+    cap_add: [NET_BIND_SERVICE]
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?run scripts/setup.sh first}
+      CADDY_TLS: ${CADDY_TLS:-internal}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    networks: [public, edge]
+    depends_on:
+      app:
+        condition: service_healthy
+    mem_limit: 256m
+    pids_limit: 128
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: wa_logger-app:local
+    restart: unless-stopped
+    <<: *hardening
+    env_file:
+      - ${WAL_ENV_FILE:-.env}
+    environment:
+      DATA_DIR: /data
+      PORT: "8080"
+      HOST: 0.0.0.0
+      CHROMIUM_HOST: chromium
+      TRUST_PROXY: "true"
+    volumes:
+      - app_data:/data
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    networks: [edge, backend]
+    depends_on:
+      chromium:
+        condition: service_healthy
+    mem_limit: 1g
+    pids_limit: 256
+
+  chromium:
+    build:
+      context: ./chromium
+    image: wa_logger-chromium:local
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      # Docker's default profile + the syscalls Chromium's namespace sandbox needs (sandbox stays ON).
+      - seccomp=./chromium/seccomp-chromium.json
+    logging: *logging
+    environment:
+      VNC_PASSWORD: ${VNC_PASSWORD:?run scripts/setup.sh first}
+      SCREEN: ${SCREEN:-1280x800x24}
+      BACKEND_PEER: app
+    volumes:
+      - chromium_profile:/data
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=512m
+      - /home/chrome:rw,nosuid,nodev,size=256m,uid=10002,gid=10002,mode=0700
+    shm_size: 1gb
+    networks: [backend, egress]
+    mem_limit: 2500m
+    pids_limit: 1024
+    stop_grace_period: 20s
+
+networks:
+  # Published ports live here (caddy only).
+  public: {}
+  # caddy <-> app. internal: no route to the internet.
+  edge:
+    internal: true
+  # app <-> chromium (CDP + VNC). internal: no route to the internet.
+  backend:
+    internal: true
+  # chromium -> WhatsApp.
+  egress: {}
+
+volumes:
+  app_data: {}
+  chromium_profile: {}
+  caddy_data: {}
+  caddy_config: {}

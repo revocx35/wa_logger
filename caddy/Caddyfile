@@ -1,0 +1,39 @@
+{
+	admin off
+	# Never try to install Caddy's local CA into the (container's) system trust store.
+	skip_install_trust
+	# No telemetry/phone-home; keep logs minimal (no request URIs with message ids).
+	log {
+		output stdout
+		level WARN
+	}
+}
+
+{$SITE_ADDRESS} {
+	# "internal" = Caddy's own CA (LAN / IP address), or an e-mail address for Let's Encrypt.
+	tls {$CADDY_TLS}
+
+	request_body {
+		max_size 1MB
+	}
+
+	header {
+		-Server
+		-Via
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	}
+
+	# Compress static assets only. API responses (which include session-bound tokens) are never
+	# compressed, which rules out compression side channels.
+	@static not path /api/*
+	encode @static zstd gzip
+
+	reverse_proxy app:8080 {
+		# Stream SSE / WebSocket traffic immediately.
+		flush_interval -1
+		transport http {
+			read_timeout 0
+			write_timeout 0
+		}
+	}
+}

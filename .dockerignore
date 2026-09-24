@@ -1,0 +1,14 @@
+**/node_modules
+**/dist
+**/coverage
+.git
+.github
+.env
+.env.*
+data
+docs
+*.md
+!web/**/*.md
+chromium
+caddy
+scripts
