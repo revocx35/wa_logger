@@ -245,6 +245,31 @@ docker compose up -d --build        # uses the repository's docker-compose.yml, 
 
 Update with `git pull && docker compose up -d --build`.
 
+### Optional: cap storage with a dedicated disk
+
+Logged media can grow large. To give wa_logger a hard size limit, put its volumes on their own
+filesystem (a separate disk, partition or LVM volume) and bind them with a `docker-compose.override.yml`
+next to `docker-compose.yml`. Compose merges it automatically:
+
+```bash
+# example with LVM: 50% of the volume group's free space
+lvcreate -n wa_logger -l 50%FREE ubuntu-vg && mkfs.ext4 -L wa_logger /dev/ubuntu-vg/wa_logger
+mkdir -p /srv/wa_logger && echo "LABEL=wa_logger /srv/wa_logger ext4 defaults,noatime,nodev,nosuid 0 2" >> /etc/fstab && mount /srv/wa_logger
+install -d -m 700 /srv/wa_logger/{app_data,chromium_profile,caddy_data,caddy_config}
+chown 10001:10001 /srv/wa_logger/app_data && chown 10002:10002 /srv/wa_logger/chromium_profile
+```
+
+```yaml
+# docker-compose.override.yml
+volumes:
+  app_data:         { driver: local, driver_opts: { type: none, o: bind, device: /srv/wa_logger/app_data } }
+  chromium_profile: { driver: local, driver_opts: { type: none, o: bind, device: /srv/wa_logger/chromium_profile } }
+  caddy_data:       { driver: local, driver_opts: { type: none, o: bind, device: /srv/wa_logger/caddy_data } }
+  caddy_config:     { driver: local, driver_opts: { type: none, o: bind, device: /srv/wa_logger/caddy_config } }
+```
+
+The app pauses media downloads when that filesystem has less than 2 GB free, so the database always has room.
+
 ### `setup.sh` options
 
 | Situation | Command |
