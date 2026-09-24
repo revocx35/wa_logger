@@ -50,6 +50,8 @@ export interface AppState {
   /** Present when authenticated: send as `X-CSRF-Token` on every non-GET request. */
   csrfToken?: string;
   username?: string;
+  /** Whether TOTP two-factor authentication is enabled (authenticated only). */
+  totpEnabled?: boolean;
   wa?: WaStatus;
 }
 

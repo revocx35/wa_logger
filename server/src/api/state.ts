@@ -17,6 +17,7 @@ export function registerStateRoutes(app: FastifyInstance, ctx: AppContext): void
     if (req.session && owner) {
       state.csrfToken = csrfTokenFor(req.session.secret);
       state.username = owner.username;
+      state.totpEnabled = !!owner.totp_enabled;
       state.wa = ctx.wa.status();
     }
     return state;
