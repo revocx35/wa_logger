@@ -41,7 +41,16 @@ export class Sync {
     return this.running;
   }
 
+  /**
+   * First import after linking. WhatsApp keeps syncing older history from the phone for several minutes
+   * after "ready", so WaService repeats `historyPass()` a few times during the first hours (idempotent).
+   */
   async initial(): Promise<void> {
+    await this.historyPass();
+    if (!this.ctx.repo.getState(INITIAL_SYNC_KEY)) this.ctx.repo.setState(INITIAL_SYNC_KEY, String(Date.now()));
+  }
+
+  async historyPass(): Promise<void> {
     if (this.running) return;
     this.running = true;
     try {
@@ -66,7 +75,6 @@ export class Sync {
         done++;
         this.onProgress({ phase: 'history', chatsDone: done, chatsTotal: chats.length });
       }
-      this.ctx.repo.setState(INITIAL_SYNC_KEY, String(Date.now()));
     } finally {
       this.running = false;
       this.onProgress(null);

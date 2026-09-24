@@ -33,6 +33,9 @@ function rawOf(m: unknown): RawMsg {
 }
 
 const AVATAR_INTERVAL_MS = 30 * 60_000;
+const HISTORY_PASSES_KEY = 'history_passes';
+const HISTORY_CATCHUP_PASSES = 4; // initial import + 3 catch-up passes
+const HISTORY_CATCHUP_WINDOW_MS = 3 * 3600_000;
 const WATCHDOG_INTERVAL_MS = 60_000;
 const WATCHDOG_TIMEOUT_MS = 20_000;
 const MAX_BACKOFF_MS = 60_000;
@@ -365,7 +368,7 @@ export class WaService implements WaController {
     this.media.restorePending();
 
     this.reconcileTimer = setInterval(() => {
-      if (gen === this.generation && this.state === 'ready') void this.sync.reconcile().catch(() => undefined);
+      if (gen === this.generation && this.state === 'ready') void this.periodicSync().catch(() => undefined);
     }, this.ctx.config.reconcileMs);
     this.reconcileTimer.unref();
     this.avatarTimer = setInterval(() => void this.avatars(gen), AVATAR_INTERVAL_MS);
@@ -373,13 +376,28 @@ export class WaService implements WaController {
 
     try {
       if (firstSync) await this.sync.initial();
-      else await this.sync.reconcile();
+      else await this.periodicSync();
     } catch (err) {
       this.ctx.log.warn({ err: (err as Error).message }, 'sync failed');
     }
     if (gen !== this.generation) return;
     if (this.state === 'syncing' || this.state === 'ready') this.setState('ready');
     void this.avatars(gen);
+  }
+
+  /**
+   * Reconcile, except during the first hours after linking: WhatsApp is still syncing older history from
+   * the phone then, so a few extra full history passes pick up what the first import could not see yet.
+   */
+  private async periodicSync(): Promise<void> {
+    const first = Number(this.ctx.repo.getState(INITIAL_SYNC_KEY) ?? 0);
+    const passes = Number(this.ctx.repo.getState(HISTORY_PASSES_KEY) ?? 1);
+    if (first && Date.now() - first < HISTORY_CATCHUP_WINDOW_MS && passes < HISTORY_CATCHUP_PASSES) {
+      this.ctx.repo.setState(HISTORY_PASSES_KEY, String(passes + 1));
+      await this.sync.historyPass();
+      return;
+    }
+    await this.sync.reconcile();
   }
 
   private async avatars(gen: number): Promise<void> {

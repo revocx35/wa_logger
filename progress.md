@@ -120,5 +120,18 @@ Update this file whenever a step is completed.
 - [x] Tests: auto cookie mode over HTTP and via simulated TLS proxy; manual stack test (real client IP recorded)
 - [x] Web: no `crossorigin` on the same-origin bundle + visible loading fallback (blank page on Android w/ self-signed cert)
 
+## Phase 12 — Production follow-ups & documentation
+- [x] Catch-up history passes (first 3 h after linking) — a fresh link imported only ~8% of history on the first pass
+- [x] `scripts/wa-diagnose.js` (read-only health check of a running instance vs. WhatsApp Web changes)
+- [x] `scripts/dev/` (UI walkthrough, live-update test) + README; `docs/DEVLOG.md`; ARCHITECTURE §11; CLAUDE.md
+- [x] Old LXC deployment and its data deleted (production runs on the owner's VM, HTTP mode behind their proxy)
+
+## Next ideas (not started)
+- Retry expired history media via WhatsApp's phone re-upload ("media retry") instead of marking it unavailable
+- Poll vote tallies (`vote_update` events) and group participant lists
+- Export (encrypted archive) / import for moving instances without copying Docker volumes
+- arm64 images (CI currently builds linux/amd64 only)
+
 ## Manual steps for the owner (cannot be automated here)
-- [ ] Scan the WhatsApp QR code with the phone and verify live logging of a real conversation (send, edit, delete)
+- [x] Scan the WhatsApp QR code with the phone (done on the VM; live messages are being logged)
+- [ ] Send / edit / delete-for-everyone a test message and confirm it stays visible (Deleted page)

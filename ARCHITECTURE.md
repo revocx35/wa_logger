@@ -104,21 +104,23 @@ server/src/
   crypto/
     primitives.ts     AES-256-GCM, HKDF-SHA256, X25519 ECDH, scrypt, random, constant-time compare
     password.ts       scrypt-derived auth hash + KEK (§6)
-    keyring.ts        owner keypair, DEK (data-encryption key) lifecycle, unwrap cache
-    field.ts          encrypt/decrypt DB fields with AAD binding
+    keyring.ts        owner keypair, DEK lifecycle, ECIES seal, field encryption with AAD binding, DataReader/Writer
     stream.ts         chunked AEAD file format for media, range-decrypt
-  auth/               signup, login, logout, recovery, sessions, TOTP, CSRF, rate limits, audit
+  auth/               routes (signup, login, logout, recovery, TOTP, password), sessions (cookie, CSRF token),
+                      throttle.ts (race-free per-IP + global brute-force throttle), totp.ts
   http/               server factory, security headers/CSP, static web UI, error handler
   api/                chats, messages, media (Range), search, deleted feed, SSE events, settings, audit, data wipe
   vnc/                authenticated WebSocket ↔ TCP bridge to chromium:5900
   wa/
+    pageapi.ts        direct reads from WhatsApp Web's models: chats, contacts (LID → phone), history, avatars
     browser.ts        resolve host → IP, connect puppeteer to CDP, tab hygiene (close stale WA tabs)
     client.ts         whatsapp-web.js Client lifecycle, state machine, reconnect with backoff
     ingest.ts         event handlers → mapper → repositories (idempotent upserts)
-    mapper.ts         whatsapp-web.js Message/Chat/Contact → DB records (pure, unit-tested)
-    media.ts          priority download queue (live > history), size cap, retries, encryption to disk
+    mapper.ts         serialized WA message → DB record (pure, unit-tested); msgKey() rebuilds message keys
+    media.ts          priority download queue (live > history), size cap, timeouts, retries, disk guard, encryption
     sync.ts           initial history import + periodic reconcile (catches missed/revoked msgs)
     avatars.ts        best-effort profile pictures (fetched inside the browser page, never by the app)
+  testutil/           harness (in-process app + cookie-jar client), seed.ts (dev sample data) — not in the build
 shared/api.d.ts       API DTO types shared by server and web (type-only)
 ```
 
@@ -131,6 +133,17 @@ shared/api.d.ts       API DTO types shared by server and web (type-only)
   close stray `about:blank` tabs and `bringToFront()` the WA tab, so VNC shows it and there is only one WA tab.
 * A crashed or closed WhatsApp tab (`page` `error`/`close`), a lost CDP connection, or a page that stops answering
   a 60 s watchdog probe twice triggers a reconnect with backoff. Reconcile then catches up on missed messages.
+* **Do not use whatsapp-web.js chat helpers** (`getChats`, `getChatById`, `getProfilePicUrl`, `Chat.fetchMessages`):
+  on current WhatsApp Web builds they go through `WWebJS.getChatModel`, which throws for ~90% of chats (and
+  `getChats` fails as a whole). `wa/pageapi.ts` reads the same data directly from WhatsApp Web's models with
+  per-chat error isolation. Events and `WWebJS.getMessageModel` (message serialization) are still used.
+* **Message keys:** WhatsApp Web's MsgKey no longer serializes `_serialized`. `mapper.ts#msgKey()` rebuilds
+  `<fromMe>_<remote>_<id>[_<participant>][_<self>]` (own messages end in `_out`), identical to
+  `MsgKey.toString()`. Messages without a buildable key are skipped. Everything (media lookups via `Msg.get`,
+  quotes, reactions, revokes) depends on this key being right.
+* **LID ids:** one-to-one chats and group participants use `…@lid` ids (no phone number). The phone number
+  comes from `contact.phoneNumber` or `WAWebLidMigrationUtils.toPn()` and is stored encrypted (`contacts.phone_enc`)
+  as the last name fallback (saved name → `~pushname` → phone).
 * Start the WA client only once an owner exists, because the owner's public key is required to encrypt anything.
 * Events used: `qr`, `loading_screen`, `authenticated`, `auth_failure`, `ready`, `change_state`,
   `disconnected`, `message_create` (fires for incoming **and** outgoing messages, so it is the single source for new
@@ -138,9 +151,14 @@ shared/api.d.ts       API DTO types shared by server and web (type-only)
   `message_reaction`, `message_ack`, `chat_removed`, `chat_archived`, `group_join`, `group_leave`,
   `group_update`, `contact_changed`. All handlers are idempotent upserts keyed by the serialized message ID.
 * **Media is downloaded immediately** on `message_create`, because after a revoke it can no longer be
-  fetched. The queue runs at concurrency 2 with 3 retries and exponential backoff. Media larger than
-  `MEDIA_MAX_MB` is marked `too_large`, not downloaded. Failed or too-large media can be retried from the UI
-  while it is still available.
+  fetched. The queue runs at concurrency 2 (live before history), up to 4 attempts with backoff
+  5 s/30 s/2 min/10 min. The download happens inside the page (same internals as whatsapp-web.js) and is pulled
+  over CDP in 2 MiB slices that are encrypted straight to disk. Every WhatsApp call is raced against a timer
+  (20 s poke, 120 s download, 180 s overall), because `downloadMedia()` can hang forever.
+  Media larger than `MEDIA_MAX_MB` is `too_large`. History media whose CDN copy expired (stage `NEED_POKE`
+  after a download attempt, observed for media older than about 2–4 weeks) becomes `unavailable` after 2 tries.
+  Downloads pause while the data filesystem has less than 2 GB free. Failed, too-large, skipped or unavailable
+  media can be retried from the UI.
 * **View-once** (`isViewOnce` or a view-once wrapper type) → stored with `media_status='view_once'`. No download,
   no thumbnail. The UI shows a "View-once media is not logged" placeholder.
 * Revoke: `message_revoke_everyone(after, before)` → mark the original row `deleted_at=now`, `deleted_by`.
@@ -148,8 +166,9 @@ shared/api.d.ts       API DTO types shared by server and web (type-only)
   If both are missing, insert a stub row flagged deleted with `body=null`.
 * Edit: `message_edit(msg, newBody, prevBody)` → push `prevBody` into `message_edits` (dedupe), set
   `body=newBody` and `edited_at`.
-* History: after the first `ready`, fetch each chat's last `HISTORY_PER_CHAT` messages (default 200) and upsert
-  them with `source='history'`. History media is queued at low priority, depending on the setting.
+* History: after the first `ready` (until `app_state.initial_sync_done` is set), fetch each chat's last
+  `HISTORY_PER_CHAT` messages (default 200, via `pageapi.fetchMessages`) and upsert them with `source='history'`.
+  History media is queued at low priority, depending on the setting. Deleting `initial_sync_done` re-imports.
 * Reconcile every `RECONCILE_MINUTES` (default 10) and on every `ready`: re-fetch recent messages of chats
   whose `timestamp` moved, upsert them, and mark as deleted any message whose type has become `revoked`.
   This catches events missed while the app was down.
@@ -274,20 +293,23 @@ app_state(key TEXT PRIMARY KEY, value TEXT)                                     
 data_keys(id INTEGER PRIMARY KEY, eph_pub BLOB, nonce BLOB, wrapped BLOB, created_at INTEGER)
 chats(id TEXT PRIMARY KEY, kind TEXT, name_enc BLOB, last_ts INTEGER, last_message_id TEXT, archived INTEGER,
       pinned INTEGER, muted INTEGER, removed_at INTEGER, avatar_media_id INTEGER, created_at, updated_at)
-contacts(id TEXT PRIMARY KEY, name_enc BLOB, pushname_enc BLOB, is_me INTEGER, is_business INTEGER,
-         avatar_media_id INTEGER, updated_at)
+contacts(id TEXT PRIMARY KEY, name_enc BLOB, pushname_enc BLOB, phone_enc BLOB /* migration 2 */,
+         is_me INTEGER, is_business INTEGER, avatar_media_id INTEGER, avatar_checked_at INTEGER, updated_at)
 messages(id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, sender_id TEXT, from_me INTEGER, ts INTEGER, type TEXT,
          body_enc BLOB, meta_enc BLOB, thumb_enc BLOB, quoted_id TEXT,
-         media_id INTEGER, media_status TEXT, media_size INTEGER, media_w INTEGER, media_h INTEGER, media_duration INTEGER,
+         media_id INTEGER, media_status TEXT, media_attempts INTEGER, media_size INTEGER, media_w INTEGER,
+         media_h INTEGER, media_duration INTEGER,
          is_view_once INTEGER, is_forwarded INTEGER, is_status INTEGER, ack INTEGER,
-         deleted_at INTEGER, deleted_by TEXT, deleted_for_me_at INTEGER, edited_at INTEGER,
+         deleted_at INTEGER, deleted_by TEXT, deleted_for_me_at INTEGER, edited_at INTEGER, last_edit_key TEXT,
          source TEXT, captured_at INTEGER, updated_at INTEGER)
   INDEX messages(chat_id, ts), INDEX messages(deleted_at) WHERE deleted_at IS NOT NULL
 message_edits(id INTEGER PRIMARY KEY, message_id TEXT, body_enc BLOB, captured_at INTEGER)
 reactions(message_id TEXT, sender_id TEXT, emoji_enc BLOB, ts INTEGER, removed_at INTEGER, PRIMARY KEY(message_id, sender_id))
 media(id INTEGER PRIMARY KEY, path TEXT, key_id INTEGER, mime_enc BLOB, filename_enc BLOB, size INTEGER, created_at INTEGER)
 ```
-Migrations are numbered SQL files applied in a transaction and tracked in `schema_migrations`.
+Migrations live in `server/src/db/db.ts` (`MIGRATIONS`, append-only), are applied in a transaction at startup
+and tracked in `schema_migrations`. Message ids are the rebuilt WA keys. Message bodies and their edit history share the
+AAD context `msgbody|<messageId>`, so an edit can move the old ciphertext into `message_edits` without decrypting.
 
 ## 8. HTTP API (JSON; DTO types in `shared/api.d.ts`)
 
@@ -323,10 +345,12 @@ Migrations are numbered SQL files applied in a transaction and tracked in `schem
 ## 9. Configuration (`.env`, generated by `scripts/setup.sh`)
 
 `SITE_ADDRESS` (e.g. `wa.example.com` or `192.168.1.50`), `CADDY_TLS` (`internal` or an ACME email),
-`PUBLIC_ORIGIN` (e.g. `https://wa.example.com`), `SETUP_TOKEN`, `VNC_PASSWORD`, `COOKIE_SECURE` (default true),
+`PUBLIC_ORIGIN` (e.g. `https://wa.example.com`; optional in HTTP mode), `SETUP_TOKEN`, `VNC_PASSWORD`,
+`COOKIE_SECURE` (`true` default | `auto` | `false`), `CADDY_CONFIG` (`Caddyfile` | `Caddyfile.http`),
+`HTTP_PORT`/`HTTPS_PORT`, `HTTP_BIND`/`HTTPS_BIND` (bind address of the published ports), `WAL_VERSION` (image tag),
 `SESSION_IDLE_HOURS`, `SESSION_MAX_DAYS`, `MEDIA_MAX_MB` (default 100), `HISTORY_PER_CHAT` (200),
 `RECONCILE_MINUTES` (10), `CHROMIUM_HOST` (`chromium`), `CDP_PORT` (9223), `VNC_PORT` (5900),
-`SCREEN` (`1280x800x24`), `LOG_LEVEL` (info), `TRUST_PROXY` (true behind caddy).
+`SCREEN` (`1280x800x24`), `LOG_LEVEL` (info), `TRUST_PROXY` (proxy hops: 1 = bundled Caddy, 2 = + external proxy).
 
 ## 10. Testing
 
@@ -335,5 +359,29 @@ Migrations are numbered SQL files applied in a transaction and tracked in `schem
   asserting that every `/api` route except the public allowlist rejects anonymous requests, mapper fixtures for
   every message type, and revoke/edit/reaction ingest.
 * `web`: vitest for the formatting parser (including injection attempts), `tsc --noEmit`, and a production build.
-* `scripts/smoke.sh`: `docker compose up`, then signup through the API, wait for WA state `qr`, check that the VNC
-  bridge answers `RFB 003.00x`, check security headers, then tear down.
+* `server/src/wa/client.test.ts` drives the real WaService event wiring with a fake whatsapp-web.js client
+  (ordering, revoke, edit, reactions, states). `auth.test.ts` also covers encoded-path bypasses, parallel
+  lockout races, TOTP replay races, WAL scrubbing and `COOKIE_SECURE=auto`.
+* `scripts/smoke.sh` (23 checks: TLS incl. no-SNI, headers, cookies, CSRF/Origin, signup, WA reaches `qr`, VNC
+  `RFB 003.00x`, no app egress, Chromium sandbox) and `scripts/smoke.sh --deploy` (the standalone layout).
+* `scripts/dev/` has a full-UI browser walkthrough (61 steps) and a live-update (SSE) test. `scripts/wa-diagnose.js`
+  checks a *running* instance against WhatsApp Web changes (see §11).
+
+## 11. Deployment & operations
+
+* **Images:** CI (`.github/workflows/ci.yml`) runs tests, then builds and publishes
+  `ghcr.io/revocx35/wa_logger-{app,chromium,caddy}` (tags `latest`, `x.y.z`, `sha-…`) on pushes to `main` and `v*` tags.
+  The packages are public. All GitHub Actions are pinned by commit SHA.
+* **Topologies:** (a) from source: `docker-compose.yml` builds the images; (b) prebuilt: `deploy/docker-compose.yml`
+  plus `seccomp-chromium.json` and `.env`; (c) either one in HTTP mode behind the user's TLS proxy
+  (`setup.sh --http-only`); (d) an optional `docker-compose.override.yml` binds the four volumes to a dedicated,
+  size-capped filesystem (README "cap storage").
+* **Update:** `docker compose pull && docker compose up -d` (prebuilt) or `git pull && docker compose up -d --build`.
+  The WhatsApp session survives restarts (it lives in the Chromium profile). Restarting only `app` does not touch
+  Chromium: `docker compose up -d --no-deps app`.
+* **Backups:** `app_data` (encrypted; useless without the password or recovery key) and `chromium_profile` (the live
+  WhatsApp session: treat it as a credential).
+* **When WhatsApp Web changes break something** (history import fails, names missing, media not downloading):
+  run `docker compose exec -T app node - < scripts/wa-diagnose.js` on the host. It prints only aggregates (no
+  content): WhatsApp Web version, chat counts, whether whatsapp-web.js chat helpers still work, whether rebuilt
+  message keys still match `MsgKey.toString()`, media stages, and DB stats. Then check `docs/wwebjs-notes.md`.
