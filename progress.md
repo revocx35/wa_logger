@@ -122,6 +122,7 @@ Update this file whenever a step is completed.
 
 ## Phase 12 — Production follow-ups & documentation
 - [x] Catch-up history passes (first 3 h after linking) — a fresh link imported only ~8% of history on the first pass
+- [x] Fallback when whatsapp-web.js never emits `ready` (stalled binding exposure) + no tab closing before ready
 - [x] `scripts/wa-diagnose.js` (read-only health check of a running instance vs. WhatsApp Web changes)
 - [x] `scripts/dev/` (UI walkthrough, live-update test) + README; `docs/DEVLOG.md`; ARCHITECTURE §11; CLAUDE.md
 - [x] Old LXC deployment and its data deleted (production runs on the owner's VM, HTTP mode behind their proxy)

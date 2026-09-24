@@ -38,4 +38,6 @@ Read these first, every session:
 - Inside `page.evaluate()` run via `tsx`, named helper functions get wrapped with `__name` (undefined in the page).
 - Compose `configs.content` fails for `read_only` services, so the Caddyfiles are baked into the caddy image.
 - Opening the site by IP means no SNI, so Caddy needs `default_sni`. Some browsers block `crossorigin` scripts on self-signed certs.
+- whatsapp-web.js may never emit `ready` (a stalled binding exposure). WaService completes the setup itself after
+  60 s (`armReadyFallback`). Don't close tabs before ready.
 - A fresh WhatsApp link keeps syncing history for minutes, which is why the catch-up history passes exist (WaService).

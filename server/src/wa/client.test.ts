@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DataReader, PRIVKEY_AAD, unwrapPrivateKey } from '../crypto/keyring.js';
 import { derivePasswordKeys } from '../crypto/password.js';
 import { F } from '../db/repo.js';
@@ -131,5 +131,26 @@ describe('WaService event wiring', () => {
     expect(svc.retryMedia('fail1')).toBe(true);
     expect(h.ctx.repo.getMessage('fail1')!.media_status).toBe('pending');
     expect(svc.retryMedia('vo1')).toBe(false);
+  });
+
+  it('continues as ready when whatsapp-web.js never emits "ready" (fallback after 60 s)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      let attached = 0;
+      Object.assign(fake, {
+        pupPage: { isClosed: () => false, evaluate: async () => true, bringToFront: async () => undefined },
+        attachEventListeners: async () => {
+          attached++;
+        },
+      });
+      fake.emit('authenticated');
+      expect(svc.status().state).toBe('authenticating');
+      await vi.advanceTimersByTimeAsync(61_000);
+      expect(attached).toBe(1);
+      expect(['syncing', 'ready']).toContain(svc.status().state);
+      expect(h.ctx.repo.listAudit(20).some((a) => a.event === 'wa_ready_fallback')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

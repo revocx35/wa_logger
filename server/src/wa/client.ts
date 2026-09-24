@@ -37,6 +37,7 @@ const HISTORY_PASSES_KEY = 'history_passes';
 const HISTORY_CATCHUP_PASSES = 4; // initial import + 3 catch-up passes
 const HISTORY_CATCHUP_WINDOW_MS = 3 * 3600_000;
 const WATCHDOG_INTERVAL_MS = 60_000;
+const READY_FALLBACK_MS = 60_000;
 const WATCHDOG_TIMEOUT_MS = 20_000;
 const MAX_BACKOFF_MS = 60_000;
 
@@ -54,6 +55,8 @@ export class WaService implements WaController {
   private reconcileTimer: NodeJS.Timeout | null = null;
   private avatarTimer: NodeJS.Timeout | null = null;
   private watchdogTimer: NodeJS.Timeout | null = null;
+  private readyFallbackTimer: NodeJS.Timeout | null = null;
+  private readyGen = -1;
   private watchdogFailures = 0;
   private chain: Promise<unknown> = Promise.resolve();
   private generation = 0;
@@ -164,7 +167,9 @@ export class WaService implements WaController {
       // A crashed or closed WhatsApp tab would otherwise stop all events silently.
       client.pupPage?.on('error', () => this.onPageLost(gen, 'WhatsApp tab crashed'));
       client.pupPage?.on('close', () => this.onPageLost(gen, 'WhatsApp tab was closed'));
-      if (client.pupBrowser && client.pupPage) await focusWaTab(client.pupBrowser, client.pupPage);
+      // Only bring the tab forward here: closing other tabs while whatsapp-web.js is still exposing its
+      // page bindings has been seen to hang its setup (no "ready"). Stray tabs are closed in onReady.
+      await client.pupPage?.bringToFront().catch(() => undefined);
       this.startWatchdog(gen);
       this.attempt = 0;
     } catch (err) {
@@ -235,7 +240,8 @@ export class WaService implements WaController {
   private async teardown(): Promise<void> {
     this.generation++;
     this.media.pause();
-    for (const t of [this.reconcileTimer, this.avatarTimer, this.watchdogTimer]) if (t) clearInterval(t);
+    for (const t of [this.reconcileTimer, this.avatarTimer, this.watchdogTimer, this.readyFallbackTimer]) if (t) clearInterval(t);
+    this.readyFallbackTimer = null;
     this.reconcileTimer = null;
     this.avatarTimer = null;
     this.watchdogTimer = null;
@@ -310,7 +316,11 @@ export class WaService implements WaController {
     client.on('loading_screen', (percent: unknown) => {
       if (live() && this.state !== 'ready' && this.state !== 'syncing') this.setState('authenticating', `Loading chats ${String(percent)}%`);
     });
-    client.on('authenticated', () => live() && this.setState('authenticating', 'Linked, loading WhatsApp…'));
+    client.on('authenticated', () => {
+      if (!live()) return;
+      this.setState('authenticating', 'Linked, loading WhatsApp…');
+      this.armReadyFallback(client, gen);
+    });
     client.on('auth_failure', () => live() && this.setState('disconnected', 'Authentication failed — relink from the WA Web page'));
     client.on('ready', () => live() && void this.onReady(gen));
     client.on('disconnected', (reason: unknown) => {
@@ -347,11 +357,66 @@ export class WaService implements WaController {
     });
   }
 
+  /**
+   * whatsapp-web.js emits "ready" only after exposing ~17 page bindings and registering its store listeners.
+   * On WhatsApp Web 2.3000.10483x that step has been seen to stall (a page.exposeFunction never returned), so
+   * "ready" never came, and with it no message events, history import or media downloads. If the page is
+   * healthy 60 s after "authenticated", finish the library's setup ourselves (it skips bindings that already
+   * exist; duplicate listeners are harmless because ingest is idempotent) and continue as ready.
+   */
+  private armReadyFallback(client: ClientT, gen: number): void {
+    if (this.readyFallbackTimer) clearTimeout(this.readyFallbackTimer);
+    this.readyFallbackTimer = setTimeout(() => {
+      this.readyFallbackTimer = null;
+      if (gen !== this.generation || this.readyGen === gen || this.state !== 'authenticating') return;
+      void (async () => {
+        const page = client.pupPage;
+        if (!page || page.isClosed()) return;
+        const healthy = await page
+          .evaluate(() => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const w = window as any;
+            try {
+              return typeof w.WWebJS !== 'undefined' && w.require('WAWebSocketModel').Socket.state === 'CONNECTED';
+            } catch {
+              return false;
+            }
+          })
+          .catch(() => false);
+        if (!healthy || gen !== this.generation || this.readyGen === gen) return;
+        this.ctx.log.warn('whatsapp-web.js did not emit "ready"; completing its setup (fallback)');
+        this.ctx.repo.audit('wa_ready_fallback', null);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const lib = client as any;
+        try {
+          await Promise.race([lib.attachEventListeners(), new Promise((r) => setTimeout(r, 60_000))]);
+        } catch (err) {
+          this.ctx.log.warn({ err: (err as Error).message }, 'fallback event wiring failed');
+        }
+        if (gen === this.generation && this.readyGen !== gen) await this.onReady(gen);
+      })();
+    }, READY_FALLBACK_MS);
+    this.readyFallbackTimer.unref();
+  }
+
   private async onReady(gen: number): Promise<void> {
     const client = this.client;
-    if (!client || gen !== this.generation) return;
+    if (!client || gen !== this.generation || this.readyGen === gen) return;
+    this.readyGen = gen;
+    if (this.readyFallbackTimer) clearTimeout(this.readyFallbackTimer);
     try {
-      const wid = jid(client.info?.wid);
+      // client.info is missing when "ready" came from the fallback; read the own id from the page then.
+      const wid =
+        jid(client.info?.wid) ??
+        (await client.pupPage
+          ?.evaluate(() => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const u = (window as any).require('WAWebUserPrefsMeUser');
+            const me = u.getMaybeMePnUser?.() ?? u.getMaybeMeLidUser?.();
+            return me ? String(me._serialized ?? me.toString()) : null;
+          })
+          .catch(() => null)) ??
+        null;
       if (wid) {
         this.me = { id: wid, name: client.info?.pushname || null, phone: phoneOf(wid) };
         this.ctx.repo.setState('wa_me', wid);

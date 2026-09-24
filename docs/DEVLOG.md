@@ -69,6 +69,14 @@ CDP probes, now packaged as `scripts/wa-diagnose.js`:
    syncing history from the phone (a fresh instance got 269 messages instead of about 3300). Fix: three extra catch-up
    history passes, one per reconcile tick during the first 3 hours after linking.
 
+6. **"ready" never came after a restart** (after WhatsApp Web auto-updated to 2.3000.1048389532): whatsapp-web.js
+   stalled while exposing its 16th page binding (`onCiphertextFailedEvent`), so its store listeners, `ready`, history
+   import and media downloads never happened (no error logged). Likely a race with the app closing a spare tab
+   during that setup. Fix: the WhatsApp tab is only brought to front until ready (stray tabs are closed in onReady), and a
+   fallback runs 60 s after `authenticated`: if the page is healthy, it completes `attachEventListeners()` itself (existing
+   bindings are skipped; duplicate listeners are harmless because ingest is idempotent) and continues as ready.
+   Diagnosed by listing which `window.on*` bindings existed.
+
 ### Lessons / rules for future work
 - WhatsApp Web changes break whatsapp-web.js helpers silently. Prefer direct, defensive model reads, isolate errors
   per chat, and verify assumptions against a live page (`scripts/wa-diagnose.js`) before and after upgrades.

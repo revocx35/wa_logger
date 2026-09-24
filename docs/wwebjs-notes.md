@@ -34,6 +34,10 @@ These are facts about the library that the design relies on, checked against
   The phone number comes from `contact.phoneNumber` or `WAWebLidMigrationUtils.toPn()` and is stored encrypted as a
   name fallback.
 
+- `ready` is emitted only after `attachEventListeners()` exposes 17 page bindings (`onAddMessageEvent` …
+  `onPollVoteEvent`) and registers the store listeners. If one `exposeFunction` stalls, nothing is logged and
+  `ready` never comes. Check with `typeof window.onPollVoteEvent`. WaService has a 60 s fallback (see client.ts).
+
 ## Dangerous defaults
 - `destroy()` calls `browser.close()`, which **kills the remote Chromium**. The library calls `this.destroy()` itself
   on non-accepted state changes (Client.js ~L850). `wa/client.ts` therefore subclasses `Client` and overrides
