@@ -9,11 +9,13 @@ and how to run it safely. The design details are in [ARCHITECTURE.md](ARCHITECTU
 
 | Threat | Mitigation |
 |---|---|
-| Someone on the network finds the login page | Single owner. Signup needs the one-time `SETUP_TOKEN` and closes after the first account. scrypt (N=2¹⁷) passwords, per-IP rate limits, per-account progressive lockout, optional TOTP 2FA, audit log. |
+| Someone on the network finds the login page | Single owner. Signup needs the one-time `SETUP_TOKEN` and closes after the first account. scrypt (N=2¹⁷) passwords. Race-free throttling: each attempt is charged before hashing. Per-IP exponential lockout means one attacker can't lock you out, and a global per-account cap bounds distributed guessing. Atomic single-use TOTP codes, optional 2FA, audit log. |
 | Theft of the database, media files or backups | Envelope encryption (see below). Without the password or recovery key, stored content is unreadable. |
 | Stolen database *and* the server's `.env` | `.env` holds no data keys, so this is still unreadable. |
 | Malicious message content (HTML, SVG, scripts, crafted file names, links) | Never rendered as HTML (React text nodes only), strict CSP, only `http(s)` links (`rel=noopener noreferrer nofollow`). Media served with `Content-Security-Policy: sandbox`, `nosniff`, and as a download unless it is a raster image, audio or video. |
 | CSRF / clickjacking / cross-site WebSocket hijacking | `SameSite=Strict` `__Host-` cookie, exact `Origin` check on every state-changing request and WebSocket, session-bound CSRF token, `frame-ancestors 'none'`. |
+| A stolen session cookie | Enough to read logs until it expires, but not enough to add 2FA (needs the password) or to wipe data or rotate the recovery key (needs the password + 2FA code). |
+| Crafted messages meant to freeze the server or UI (ReDoS) | Text and vCard parsers are linear-time with size caps. Tests include pathological inputs. |
 | Lateral movement between containers | The app has no internet. Only Chromium talks to WhatsApp. CDP and VNC listen only on an internal network shared with the app. Only Caddy publishes ports. Non-root, read-only root filesystems, `cap_drop: ALL`, `no-new-privileges`, memory and pid limits. |
 | A compromised web page inside Chromium | Chromium sandbox **enabled** (seccomp profile instead of `--no-sandbox`). A managed policy blocks navigation to anything but WhatsApp, and blocks downloads, file pickers and extensions. |
 | Log leakage | Logs never contain message content, names, cookies or tokens. URLs are logged without query strings, and phone numbers are masked. |
@@ -27,6 +29,10 @@ and how to run it safely. The design details are in [ARCHITECTURE.md](ARCHITECTU
   and media sizes are stored unencrypted, so lists can be sorted and paginated without the key.
 - A stolen, still-valid **session cookie** gives access until it expires (idle 8 h, absolute 7 days by default) or is revoked.
 - WhatsApp's Terms of Service: this is an unofficial client.
+- **Kernel attack surface from user namespaces.** Keeping Chromium's sandbox on means the chromium container's
+  seccomp profile must allow `clone`/`unshare` with namespace flags. That is the trade-off for not using `--no-sandbox`.
+- The Chromium URL policy restricts **navigation** only. Scripts running inside WhatsApp Web can still fetch other
+  URLs, and anything that controls CDP (the app) could too. The app refuses every request coming from Chromium.
 
 ## Encryption at rest
 

@@ -32,6 +32,8 @@ function rawOf(m: unknown): RawMsg {
 }
 
 const AVATAR_INTERVAL_MS = 30 * 60_000;
+const WATCHDOG_INTERVAL_MS = 60_000;
+const WATCHDOG_TIMEOUT_MS = 20_000;
 const MAX_BACKOFF_MS = 60_000;
 
 export class WaService implements WaController {
@@ -47,6 +49,8 @@ export class WaService implements WaController {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private reconcileTimer: NodeJS.Timeout | null = null;
   private avatarTimer: NodeJS.Timeout | null = null;
+  private watchdogTimer: NodeJS.Timeout | null = null;
+  private watchdogFailures = 0;
   private chain: Promise<unknown> = Promise.resolve();
   private generation = 0;
 
@@ -168,7 +172,11 @@ export class WaService implements WaController {
       await client.initialize();
       if (gen !== this.generation) return;
       client.pupBrowser?.on('disconnected', () => this.onBrowserLost(gen));
+      // A crashed or closed WhatsApp tab would otherwise stop all events silently.
+      client.pupPage?.on('error', () => this.onPageLost(gen, 'WhatsApp tab crashed'));
+      client.pupPage?.on('close', () => this.onPageLost(gen, 'WhatsApp tab was closed'));
       if (client.pupBrowser && client.pupPage) await focusWaTab(client.pupBrowser, client.pupPage);
+      this.startWatchdog(gen);
       this.attempt = 0;
     } catch (err) {
       if (gen !== this.generation) return;
@@ -200,12 +208,48 @@ export class WaService implements WaController {
     void this.teardown().then(() => this.scheduleReconnect('Lost connection to Chromium'));
   }
 
+  private onPageLost(gen: number, reason: string): void {
+    if (gen !== this.generation || this.stopped) return;
+    this.ctx.log.warn({ reason }, 'WhatsApp page lost');
+    this.ctx.repo.audit('wa_page_lost', null, reason);
+    void this.teardown().then(() => {
+      this.attempt = 0;
+      this.scheduleReconnect(reason);
+    });
+  }
+
+  /** Periodically proves the WhatsApp page still executes JavaScript; reconnects when it hangs. */
+  private startWatchdog(gen: number): void {
+    if (this.watchdogTimer) clearInterval(this.watchdogTimer);
+    this.watchdogFailures = 0;
+    this.watchdogTimer = setInterval(() => {
+      const page = this.client?.pupPage;
+      if (!page || gen !== this.generation || this.stopped) return;
+      const probe = page.evaluate(() => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const w = window as any;
+        return typeof w.require === 'function' && typeof w.WWebJS !== 'undefined' ? 'ok' : 'loading';
+      });
+      const timeout = new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), WATCHDOG_TIMEOUT_MS).unref());
+      void Promise.race([probe, timeout])
+        .catch(() => 'error' as const)
+        .then((r) => {
+          if (gen !== this.generation) return;
+          const healthy = r === 'ok' || (r === 'loading' && this.state !== 'ready' && this.state !== 'syncing');
+          this.watchdogFailures = healthy ? 0 : this.watchdogFailures + 1;
+          if (this.watchdogFailures >= 2) this.onPageLost(gen, `WhatsApp page unresponsive (${r})`);
+        });
+    }, WATCHDOG_INTERVAL_MS);
+    this.watchdogTimer.unref();
+  }
+
   private async teardown(): Promise<void> {
     this.generation++;
     this.media.pause();
-    for (const t of [this.reconcileTimer, this.avatarTimer]) if (t) clearInterval(t);
+    for (const t of [this.reconcileTimer, this.avatarTimer, this.watchdogTimer]) if (t) clearInterval(t);
     this.reconcileTimer = null;
     this.avatarTimer = null;
+    this.watchdogTimer = null;
     const c = this.client;
     this.client = null;
     if (c) {

@@ -2,6 +2,7 @@ import type { WaStatus } from '../../shared/api.js';
 import type { Config } from './config.js';
 import { DataWriter } from './crypto/keyring.js';
 import type { Repo } from './db/repo.js';
+import { Throttle } from './auth/throttle.js';
 import type { EventBus } from './events.js';
 import type { Logger } from './log.js';
 import type { SettingsStore } from './settings.js';
@@ -26,6 +27,8 @@ export class AppContext {
   wa: WaController;
   /** Every registered route (filled by an onRoute hook) — used by the auth coverage test. */
   readonly routeTable: { method: string; url: string; public: boolean }[] = [];
+  /** Brute-force throttle shared by every credential check. */
+  readonly throttle: Throttle;
 
   constructor(
     readonly config: Config,
@@ -36,6 +39,7 @@ export class AppContext {
     wa?: WaController,
   ) {
     this.wa = wa ?? new NullWa();
+    this.throttle = new Throttle(repo);
   }
 
   /** The encryptor for new data; null until an owner (and thus a public key) exists. */

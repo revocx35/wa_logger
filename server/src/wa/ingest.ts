@@ -221,7 +221,9 @@ export class Ingest {
       is_forwarded: 0,
       is_status: m.isStatus ? 1 : 0,
       ack: m.ack,
-      deleted_at: now,
+      // Seen only as already-deleted during history import: the real deletion time is unknown, so use
+      // the message time rather than pretending it was deleted "now".
+      deleted_at: source === 'history' ? m.ts || now : now,
       deleted_by: m.revokedBy ?? 'sender',
       deleted_for_me_at: null,
       edited_at: null,

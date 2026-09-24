@@ -122,6 +122,8 @@ shared/api.d.ts       API DTO types shared by server and web (type-only)
 * **Never call `client.destroy()`.** On a connected browser it would close the remote Chromium. On shutdown,
   `browser.disconnect()`. Before initialize, close leftover `web.whatsapp.com` tabs. After initialize,
   close stray `about:blank` tabs and `bringToFront()` the WA tab, so VNC shows it and there is only one WA tab.
+* A crashed or closed WhatsApp tab (`page` `error`/`close`), a lost CDP connection, or a page that stops answering
+  a 60 s watchdog probe twice triggers a reconnect with backoff. Reconcile then catches up on missed messages.
 * Start the WA client only once an owner exists, because the owner's public key is required to encrypt anything.
 * Events used: `qr`, `loading_screen`, `authenticated`, `auth_failure`, `ready`, `change_state`,
   `disconnected`, `message_create` (fires for incoming **and** outgoing messages, so it is the single source for new
@@ -184,8 +186,16 @@ session), and WhatsApp's own terms of service (unofficial client; ban risk is th
 * Recovery key: 32 random bytes shown once as Base32 groups. It wraps a second copy of the private key
   (`HKDF(scrypt(recoveryKey, salt), "wal/v1/recovery-kek")`). Recovery = recovery key + new password.
   It disables TOTP and rotates the recovery key.
-* Brute force: per-IP rate limits on auth routes (`@fastify/rate-limit`) plus a per-account failure counter
-  in the DB with progressive delay/lockout (survives restarts). All auth events go to `audit_log`.
+* Brute force (`auth/throttle.ts`): every credential check (login, TOTP, password re-entry, recovery) is
+  *charged before* scrypt runs, synchronously, so parallel requests cannot race past a lock. The lock is **per IP**
+  (after 5 failures: 30 s … 1 h exponential), so one attacker cannot lock the owner out. It is backed by a **global**
+  per-account counter in the DB (after 50 consecutive failures from any IPs: one attempt per 30 s … 15 min). Recovery
+  keys (256-bit) only use the per-IP limit. Route rate limits come on top. All auth events go to `audit_log`.
+* TOTP codes are consumed atomically (`UPDATE … WHERE totp_last_step < step`), so a code works once even in
+  parallel requests. Enabling 2FA needs the password (a stolen session alone can't lock the owner out). Wipe and
+  recovery-key rotation need the password **and** the 2FA code when 2FA is enabled.
+* After password changes, recovery, 2FA changes and session revocation, the SQLite WAL is checkpointed and
+  truncated (`secure_delete=ON` zeroes freed pages), so superseded key wraps don't stay on disk.
 
 ### Sessions
 * Cookie `__Host-wal_session` (`Secure; HttpOnly; SameSite=Strict; Path=/`). Value is
@@ -196,6 +206,11 @@ session), and WhatsApp's own terms of service (unofficial client; ban risk is th
 * `COOKIE_SECURE=false` (dev/HTTP only) drops the `__Host-` prefix and `Secure`, and logs a loud warning.
 
 ### CSRF / request integrity
+* "Is this an API request?" is decided from the **matched route** (`req.routeOptions.url`), never the raw URL.
+  The router percent-decodes paths, so `/%61pi/...` must not skip the auth hook. A second `preHandler` layer
+  re-checks the session for every matched non-public `/api` route. Absolute-form request targets are rejected.
+* Requests whose TCP peer is the Chromium container are refused. Chromium shares the backend network with the
+  app, but must never talk to the app.
 * Every non-GET `/api` request must have `Content-Type: application/json` and an `Origin` that matches `PUBLIC_ORIGIN`
   (or the request `Host` when that is unset). Authenticated non-GET requests must also carry
   `X-CSRF-Token = HMAC(HKDF(secret,"wal/v1/csrf"), "csrf")`, which `GET /api/state` returns.

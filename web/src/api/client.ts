@@ -90,9 +90,10 @@ export const api = {
   sessions: () => request<SessionInfo[]>('GET', '/api/auth/sessions'),
   revokeSession: (id: string) => request<{ ok: true }>('DELETE', `/api/auth/sessions/${enc(id)}`),
   totpSetup: () => request<TotpSetupResponse>('POST', '/api/auth/totp/setup'),
-  totpEnable: (code: string) => request<{ ok: true }>('POST', '/api/auth/totp/enable', { code }),
+  totpEnable: (code: string, password: string) => request<{ ok: true }>('POST', '/api/auth/totp/enable', { code, password }),
   totpDisable: (password: string, code: string) => request<{ ok: true }>('POST', '/api/auth/totp/disable', { password, code }),
-  rotateRecoveryKey: (password: string) => request<RotateRecoveryKeyResponse>('POST', '/api/auth/recovery-key/rotate', { password }),
+  rotateRecoveryKey: (password: string, totp?: string) =>
+    request<RotateRecoveryKeyResponse>('POST', '/api/auth/recovery-key/rotate', { password, ...(totp ? { totp } : {}) }),
 
   waStatus: () => request<WaStatus>('GET', '/api/wa/status'),
   waRestart: () => request<{ ok: true }>('POST', '/api/wa/restart'),
@@ -117,7 +118,7 @@ export const api = {
   settings: () => request<Settings>('GET', '/api/settings'),
   updateSettings: (patch: Partial<Settings>) => request<Settings>('PUT', '/api/settings', patch),
   audit: (before?: number) => request<AuditEntry[]>('GET', `/api/audit?limit=100${before ? `&before=${before}` : ''}`),
-  wipe: (password: string) => request<{ ok: true }>('POST', '/api/data/wipe', { password }),
+  wipe: (password: string, totp?: string) => request<{ ok: true }>('POST', '/api/data/wipe', { password, ...(totp ? { totp } : {}) }),
 };
 
 export function errorMessage(e: unknown): string {

@@ -80,9 +80,9 @@ export interface SessionInfo {
 }
 
 export interface TotpSetupResponse { secret: string; otpauthUrl: string }
-export interface TotpEnableRequest { code: string }
+export interface TotpEnableRequest { code: string; password: string }
 export interface TotpDisableRequest { password: string; code: string }
-export interface RotateRecoveryKeyRequest { password: string }
+export interface RotateRecoveryKeyRequest { password: string; totp?: string }
 export interface RotateRecoveryKeyResponse { recoveryKey: string }
 
 export interface VncCredentials { password: string }
@@ -227,4 +227,4 @@ export interface Settings {
 
 export interface AuditEntry { id: number; ts: number; event: string; ip: string | null; detail: string | null }
 
-export interface WipeRequest { password: string }
+export interface WipeRequest { password: string; totp?: string }

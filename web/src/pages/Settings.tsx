@@ -98,10 +98,11 @@ function TotpSection() {
 
   const enable = async (e: FormEvent) => {
     e.preventDefault();
-    if (await a.run(() => api.totpEnable(code.trim()), 'Two-factor authentication enabled.')) {
+    if (await a.run(() => api.totpEnable(code.trim(), password), 'Two-factor authentication enabled.')) {
       setSetup(null);
       setQr(null);
       setCode('');
+      setPassword('');
       await refresh();
     }
   };
@@ -147,6 +148,10 @@ function TotpSection() {
             Code from the app
             <input inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} required pattern="[0-9 ]{6,7}" autoFocus />
           </label>
+          <label>
+            Your password
+            <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+          </label>
           <ErrorNote error={a.error} />
           <div className="row gap">
             <button className="btn primary" disabled={a.busy}>
@@ -169,15 +174,28 @@ function TotpSection() {
   );
 }
 
+function TotpField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const { state } = useAppState();
+  if (!state?.totpEnabled) return null;
+  return (
+    <label>
+      Authentication code
+      <input inputMode="numeric" autoComplete="one-time-code" value={value} onChange={(e) => onChange(e.target.value)} required pattern="[0-9 ]{6,7}" />
+    </label>
+  );
+}
+
 function RecoverySection() {
   const [password, setPassword] = useState('');
+  const [totp, setTotp] = useState('');
   const [key, setKey] = useState<string | null>(null);
   const a = useAsync();
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     await a.run(async () => {
-      setKey((await api.rotateRecoveryKey(password)).recoveryKey);
+      setKey((await api.rotateRecoveryKey(password, totp.trim() || undefined)).recoveryKey);
       setPassword('');
+      setTotp('');
     });
   };
   return (
@@ -196,6 +214,7 @@ function RecoverySection() {
             Password
             <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
           </label>
+          <TotpField value={totp} onChange={setTotp} />
           <ErrorNote error={a.error} />
           <button className="btn" disabled={a.busy}>
             Generate new recovery key
@@ -383,13 +402,15 @@ function AuditSection() {
 
 function DangerSection() {
   const [password, setPassword] = useState('');
+  const [totp, setTotp] = useState('');
   const [armed, setArmed] = useState(false);
   const a = useAsync();
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!armed) return setArmed(true);
-    if (await a.run(() => api.wipe(password), 'All logged messages and media were deleted.')) {
+    if (await a.run(() => api.wipe(password, totp.trim() || undefined), 'All logged messages and media were deleted.')) {
       setPassword('');
+      setTotp('');
       setArmed(false);
     }
   };
@@ -401,6 +422,7 @@ function DangerSection() {
           Password
           <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
         </label>
+        <TotpField value={totp} onChange={setTotp} />
         <ErrorNote error={a.error} />
         {a.ok ? <p className="ok-note">{a.ok}</p> : null}
         <div className="row gap">

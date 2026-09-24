@@ -44,6 +44,7 @@ export function registerVncRoutes(app: FastifyInstance, ctx: AppContext): void {
       closed = true;
       open--;
       clearInterval(revalidate);
+      unsubscribe();
       tcp?.destroy();
       try {
         socket.close(code, reason);
@@ -52,11 +53,16 @@ export function registerVncRoutes(app: FastifyInstance, ctx: AppContext): void {
       }
     };
 
-    const revalidate = setInterval(() => {
+    const check = () => {
       const row = ctx.repo.getSession(session.idHash);
       const t = Date.now();
       if (!row || row.expires_at <= t || row.last_seen_at + ctx.config.sessionIdleMs <= t) close(4001, 'Session ended');
-    }, REVALIDATE_MS);
+    };
+    const revalidate = setInterval(check, REVALIDATE_MS);
+    // Close immediately when sessions are revoked instead of waiting for the next interval.
+    const unsubscribe = ctx.events.subscribe((ev) => {
+      if (ev.type === 'session_revoked') check();
+    });
 
     socket.on('close', () => close());
     socket.on('error', () => close(1011));

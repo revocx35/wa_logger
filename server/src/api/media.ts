@@ -21,7 +21,8 @@ export function inlineContentType(mime: string | null): string | null {
   if (!base) return null;
   if (INLINE_IMAGE.test(base)) return base;
   if (INLINE_AV.test(base)) {
-    const codecs = params.find((p) => /^codecs="?[a-z0-9.,\s-]{1,64}"?$/.test(p));
+    // Only spaces (never CR/LF/tabs) may appear: this value ends up in a response header.
+    const codecs = params.find((p) => /^codecs="?[a-z0-9., -]{1,64}"?$/.test(p));
     return codecs ? `${base}; ${codecs}` : base;
   }
   return null;
@@ -73,6 +74,11 @@ export function registerMediaRoutes(app: FastifyInstance, ctx: AppContext): void
     try {
       media = await openMediaFile(abs);
     } catch {
+      throw Errors.notFound('Media');
+    }
+    // The file name is the file id bound into every chunk's AAD: a file moved/swapped on disk is refused.
+    if (`${media.header.fileId.toString('hex')}.bin` !== path.basename(row.path)) {
+      await media.fh.close();
       throw Errors.notFound('Media');
     }
     const key = reader.key(media.header.keyId);

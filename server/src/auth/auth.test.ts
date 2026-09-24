@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { currentStep, hotp } from './totp.js';
-import { PASSWORD, SETUP_TOKEN, makeHarness, type Harness } from '../testutil/harness.js';
+import { ORIGIN, PASSWORD, SETUP_TOKEN, makeHarness, type Harness } from '../testutil/harness.js';
 
 function totpNow(secretB32: string, offsetSteps = 0): string {
   const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
@@ -99,9 +99,10 @@ describe('auth', () => {
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ ok: true });
     const other = h.client();
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 6; i++) {
       r = await other.login('owner', `wrong-password-${i}xx`);
     }
+    // The 6th failure armed the per-IP lock: even the right password is refused now.
     r = await other.login('owner', PASSWORD);
     expect(r.status).toBe(429);
     expect(r.headers['retry-after']).toBeTruthy();
@@ -176,9 +177,11 @@ describe('auth', () => {
     expect(r.status).toBe(200);
     const secret = r.body.secret as string;
     expect(r.body.otpauthUrl).toMatch(/^otpauth:\/\/totp\//);
-    r = await a.req('POST', '/api/auth/totp/enable', { code: '000000' });
+    r = await a.req('POST', '/api/auth/totp/enable', { code: totpNow(secret), password: 'wrong-password-99' });
+    expect(r.status).toBe(401);
+    r = await a.req('POST', '/api/auth/totp/enable', { code: '000000', password: PASSWORD });
     expect(r.status).toBe(400);
-    r = await a.req('POST', '/api/auth/totp/enable', { code: totpNow(secret, -1) });
+    r = await a.req('POST', '/api/auth/totp/enable', { code: totpNow(secret, -1), password: PASSWORD });
     expect(r.status).toBe(200);
 
     const b = h.client();
@@ -256,6 +259,76 @@ describe('auth', () => {
   });
 });
 
+describe('brute-force and race hardening', () => {
+  let h: Harness;
+  beforeEach(async () => {
+    h = await makeHarness();
+  });
+  afterEach(async () => {
+    await h.close();
+  });
+
+  it('charges attempts before scrypt, so parallel guesses cannot race past the lock', async () => {
+    await h.client().signup();
+    const results = await Promise.all(Array.from({ length: 9 }, (_, i) => h.client().login('owner', `wrong-guess-number-${i}`)));
+    const evaluated = results.filter((r) => r.status === 401).length;
+    const throttled = results.filter((r) => r.status === 429).length;
+    expect(evaluated).toBeLessThanOrEqual(6);
+    expect(evaluated + throttled).toBe(9);
+    expect((await h.client().login('owner', PASSWORD)).status).toBe(429);
+  });
+
+  it('does not let one attacker IP lock the owner out', async () => {
+    await h.client().signup();
+    for (let i = 0; i < 8; i++) {
+      await h.app.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        remoteAddress: '203.0.113.7',
+        headers: { origin: ORIGIN, 'content-type': 'application/json' },
+        payload: JSON.stringify({ username: 'owner', password: `attacker-guess-${i}` }),
+      });
+    }
+    const owner = await h.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      remoteAddress: '198.51.100.9',
+      headers: { origin: ORIGIN, 'content-type': 'application/json' },
+      payload: JSON.stringify({ username: 'owner', password: PASSWORD }),
+    });
+    expect(owner.statusCode).toBe(200);
+  });
+
+  it('accepts a TOTP code only once even for parallel logins', async () => {
+    const a = h.client();
+    await a.signup();
+    const setup = await a.req('POST', '/api/auth/totp/setup', {});
+    expect((await a.req('POST', '/api/auth/totp/enable', { code: totpNow(setup.body.secret, -1), password: PASSWORD })).status).toBe(200);
+    const code = totpNow(setup.body.secret);
+    const results = await Promise.all([h.client().login('owner', PASSWORD, code), h.client().login('owner', PASSWORD, code)]);
+    expect(results.map((r) => r.status).sort()).toEqual([200, 401]);
+  });
+
+  it('requires the 2FA code for wiping when 2FA is enabled', async () => {
+    const a = h.client();
+    await a.signup();
+    const setup = await a.req('POST', '/api/auth/totp/setup', {});
+    await a.req('POST', '/api/auth/totp/enable', { code: totpNow(setup.body.secret, -1), password: PASSWORD });
+    expect((await a.req('POST', '/api/data/wipe', { password: PASSWORD })).status).toBe(401);
+    expect((await a.req('POST', '/api/data/wipe', { password: PASSWORD, totp: totpNow(setup.body.secret) })).status).toBe(200);
+  });
+
+  it('does not leave superseded key wraps in the WAL after a password change', async () => {
+    const a = h.client();
+    await a.signup();
+    const before = Buffer.from(h.ctx.repo.getOwner()!.privkey_pw);
+    expect((await a.req('POST', '/api/auth/password', { currentPassword: PASSWORD, newPassword: 'a-brand-new-passphrase' })).status).toBe(200);
+    const fs = await import('node:fs');
+    const files = [h.ctx.config.dbPath, `${h.ctx.config.dbPath}-wal`].filter((f) => fs.existsSync(f));
+    for (const f of files) expect(fs.readFileSync(f).includes(before), f).toBe(false);
+  });
+});
+
 describe('route authorization coverage', () => {
   it('rejects anonymous access to every non-public /api route', async () => {
     const h = await makeHarness();
@@ -268,8 +341,16 @@ describe('route authorization coverage', () => {
         expect(r.public, `${key} public flag`).toBe(PUBLIC.has(key));
         if (r.public) continue;
         const url = r.url.replace(/:(\w+)/g, 'x');
-        const res = await h.app.inject({ method: r.method as 'GET', url, headers: { origin: 'https://wal.test', 'content-type': 'application/json' }, payload: r.method === 'GET' || r.method === 'HEAD' ? undefined : '{}' });
+        const payload = r.method === 'GET' || r.method === 'HEAD' ? undefined : '{}';
+        const headers = { origin: 'https://wal.test', 'content-type': 'application/json' };
+        const res = await h.app.inject({ method: r.method as 'GET', url, headers, payload });
         expect(res.statusCode, key).toBe(401);
+        // Percent-encoded spellings of the same route must not bypass the auth hook.
+        for (const variant of [url.replace(/^\/api\//, '/%61pi/'), url.replace(/^\/api\//, '/%61%70%69/'), url.replace('/api/', '/api/%2e/')]) {
+          const v = await h.app.inject({ method: r.method as 'GET', url: variant, headers, payload });
+          expect(v.statusCode, `${key} via ${variant}`).toBeGreaterThanOrEqual(400);
+          expect([200, 201, 204, 206]).not.toContain(v.statusCode);
+        }
       }
     } finally {
       await h.close();

@@ -35,16 +35,21 @@ export function registerEventRoutes(app: FastifyInstance, ctx: AppContext): void
     res.write('retry: 3000\n\n');
     send({ type: 'wa_state', status: ctx.wa.status() });
 
-    const unsubscribe = ctx.events.subscribe(send);
-    const heartbeat = setInterval(() => res.write(': ping\n\n'), HEARTBEAT_MS);
-    const revalidate = setInterval(() => {
+    const check = () => {
       const row = ctx.repo.getSession(session.idHash);
       const now = Date.now();
       if (!row || row.expires_at <= now || row.last_seen_at + ctx.config.sessionIdleMs <= now) {
         send({ type: 'session_revoked' });
         res.end();
       }
-    }, REVALIDATE_MS);
+    };
+    const unsubscribe = ctx.events.subscribe((ev) => {
+      send(ev);
+      // Re-check immediately when any session is revoked (logout-all, password change, recovery).
+      if (ev.type === 'session_revoked') check();
+    });
+    const heartbeat = setInterval(() => res.write(': ping\n\n'), HEARTBEAT_MS);
+    const revalidate = setInterval(check, REVALIDATE_MS);
     let closed = false;
     const cleanup = () => {
       if (closed) return;

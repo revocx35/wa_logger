@@ -57,8 +57,39 @@ function withMentions(text: string, mentions: Mention[]): WaNode[] {
   return out;
 }
 
-/** Formatting markers (no URLs inside `text`). */
+/** Beyond this length a message is shown without inline formatting (keeps rendering cheap). */
+const MAX_FORMAT_CHARS = 20_000;
+
+/**
+ * Formatting markers (no URLs inside `text`). Runs in O(n log n): valid closing positions for each
+ * marker are precomputed once, and each opener finds its closer by binary search (a naive scan per
+ * opener was quadratic — a crafted message could freeze the tab).
+ */
 function parseMarkers(text: string, mentions: Mention[], depth = 0): WaNode[] {
+  if (text.length > MAX_FORMAT_CHARS) return withMentions(text, mentions);
+  const closers = new Map<string, number[]>();
+  for (let j = 1; j < text.length; j++) {
+    const ch = text[j]!;
+    if (!MARKERS[ch]) continue;
+    if (!isSpace(text[j - 1]) && !isWordChar(text[j + 1])) {
+      let list = closers.get(ch);
+      if (!list) closers.set(ch, (list = []));
+      list.push(j);
+    }
+  }
+  const nextCloser = (ch: string, after: number): number => {
+    const list = closers.get(ch);
+    if (!list) return -1;
+    let lo = 0;
+    let hi = list.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (list[mid]! <= after) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo < list.length ? list[lo]! : -1;
+  };
+
   const out: WaNode[] = [];
   let buf = '';
   const flush = () => {
@@ -69,16 +100,8 @@ function parseMarkers(text: string, mentions: Mention[], depth = 0): WaNode[] {
   while (i < text.length) {
     const ch = text[i]!;
     const kind = MARKERS[ch];
-    const openOk = kind && depth < 4 && !isWordChar(text[i - 1]) && !isSpace(text[i + 1]) && text[i + 1] !== ch;
-    if (openOk) {
-      let j = i + 1;
-      let close = -1;
-      while ((j = text.indexOf(ch, j + 1)) !== -1) {
-        if (!isSpace(text[j - 1]) && !isWordChar(text[j + 1])) {
-          close = j;
-          break;
-        }
-      }
+    if (kind && depth < 4 && !isWordChar(text[i - 1]) && !isSpace(text[i + 1]) && text[i + 1] !== ch) {
+      const close = nextCloser(ch, i + 1);
       if (close > i + 1) {
         flush();
         const inner = text.slice(i + 1, close);
@@ -124,10 +147,11 @@ export function parseWaText(text: string, mentions: Mention[] = []): WaBlock[] {
     if (idx > 0 && lines[0] === '') lines.shift();
     if (idx < parts.length - 1 && lines[lines.length - 1] === '') lines.pop();
     for (const line of lines) {
+      // Prefix checks only (no backtracking over the rest of the line).
       let m: RegExpExecArray | null;
-      if ((m = /^>\s?(.*)$/.exec(line))) blocks.push({ t: 'line', kind: 'quote', c: parseInline(m[1]!, mentions) });
-      else if ((m = /^[-*]\s+(.*)$/.exec(line))) blocks.push({ t: 'line', kind: 'bullet', c: parseInline(m[1]!, mentions) });
-      else if ((m = /^(\d{1,3})\.\s+(.*)$/.exec(line))) blocks.push({ t: 'line', kind: 'number', marker: m[1]!, c: parseInline(m[2]!, mentions) });
+      if (line.startsWith('>')) blocks.push({ t: 'line', kind: 'quote', c: parseInline(line.slice(line[1] === ' ' ? 2 : 1), mentions) });
+      else if ((m = /^[-*][ \t]/.exec(line))) blocks.push({ t: 'line', kind: 'bullet', c: parseInline(line.slice(m[0].length).trimStart(), mentions) });
+      else if ((m = /^(\d{1,3})\.[ \t]/.exec(line))) blocks.push({ t: 'line', kind: 'number', marker: m[1]!, c: parseInline(line.slice(m[0].length).trimStart(), mentions) });
       else blocks.push({ t: 'line', kind: 'p', c: parseInline(line, mentions) });
     }
   });

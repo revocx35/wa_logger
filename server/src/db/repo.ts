@@ -275,6 +275,25 @@ export class Repo implements DataKeyStore {
     this.db.prepare(`UPDATE owner SET ${sets} WHERE id = 1`).run(...values);
   }
 
+  /**
+   * Atomically records a used TOTP step. Returns false when this (or a later) step was already used,
+   * so two parallel logins cannot both consume the same code.
+   */
+  consumeTotpStep(step: number): boolean {
+    return (
+      this.db.prepare('UPDATE owner SET totp_last_step = ? WHERE id = 1 AND (totp_last_step IS NULL OR totp_last_step < ?)').run(step, step)
+        .changes === 1
+    );
+  }
+
+  /**
+   * Flushes and truncates the WAL so superseded pages (old key wraps, deleted sessions) do not linger
+   * on disk after a password change, recovery or wipe. secure_delete zeroes freed space in the main file.
+   */
+  scrub(): void {
+    this.db.pragma('wal_checkpoint(TRUNCATE)');
+  }
+
   /* --------------------------------------------------------- sessions */
 
   insertSession(row: SessionRow): void {

@@ -157,9 +157,20 @@ function mapType(raw: RawMsg, rawType: string): MessageType {
   }
 }
 
+const MAX_VCARD_CHARS = 32 * 1024;
+const MAX_VCARDS = 30;
+
+/** Linear-time FN: extraction (a regex spanning lines here was a ReDoS vector for crafted vCards). */
 function vcardName(vcard: string): string | null {
-  const m = /^FN(?:;[^:]*)?:(.*)$/im.exec(vcard);
-  return m?.[1]?.trim() || null;
+  for (const line of vcard.slice(0, MAX_VCARD_CHARS).split(/\r?\n/, 500)) {
+    if (line.length < 3 || (line[0] !== 'F' && line[0] !== 'f') || (line[1] !== 'N' && line[1] !== 'n')) continue;
+    if (line[2] !== ':' && line[2] !== ';') continue;
+    const colon = line.indexOf(':');
+    if (colon < 0) continue;
+    const name = line.slice(colon + 1).trim();
+    if (name) return name.slice(0, 200);
+  }
+  return null;
 }
 
 function quotedText(q: RawMsg): string | null {
@@ -225,14 +236,14 @@ export function mapMessage(raw: RawMsg): MappedMessage {
     }
   }
   if (rawType === 'vcard') {
-    const v = str(raw.body) ?? '';
-    meta.vcards = [{ displayName: str(raw.vcardFormattedName) ?? vcardName(v), vcard: v }];
+    const v = (str(raw.body) ?? '').slice(0, MAX_VCARD_CHARS);
+    meta.vcards = [{ displayName: str(raw.vcardFormattedName)?.slice(0, 200) ?? vcardName(v), vcard: v }];
   }
   if (rawType === 'multi_vcard' && Array.isArray(raw.vcardList)) {
-    meta.vcards = (raw.vcardList as RawMsg[]).map((c) => ({
-      displayName: str(c.displayName) ?? vcardName(String(c.vcard ?? '')),
-      vcard: String(c.vcard ?? ''),
-    }));
+    meta.vcards = (raw.vcardList as RawMsg[]).slice(0, MAX_VCARDS).map((c) => {
+      const v = String(c.vcard ?? '').slice(0, MAX_VCARD_CHARS);
+      return { displayName: str(c.displayName)?.slice(0, 200) ?? vcardName(v), vcard: v };
+    });
   }
   if (rawType === 'poll_creation') {
     const opts = Array.isArray(raw.pollOptions) ? (raw.pollOptions as RawMsg[]) : [];

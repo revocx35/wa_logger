@@ -2,6 +2,15 @@
 	admin off
 	# Never try to install Caddy's local CA into the (container's) system trust store.
 	skip_install_trust
+	# Client-side timeouts against slow-loris style connection exhaustion. There is deliberately no
+	# write timeout: SSE, the VNC WebSocket and video streaming are long-lived responses.
+	servers {
+		timeouts {
+			read_header 10s
+			read_body 30s
+			idle 2m
+		}
+	}
 	# No telemetry/phone-home; keep logs minimal (no request URIs with message ids).
 	log {
 		output stdout

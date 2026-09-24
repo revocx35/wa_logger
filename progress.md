@@ -76,13 +76,23 @@ Update this file whenever a step is completed.
 - [x] `docker compose build` + `up` healthy; end-to-end smoke test script passes (signup → WA QR visible → VNC bridge)
 
 ## Phase 8 — Security review & hardening
-- [ ] Multi-lens security review (auth, crypto, web/XSS/CSRF, container/network, data handling) with adversarial verification
-- [ ] Fix all confirmed findings, re-test
-- [ ] `SECURITY.md` (threat model, what is/isn't encrypted, operational guidance)
+- [x] Multi-lens security review (auth, crypto, web/XSS/CSRF, container/network, data handling) with adversarial verification
+  - fixed: CRITICAL percent-encoded path (`/%61pi/...`) bypassed the auth/CSRF hook → route-based check + second layer
+  - fixed: lockout race (parallel guesses) → attempts charged before scrypt; per-IP + global throttle (no owner DoS)
+  - fixed: TOTP code replay race → atomic step consumption; 2FA enable needs the password; wipe/rotate need 2FA
+  - fixed: ReDoS in vCard name regex (server event-loop freeze) and quadratic formatter (UI freeze)
+  - fixed: superseded key wraps lingering in the SQLite WAL → checkpoint+truncate after sensitive changes
+  - fixed: media file swap on disk not detected → file id checked against the DB path
+  - fixed: CR/LF allowed in media `codecs` parameter (header injection) → spaces only
+  - fixed: Chromium could call the app API over the backend network → requests from Chromium refused
+  - fixed: crashed/closed WhatsApp tab went unnoticed (silent logging stop) → page error/close handlers + watchdog
+  - fixed: X-Forwarded-For trusted beyond one hop; SSE/VNC stayed open ≤30 s after revocation; Caddy slowloris timeouts
+- [x] Fix all confirmed findings, re-test (83 server + 10 web tests, 22/22 smoke checks)
+- [x] `SECURITY.md` (threat model, what is/isn't encrypted, operational guidance)
 
 ## Phase 9 — Release
-- [ ] `README.md` (install, first-run, backup, upgrade, troubleshooting)
-- [ ] GitHub Actions CI (tests, typecheck, build)
+- [x] `README.md` (install, first-run, backup, upgrade, troubleshooting)
+- [x] GitHub Actions CI (tests, typecheck, build)
 - [ ] Publish to GitHub as `wa_logger` (private) and push
 
 ## Manual steps for the owner (cannot be automated here)
