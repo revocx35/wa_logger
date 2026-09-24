@@ -73,6 +73,33 @@ export function unwrapDek(ownerPrivate: KeyObject, ownerPublicRaw: Buffer, w: Wr
   }
 }
 
+/** Generic ECIES seal to the owner's public key: ephPub(32) ‖ AES-GCM(nonce ‖ ct ‖ tag). */
+export function sealToPublicKey(ownerPublicRaw: Buffer, plaintext: Buffer, context: string): Buffer {
+  const eph = generateX25519();
+  const shared = x25519Shared(x25519PrivateKeyObject(eph.privatePkcs8), ownerPublicRaw);
+  const key = hkdf(shared, Buffer.concat([eph.publicRaw, ownerPublicRaw]), `wal/v1/seal/${context}`);
+  try {
+    return Buffer.concat([eph.publicRaw, sealGcm(key, plaintext, `wal/v1|seal|${context}`)]);
+  } finally {
+    shared.fill(0);
+    key.fill(0);
+  }
+}
+
+export function openSealed(ownerPrivate: KeyObject, blob: Buffer, context: string): Buffer {
+  if (blob.length < 32 + 28) throw new CryptoError('sealed blob too short');
+  const ephPub = blob.subarray(0, 32);
+  const ownerPub = x25519PublicFromPrivate(ownerPrivate);
+  const shared = x25519Shared(ownerPrivate, ephPub);
+  const key = hkdf(shared, Buffer.concat([ephPub, ownerPub]), `wal/v1/seal/${context}`);
+  try {
+    return openGcm(key, blob.subarray(32), `wal/v1|seal|${context}`);
+  } finally {
+    shared.fill(0);
+    key.fill(0);
+  }
+}
+
 export interface DataKeyStore {
   insertDataKey(ephPub: Buffer, wrapped: Buffer, createdAt: number): number;
   getDataKey(id: number): WrappedDek | undefined;
