@@ -120,7 +120,12 @@ export type MessageType =
   | 'location' | 'live_location' | 'vcard' | 'multi_vcard' | 'poll' | 'call_log'
   | 'system' | 'revoked' | 'ciphertext' | 'view_once' | 'unknown';
 
-export type MediaStatus = 'none' | 'pending' | 'downloaded' | 'failed' | 'too_large' | 'view_once' | 'unavailable';
+/**
+ * none: no media · pending: queued/downloading · downloaded: available at `url` · failed: download failed (retryable)
+ * too_large: above the size cap (retryable after raising it) · skipped: history media not downloaded (setting)
+ * view_once: view-once media, never logged · unavailable: WhatsApp no longer has it (expired/deleted before download)
+ */
+export type MediaStatus = 'none' | 'pending' | 'downloaded' | 'failed' | 'too_large' | 'skipped' | 'view_once' | 'unavailable';
 
 export interface MediaInfo {
   status: MediaStatus;
