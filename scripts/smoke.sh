@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2015,SC2016  # "check && ok || bad" is intended (ok/bad always succeed); remote shell snippets are single-quoted on purpose
 # End-to-end smoke test in an ISOLATED compose project (own volumes, secrets and ports) — never
 # touches your real deployment. Builds the images, starts the stack and checks:
 #   health, security headers, cookie flags, signup, WhatsApp reaching the QR state, the VNC
@@ -38,8 +39,10 @@ trap cleanup EXIT
 
 echo "== generating isolated config"
 scripts/setup.sh --site localhost --https-port "$PORT_HTTPS" --http-port "$PORT_HTTP" --env-file "$ENV_FILE" --force >/dev/null
+set -a
 # shellcheck disable=SC1090
-set -a; . "$ENV_FILE"; set +a
+. "$ENV_FILE"
+set +a
 
 echo "== building and starting ($PROJECT)"
 dc up -d --build --wait --wait-timeout 300 >/dev/null
