@@ -9,7 +9,7 @@ import websocket from '@fastify/websocket';
 import Fastify, { type FastifyBaseLogger, type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { ZodError } from 'zod';
 import type { ApiError } from '../../../shared/api.js';
-import { cookieName, csrfTokenFor, loadSession, sessionReader, type ActiveSession } from '../auth/sessions.js';
+import { cookieName, csrfTokenFor, isSecureRequest, loadSession, sessionReader, type ActiveSession } from '../auth/sessions.js';
 import type { AppContext } from '../context.js';
 import type { DataReader } from '../crypto/keyring.js';
 import { BusyError, ctEqual } from '../crypto/primitives.js';
@@ -140,7 +140,7 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
     loggerInstance: ctx.log as FastifyBaseLogger,
     // Trust exactly one hop (Caddy): the client address is the last X-Forwarded-For entry, which
     // Caddy sets itself — a client-supplied X-Forwarded-For cannot spoof it.
-    trustProxy: config.trustProxy ? (_addr: string, hop: number) => hop === 0 : false,
+    trustProxy: config.trustProxy > 0 ? (_addr: string, hop: number) => hop < config.trustProxy : false,
     bodyLimit: 64 * 1024,
     genReqId: () => crypto.randomUUID(),
     requestIdHeader: false,
@@ -182,7 +182,7 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
     reply.header('Origin-Agent-Cluster', '?1');
     reply.header('X-DNS-Prefetch-Control', 'off');
     reply.header('X-Permitted-Cross-Domain-Policies', 'none');
-    if (config.cookieSecure) reply.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    if (isSecureRequest(config.cookieSecure, req)) reply.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     if (isApiRequest(req)) {
       reply.header('Cache-Control', 'no-store');
       reply.header('Pragma', 'no-cache');
@@ -208,7 +208,7 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
       return sendError(reply, Errors.forbidden('Cross-origin request rejected.'));
     }
 
-    req.session = loadSession(ctx.repo, config, req.cookies[cookieName(config.cookieSecure)], req.ip ?? null);
+    req.session = loadSession(ctx.repo, config, req.cookies[cookieName(isSecureRequest(config.cookieSecure, req))], req.ip ?? null);
 
     if (!routeCfg.public && !req.session) {
       return sendError(reply, Errors.unauthorized());

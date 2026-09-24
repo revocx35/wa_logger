@@ -1,4 +1,9 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
+
+/** Whether this request reached us over HTTPS (for COOKIE_SECURE=auto behind an external TLS proxy). */
+export function isSecureRequest(mode: boolean | 'auto', req: FastifyRequest): boolean {
+  return mode === 'auto' ? req.protocol === 'https' : mode;
+}
 import { PRIVKEY_AAD, unwrapPrivateKey, wrapPrivateKey, DataReader } from '../crypto/keyring.js';
 import { hkdf, hmacSha256, randomBytes, sha256 } from '../crypto/primitives.js';
 import type { Repo, SessionRow } from '../db/repo.js';
@@ -15,7 +20,7 @@ const EMPTY = Buffer.alloc(0);
 const TOUCH_INTERVAL_MS = 60_000;
 
 export interface SessionConfig {
-  cookieSecure: boolean;
+  cookieSecure: boolean | 'auto';
   sessionIdleMs: number;
   sessionMaxMs: number;
 }
@@ -112,18 +117,18 @@ export function sessionReader(repo: Repo, s: ActiveSession): DataReader {
   }
 }
 
-export function setSessionCookie(reply: FastifyReply, cfg: SessionConfig, value: string): void {
-  reply.setCookie(cookieName(cfg.cookieSecure), value, {
+export function setSessionCookie(reply: FastifyReply, cfg: SessionConfig, value: string, secure: boolean): void {
+  reply.setCookie(cookieName(secure), value, {
     path: '/',
     httpOnly: true,
-    secure: cfg.cookieSecure,
+    secure,
     sameSite: 'strict',
     maxAge: Math.floor(cfg.sessionMaxMs / 1000),
   });
 }
 
-export function clearSessionCookie(reply: FastifyReply, cfg: SessionConfig): void {
-  reply.clearCookie(cookieName(cfg.cookieSecure), { path: '/', httpOnly: true, secure: cfg.cookieSecure, sameSite: 'strict' });
+export function clearSessionCookie(reply: FastifyReply, secure: boolean): void {
+  reply.clearCookie(cookieName(secure), { path: '/', httpOnly: true, secure, sameSite: 'strict' });
 }
 
 export function requestMeta(req: FastifyRequest): { ip: string | null; userAgent: string | null } {

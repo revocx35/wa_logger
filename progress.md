@@ -113,5 +113,12 @@ Update this file whenever a step is completed.
       history media whose CDN copy expired (stage NEED_POKE after a download attempt) is marked unavailable after
       2 tries instead of blocking the queue (Retry button stays available)
 
+## Phase 11 — HTTP mode behind a user's reverse proxy
+- [x] `caddy/Caddyfile.http` (plain HTTP, trusted_proxies private_ranges) selectable via `CADDY_CONFIG`
+- [x] `COOKIE_SECURE=auto` (per-request Secure/__Host- cookie + HSTS), `TRUST_PROXY` hop count
+- [x] `setup.sh --http-only`; HTTPS port bound to localhost in HTTP mode
+- [x] Tests: auto cookie mode over HTTP and via simulated TLS proxy; manual stack test (real client IP recorded)
+- [x] Web: no `crossorigin` on the same-origin bundle + visible loading fallback (blank page on Android w/ self-signed cert)
+
 ## Manual steps for the owner (cannot be automated here)
 - [ ] Scan the WhatsApp QR code with the phone and verify live logging of a real conversation (send, edit, delete)

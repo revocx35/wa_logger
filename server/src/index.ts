@@ -9,7 +9,8 @@ async function main(): Promise<void> {
   const log = createLogger(config.logLevel);
   fs.mkdirSync(config.mediaDir, { recursive: true, mode: 0o700 });
 
-  if (!config.cookieSecure) log.warn('COOKIE_SECURE=false — session cookies are sent over plain HTTP. Use only for local development.');
+  if (config.cookieSecure === false) log.warn('COOKIE_SECURE=false — session cookies are sent over plain HTTP. Use only for local development.');
+  if (config.cookieSecure === 'auto') log.info('COOKIE_SECURE=auto — cookies are Secure when requests arrive over HTTPS (external reverse proxy).');
   if (!config.publicOrigin) log.warn('PUBLIC_ORIGIN is not set — Origin checks fall back to the request Host header.');
 
   const { app, ctx } = await createApp(config, log, { wa: (c) => new WaService(c) });

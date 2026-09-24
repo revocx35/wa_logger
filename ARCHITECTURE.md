@@ -60,6 +60,9 @@ Out of scope on purpose: sending messages, multiple WhatsApp accounts or tenants
   and `deploy/docker-compose.yml` uses the images CI publishes to GHCR (`ghcr.io/revocx35/wa_logger-{app,chromium,caddy}`).
   The standalone variant only needs `seccomp-chromium.json` and `.env` next to it. The Caddyfile is baked into the
   caddy image so Caddy keeps a read-only root filesystem (compose `configs.content` cannot be used with `read_only`).
+* HTTP mode (`CADDY_CONFIG=Caddyfile.http`, `setup.sh --http-only`): Caddy serves plain HTTP behind the user's own
+  TLS reverse proxy and trusts X-Forwarded-* from private ranges. The app uses `TRUST_PROXY=2` and
+  `COOKIE_SECURE=auto`: `Secure`/`__Host-` cookies and HSTS whenever the request arrived over HTTPS.
 * Only **caddy** publishes ports. The **app** has no route to the internet (it sits only on internal networks).
   **chromium** is the only component that talks to WhatsApp.
 * CDP has no authentication, so it is reachable only on `backend`, where the app is the only other container.

@@ -33,6 +33,7 @@ import { requireSession } from '../http/server.js';
 import {
   clearSessionCookie,
   createSession,
+  isSecureRequest,
   publicSessionId,
   requestMeta,
   sessionPrivateKey,
@@ -103,7 +104,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
 
   function startSession(req: FastifyRequest, reply: FastifyReply, privatePkcs8: Buffer): void {
     const { cookieValue } = createSession(repo, config, privatePkcs8, requestMeta(req));
-    setSessionCookie(reply, config, cookieValue);
+    setSessionCookie(reply, config, cookieValue, isSecureRequest(config.cookieSecure, req));
   }
 
   function clearPendingTotp(): void {
@@ -205,7 +206,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     const pending = pendingTotp.get(s.idHash.toString('hex'));
     pending?.secret.fill(0);
     pendingTotp.delete(s.idHash.toString('hex'));
-    clearSessionCookie(reply, config);
+    clearSessionCookie(reply, isSecureRequest(config.cookieSecure, req));
     return { ok: true };
   });
 
@@ -216,7 +217,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     repo.scrub();
     repo.audit('logout_all', req.ip, `${n} sessions`);
     ctx.events.emit({ type: 'session_revoked' });
-    clearSessionCookie(reply, config);
+    clearSessionCookie(reply, isSecureRequest(config.cookieSecure, req));
     return { ok: true };
   });
 
@@ -343,7 +344,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     repo.scrub();
     repo.audit('session_revoked', req.ip);
     ctx.events.emit({ type: 'session_revoked' });
-    if (publicSessionId(s.idHash) === id) clearSessionCookie(reply, config);
+    if (publicSessionId(s.idHash) === id) clearSessionCookie(reply, isSecureRequest(config.cookieSecure, req));
     return { ok: true };
   });
 

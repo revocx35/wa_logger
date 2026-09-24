@@ -29,8 +29,10 @@ services:
     <<: *hardening
     cap_add: [NET_BIND_SERVICE]
     ports:
-      - "${HTTP_PORT:-80}:80"
-      - "${HTTPS_PORT:-443}:443"
+      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-80}:80"
+      - "${HTTPS_BIND:-0.0.0.0}:${HTTPS_PORT:-443}:443"
+    # Caddyfile = HTTPS (Let's Encrypt / internal CA); Caddyfile.http = plain HTTP behind your own TLS proxy.
+    command: ["caddy", "run", "--config", "/etc/caddy/${CADDY_CONFIG:-Caddyfile}", "--adapter", "caddyfile"]
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:?run scripts/setup.sh first}
       CADDY_TLS: ${CADDY_TLS:-internal}
@@ -60,7 +62,8 @@ services:
       PORT: "8080"
       HOST: 0.0.0.0
       CHROMIUM_HOST: chromium
-      TRUST_PROXY: "true"
+      # 1 = only the bundled Caddy; 2 = Caddy + your own reverse proxy in front (HTTP mode).
+      TRUST_PROXY: ${TRUST_PROXY:-1}
     volumes:
       - app_data:/data
     tmpfs:

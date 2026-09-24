@@ -1,0 +1,42 @@
+# Plain-HTTP mode (CADDY_CONFIG=Caddyfile.http): use when your own reverse proxy terminates TLS in front of
+# wa_logger. Do NOT expose this port directly to the internet — only your reverse proxy should reach it.
+{
+	admin off
+	auto_https off
+	servers {
+		# Pass through X-Forwarded-For/-Proto/-Host set by your reverse proxy (private networks only), so the
+		# app sees the real client IP (brute-force throttling) and knows the request came in over HTTPS.
+		trusted_proxies static private_ranges
+		timeouts {
+			read_header 10s
+			read_body 30s
+			idle 2m
+		}
+	}
+	log {
+		output stdout
+		level WARN
+	}
+}
+
+:80 {
+	request_body {
+		max_size 1MB
+	}
+
+	header {
+		-Server
+		-Via
+	}
+
+	@static not path /api/*
+	encode @static zstd gzip
+
+	reverse_proxy app:8080 {
+		flush_interval -1
+		transport http {
+			read_timeout 0
+			write_timeout 0
+		}
+	}
+}

@@ -357,3 +357,37 @@ describe('route authorization coverage', () => {
     }
   });
 });
+
+describe('COOKIE_SECURE=auto behind an external TLS reverse proxy', () => {
+  it('uses plain cookies over HTTP and Secure __Host- cookies when the proxy reports HTTPS', async () => {
+    const h = await makeHarness({ COOKIE_SECURE: 'auto', TRUST_PROXY: '2', PUBLIC_ORIGIN: '' });
+    try {
+      // Direct LAN access over plain HTTP.
+      const plain = h.client();
+      const r1 = await plain.req('POST', '/api/auth/signup', { setupToken: SETUP_TOKEN, username: 'owner', password: PASSWORD }, { origin: 'http://wa.lan', headers: { host: 'wa.lan' } });
+      expect(r1.status).toBe(200);
+      const c1 = String(r1.headers['set-cookie']);
+      expect(c1).toMatch(/^wal_session=/);
+      expect(c1).not.toMatch(/Secure/i);
+      expect(r1.headers['strict-transport-security']).toBeUndefined();
+      const st = await plain.req('GET', '/api/state', undefined, { headers: { host: 'wa.lan' } });
+      expect(st.body.authenticated).toBe(true);
+
+      // Through the user's HTTPS reverse proxy (→ bundled Caddy → app).
+      const viaProxy = { host: 'wa.example.com', 'x-forwarded-proto': 'https', 'x-forwarded-host': 'wa.example.com', 'x-forwarded-for': '203.0.113.5, 192.168.1.2' };
+      const tls = h.client();
+      const r2 = await tls.req('POST', '/api/auth/login', { username: 'owner', password: PASSWORD }, { origin: 'https://wa.example.com', headers: viaProxy });
+      expect(r2.status).toBe(200);
+      expect(String(r2.headers['set-cookie'])).toMatch(/^__Host-wal_session=.*Secure/i);
+      expect(r2.headers['strict-transport-security']).toMatch(/max-age/);
+      const st2 = await tls.req('GET', '/api/state', undefined, { headers: viaProxy });
+      expect(st2.body.authenticated).toBe(true);
+
+      // Origin must still match the (forwarded) host.
+      const bad = await h.client().req('POST', '/api/auth/login', { username: 'owner', password: PASSWORD }, { origin: 'https://evil.example', headers: viaProxy });
+      expect(bad.status).toBe(403);
+    } finally {
+      await h.close();
+    }
+  });
+});

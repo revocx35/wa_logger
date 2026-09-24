@@ -245,6 +245,25 @@ docker compose up -d --build        # uses the repository's docker-compose.yml, 
 
 Update with `git pull && docker compose up -d --build`.
 
+### Behind your own reverse proxy (plain HTTP)
+
+If you already run a reverse proxy (Nginx Proxy Manager, Traefik, Caddy, Cloudflare Tunnel, …) that terminates
+TLS, run wa_logger in HTTP mode and point the proxy at it:
+
+```bash
+bash setup.sh --site 192.168.1.50 --http-only      # or scripts/setup.sh … from a checkout
+docker compose up -d
+```
+
+- **Proxy target:** `http://192.168.1.50:80`. Enable WebSocket support (needed for the WA Web view), and keep the
+  default forwarded headers (`Host`, `X-Forwarded-For`, `X-Forwarded-Proto`).
+- **Cookies:** `COOKIE_SECURE=auto` makes session cookies `Secure` (+ HSTS) whenever the proxy reports HTTPS. You
+  can still open `http://192.168.1.50` directly on your LAN.
+- **Client IPs:** `TRUST_PROXY=2` trusts X-Forwarded-For through your proxy and the bundled Caddy, so login
+  throttling sees real client IPs. Forwarded headers are only accepted from private network addresses.
+- **Origin:** once the public URL is final, you can pin it with `PUBLIC_ORIGIN=https://wa.example.com` in `.env`.
+- **Exposure:** only your reverse proxy should reach port 80. Don't forward it to the internet directly.
+
 ### Optional: cap storage with a dedicated disk
 
 Logged media can grow large. To give wa_logger a hard size limit, put its volumes on their own

@@ -24,8 +24,19 @@ const EnvSchema = z.object({
     .refine((v) => v === undefined || /^https?:\/\/[^/\s]+$/.test(v), 'PUBLIC_ORIGIN must look like https://host[:port]'),
   SETUP_TOKEN: z.string().min(16, 'SETUP_TOKEN must be at least 16 characters'),
   VNC_PASSWORD: z.string().min(8, 'VNC_PASSWORD must be at least 8 characters'),
-  COOKIE_SECURE: bool(true),
-  TRUST_PROXY: bool(false),
+  /** true: always Secure/__Host- cookies; auto: Secure only when the request arrived over HTTPS (TLS by an
+   *  external reverse proxy, detected via the trusted X-Forwarded-Proto); false: never (local HTTP only). */
+  COOKIE_SECURE: z
+    .enum(['true', 'false', '1', '0', 'yes', 'no', 'auto'])
+    .optional()
+    .transform((v): boolean | 'auto' => (v === undefined ? true : v === 'auto' ? 'auto' : v === 'true' || v === '1' || v === 'yes')),
+  /** Number of reverse-proxy hops to trust for X-Forwarded-*: false/0 = none, true = 1 (the bundled Caddy),
+   *  2 = Caddy + one external reverse proxy in front of it. */
+  TRUST_PROXY: z
+    .string()
+    .regex(/^(true|false|yes|no|[0-5])$/)
+    .optional()
+    .transform((v) => (v === undefined || v === 'false' || v === 'no' ? 0 : v === 'true' || v === 'yes' ? 1 : Number(v))),
   SESSION_IDLE_HOURS: int(8, 1, 24 * 30),
   SESSION_MAX_DAYS: int(7, 1, 90),
   MEDIA_MAX_MB: int(100, 1, 2000),

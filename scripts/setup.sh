@@ -4,6 +4,7 @@
 #   scripts/setup.sh                                   # interactive (or: bash setup.sh when downloaded standalone)
 #   scripts/setup.sh --site 192.168.1.50               # LAN / IP address (Caddy internal CA)
 #   scripts/setup.sh --site wa.example.com --email me@example.com   # public domain (Let's Encrypt)
+#   scripts/setup.sh --site 192.168.1.50 --http-only  # plain HTTP; your own reverse proxy terminates TLS
 #   options: --https-port 443 --http-port 80 --env-file .env --force
 set -euo pipefail
 
@@ -17,7 +18,7 @@ else
   START_CMD="docker compose up -d"
 fi
 
-SITE="" EMAIL="" HTTPS_PORT="443" HTTP_PORT="80" ENV_FILE=".env" FORCE=0
+SITE="" EMAIL="" HTTPS_PORT="443" HTTP_PORT="80" ENV_FILE=".env" FORCE=0 HTTP_ONLY=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --site) SITE="$2"; shift 2 ;;
@@ -26,6 +27,7 @@ while [[ $# -gt 0 ]]; do
     --http-port) HTTP_PORT="$2"; shift 2 ;;
     --env-file) ENV_FILE="$2"; shift 2 ;;
     --force) FORCE=1; shift ;;
+    --http-only) HTTP_ONLY=1; shift ;;
     -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
@@ -58,7 +60,7 @@ fi
 is_ip=0
 [[ "$SITE" =~ ^[0-9]+(\.[0-9]+){3}$ || "$SITE" == "localhost" || "$SITE" != *.* ]] && is_ip=1
 
-if [[ $is_ip -eq 0 && -z "$EMAIL" && -t 0 ]]; then
+if [[ $is_ip -eq 0 && -z "$EMAIL" && -t 0 && $HTTP_ONLY -eq 0 ]]; then
   read -r -p "E-mail for Let's Encrypt (leave empty to use Caddy's internal CA): " EMAIL
 fi
 if [[ -n "$EMAIL" ]]; then
@@ -71,6 +73,25 @@ fi
 [[ "$HTTPS_PORT" =~ ^[0-9]{1,5}$ && "$HTTP_PORT" =~ ^[0-9]{1,5}$ ]] || { echo "invalid port" >&2; exit 2; }
 ORIGIN="https://${SITE}"
 [[ "$HTTPS_PORT" != "443" ]] && ORIGIN="${ORIGIN}:${HTTPS_PORT}"
+if [[ $HTTP_ONLY -eq 1 ]]; then
+  ORIGIN="http://${SITE}"
+  [[ "$HTTP_PORT" != "80" ]] && ORIGIN="${ORIGIN}:${HTTP_PORT}"
+fi
+
+if [[ $HTTP_ONLY -eq 1 ]]; then
+  MODE_BLOCK="# Plain HTTP: your own reverse proxy terminates TLS and forwards to http://${SITE}:${HTTP_PORT}
+CADDY_CONFIG=Caddyfile.http
+HTTPS_BIND=127.0.0.1
+# Secure cookies automatically when your proxy reports HTTPS (X-Forwarded-Proto: https)
+COOKIE_SECURE=auto
+# Trust X-Forwarded-* through two hops: the bundled Caddy + your reverse proxy
+TRUST_PROXY=2
+# Browser origin(s) are derived from the forwarded Host/Proto. Once your proxy's URL is final you can pin it:
+# PUBLIC_ORIGIN=https://wa.example.com"
+else
+  MODE_BLOCK="# Exact origin your browser uses; requests from any other origin are rejected.
+PUBLIC_ORIGIN=${ORIGIN}"
+fi
 
 SETUP_TOKEN="$(rand 32)"
 VNC_PASSWORD="$(rand 24)"
@@ -84,8 +105,7 @@ SITE_ADDRESS=${SITE}
 CADDY_TLS=${CADDY_TLS}
 HTTPS_PORT=${HTTPS_PORT}
 HTTP_PORT=${HTTP_PORT}
-# Exact origin your browser uses; requests from any other origin are rejected.
-PUBLIC_ORIGIN=${ORIGIN}
+${MODE_BLOCK}
 
 # --- Secrets
 # Needed once, on the signup page, to create the owner account.
@@ -94,7 +114,6 @@ SETUP_TOKEN=${SETUP_TOKEN}
 VNC_PASSWORD=${VNC_PASSWORD}
 
 # --- Sessions
-COOKIE_SECURE=true
 SESSION_IDLE_HOURS=8
 SESSION_MAX_DAYS=7
 
@@ -117,7 +136,12 @@ Created $ENV_FILE (mode 600).
 Next:
   $START_CMD
 EOF
-if [[ "$CADDY_TLS" == "internal" ]]; then
+if [[ $HTTP_ONLY -eq 1 ]]; then
+  echo
+  echo "HTTP mode: point your reverse proxy at http://${SITE}:${HTTP_PORT} and make it forward"
+  echo "Host, X-Forwarded-For and X-Forwarded-Proto (most proxies do this by default). WebSockets must be allowed."
+  echo "Only your reverse proxy should be able to reach this port."
+elif [[ "$CADDY_TLS" == "internal" ]]; then
   echo
   echo "TLS uses Caddy's internal CA: your browser will warn about the certificate the first time."
   echo "To trust it, export the root cert:  docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt"
