@@ -76,8 +76,14 @@ export type DownloadOutcome =
  * then pulls it over CDP in 2 MiB slices and encrypts it straight to disk — large videos never sit
  * in Node memory as one giant base64 string.
  */
+const PREP_TIMEOUT_MS = 180_000;
+
 export async function downloadMessageMedia(ctx: AppContext, page: Page, messageId: string, maxBytes: number): Promise<DownloadOutcome> {
-  const prep = (await page.evaluate(
+  let prepTimer: NodeJS.Timeout | undefined;
+  const prepTimeout = new Promise<PrepResult>((resolve) => {
+    prepTimer = setTimeout(() => resolve({ status: 'retry', reason: 'timeout' }), PREP_TIMEOUT_MS);
+  });
+  const prepCall = (page.evaluate(
     async (msgId: string, max: number) => {
       /* eslint-disable @typescript-eslint/no-explicit-any */
       const w = window as any;
@@ -90,23 +96,28 @@ export async function downloadMessageMedia(ctx: AppContext, page: Page, messageI
       if (!msg.mediaData || !msg.directPath) return { status: 'unavailable', reason: 'no_media' };
       if (typeof msg.size === 'number' && msg.size > max) return { status: 'too_large', size: msg.size };
       if (msg.mediaData.mediaStage === 'REUPLOADING') return { status: 'retry', reason: 'reuploading' };
+      // WhatsApp's own calls can wait indefinitely (e.g. for the phone): always race them against a timer.
+      const within = <T,>(p: Promise<T>, ms: number): Promise<T | 'timeout'> =>
+        Promise.race([p, new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), ms))]);
       if (msg.mediaData.mediaStage !== 'RESOLVED') {
         try {
-          await msg.downloadMedia({ downloadEvenIfExpensive: true, rmrReason: 1 });
+          await within(msg.downloadMedia({ downloadEvenIfExpensive: true, rmrReason: 1 }), 20_000);
         } catch {
           /* fall through to the stage check */
         }
-        // Older media has expired on WhatsApp's CDN: WhatsApp then asks the phone to re-upload it
-        // (stage FETCHING / REUPLOADING). Give the phone a moment instead of failing straight away.
-        const deadline = Date.now() + 25_000;
+        // Give an in-flight fetch a few seconds to resolve.
+        const deadline = Date.now() + 8_000;
         while (Date.now() < deadline) {
           const st = String(msg.mediaData.mediaStage);
-          if (st === 'RESOLVED' || st.includes('ERROR')) break;
-          await new Promise((r) => setTimeout(r, 1000));
+          if (st === 'RESOLVED' || st.includes('ERROR') || st === 'NEED_POKE') break;
+          await new Promise((r) => setTimeout(r, 500));
         }
       }
       const stage = String(msg.mediaData.mediaStage);
       if (stage.includes('ERROR')) return { status: 'failed', reason: stage };
+      // NEED_POKE after we already asked to download = the CDN copy has expired (404); WhatsApp Web only
+      // re-requests it from the phone on a manual click. Report it as unavailable instead of blocking.
+      if (stage === 'NEED_POKE') return { status: 'unavailable', reason: 'expired' };
       if (stage !== 'RESOLVED') return { status: 'retry', reason: stage };
       const qpl = {
         addAnnotations() {
@@ -116,9 +127,9 @@ export async function downloadMessageMedia(ctx: AppContext, page: Page, messageI
           return this;
         },
       };
-      let buf: ArrayBuffer;
+      let buf: ArrayBuffer | 'timeout';
       try {
-        buf = await w.require('WAWebDownloadManager').downloadManager.downloadAndMaybeDecrypt({
+        buf = await within(w.require('WAWebDownloadManager').downloadManager.downloadAndMaybeDecrypt({
           directPath: msg.directPath,
           encFilehash: msg.encFilehash,
           filehash: msg.filehash,
@@ -127,11 +138,12 @@ export async function downloadMessageMedia(ctx: AppContext, page: Page, messageI
           type: msg.type,
           signal: new AbortController().signal,
           downloadQpl: qpl,
-        });
+        }), 120_000);
       } catch (e: any) {
         if (e && (e.status === 404 || e.status === 410)) return { status: 'unavailable', reason: 'gone' };
         return { status: 'failed', reason: 'download_error' };
       }
+      if (buf === 'timeout') return { status: 'retry', reason: 'download_timeout' };
       if (buf.byteLength > max) return { status: 'too_large', size: buf.byteLength };
       const token = `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
       store.set(token, { u8: new Uint8Array(buf), t: Date.now() });
@@ -140,7 +152,8 @@ export async function downloadMessageMedia(ctx: AppContext, page: Page, messageI
     },
     messageId,
     maxBytes,
-  )) as PrepResult;
+  ) as Promise<PrepResult>);
+  const prep = await Promise.race([prepCall, prepTimeout]).finally(() => clearTimeout(prepTimer));
 
   if (prep.status !== 'ok') return prep.status === 'too_large' ? { status: 'too_large' } : prep;
 
@@ -290,6 +303,8 @@ export class MediaQueue {
       }
       if (out.status === 'too_large') return finish({ media_status: 'too_large' });
       if (out.status === 'view_once') return finish({ media_status: 'view_once', is_view_once: 1 });
+      // Expired on WhatsApp's servers: one confirmation retry, then give up (the UI offers "Retry").
+      if (out.status === 'unavailable' && attempts >= 2) return finish({ media_status: 'unavailable' });
       if (attempts >= MAX_ATTEMPTS) {
         return finish({ media_status: out.status === 'unavailable' ? 'unavailable' : 'failed' });
       }

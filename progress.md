@@ -109,6 +109,9 @@ Update this file whenever a step is completed.
       from WhatsApp Web's models (`wa/pageapi.ts`); LID contacts get their phone number (encrypted) as name fallback
 - [x] Fix: message keys lost `_serialized` on current WhatsApp Web → rebuilt from parts (matches MsgKey.toString()
       for 100% of messages); media downloads, quotes and reactions work again
+- [x] Fix: media queue could stall (WhatsApp's downloadMedia can wait forever) → in-page + Node-side timeouts;
+      history media whose CDN copy expired (stage NEED_POKE after a download attempt) is marked unavailable after
+      2 tries instead of blocking the queue (Retry button stays available)
 
 ## Manual steps for the owner (cannot be automated here)
 - [ ] Scan the WhatsApp QR code with the phone and verify live logging of a real conversation (send, edit, delete)
