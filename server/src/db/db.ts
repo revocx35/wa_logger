@@ -154,6 +154,12 @@ const MIGRATIONS: { id: number; name: string; sql: string }[] = [
       );
     `,
   },
+  {
+    id: 2,
+    name: 'contact_phone',
+    // LID-addressed contacts ("…@lid") no longer carry the phone number in their id.
+    sql: `ALTER TABLE contacts ADD COLUMN phone_enc BLOB;`,
+  },
 ];
 
 export function openDb(file: string): DB {

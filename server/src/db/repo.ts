@@ -70,6 +70,7 @@ export interface ContactRow {
   id: string;
   name_enc: Buffer | null;
   pushname_enc: Buffer | null;
+  phone_enc: Buffer | null;
   is_me: number;
   is_business: number;
   avatar_media_id: number | null;
@@ -158,6 +159,7 @@ export const F = {
   chatName: (id: string) => ['chats', 'name', id] as const,
   contactName: (id: string) => ['contacts', 'name', id] as const,
   contactPushname: (id: string) => ['contacts', 'pushname', id] as const,
+  contactPhone: (id: string) => ['contacts', 'phone', id] as const,
   body: (messageId: string) => ['msgbody', 'body', messageId] as const,
   meta: (messageId: string) => ['messages', 'meta', messageId] as const,
   thumb: (messageId: string) => ['messages', 'thumb', messageId] as const,
@@ -498,17 +500,19 @@ export class Repo implements DataKeyStore {
     id: string;
     name_enc?: Buffer | null;
     pushname_enc?: Buffer | null;
+    phone_enc?: Buffer | null;
     is_me?: boolean;
     is_business?: boolean;
     now: number;
   }): void {
     this.db
       .prepare(
-        `INSERT INTO contacts (id, name_enc, pushname_enc, is_me, is_business, updated_at)
-         VALUES (@id, @name_enc, @pushname_enc, @is_me, @is_business, @now)
+        `INSERT INTO contacts (id, name_enc, pushname_enc, phone_enc, is_me, is_business, updated_at)
+         VALUES (@id, @name_enc, @pushname_enc, @phone_enc, @is_me, @is_business, @now)
          ON CONFLICT (id) DO UPDATE SET
            name_enc = COALESCE(excluded.name_enc, contacts.name_enc),
            pushname_enc = COALESCE(excluded.pushname_enc, contacts.pushname_enc),
+           phone_enc = COALESCE(excluded.phone_enc, contacts.phone_enc),
            is_me = MAX(contacts.is_me, excluded.is_me),
            is_business = excluded.is_business,
            updated_at = excluded.updated_at`,
@@ -517,6 +521,7 @@ export class Repo implements DataKeyStore {
         id: c.id,
         name_enc: c.name_enc ?? null,
         pushname_enc: c.pushname_enc ?? null,
+        phone_enc: c.phone_enc ?? null,
         is_me: c.is_me ? 1 : 0,
         is_business: c.is_business ? 1 : 0,
         now: c.now,

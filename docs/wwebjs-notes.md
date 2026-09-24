@@ -18,6 +18,18 @@ These are facts about the library that the design relies on, checked against
   `LocalAuth` would need `userDataDir`, which a connected browser ignores.
 - `takeoverOnConflict: true` makes the client call `Socket.takeover()` when WhatsApp reports CONFLICT.
 
+## Broken helpers on current WhatsApp Web (found in production, Sept 2026)
+- `getChats()`, `getChatById()` and `getProfilePicUrl()` all go through `WWebJS.getChatModel`, which looks up the
+  chat's `lastReceivedKey` and refreshes group metadata. On WhatsApp Web 2.3000.10483x this throws
+  `DataError: Failed to execute 'get' on 'IDBObjectStore': No key or key range specified` for ~90% of chats.
+  `getChats()` uses `Promise.all`, so a single failure loses the whole list, and history import failed completely.
+- wa_logger therefore reads chats, contacts, history and avatars directly from WhatsApp Web's models
+  (`wa/pageapi.ts`), isolating errors per chat. Message serialization (`WWebJS.getMessageModel`) and the event
+  hooks still work and are still used.
+- One-to-one chats and group participants now use **LID** ids (`…@lid`) instead of phone-number ids (`…@c.us`).
+  The phone number comes from `contact.phoneNumber` or `WAWebLidMigrationUtils.toPn()` and is stored encrypted as a
+  name fallback.
+
 ## Dangerous defaults
 - `destroy()` calls `browser.close()`, which **kills the remote Chromium**. The library calls `this.destroy()` itself
   on non-accepted state changes (Client.js ~L850). `wa/client.ts` therefore subclasses `Client` and overrides

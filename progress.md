@@ -104,6 +104,9 @@ Update this file whenever a step is completed.
 - [x] README: both install options + full example compose file
 - [x] Fix: TLS handshake failed when the site is opened by IP (no SNI) → Caddy `default_sni`; smoke check added (23/23)
 - [x] Deployed on this LXC: /opt/wa_logger (prebuilt images) at https://192.168.68.23
+- [x] Fix (found after the first real link): history import failed — whatsapp-web.js chat helpers throw on current
+      WhatsApp Web (getChatModel IDB error for ~90% of chats). Chats/contacts/history/avatars are now read directly
+      from WhatsApp Web's models (`wa/pageapi.ts`); LID contacts get their phone number (encrypted) as name fallback
 
 ## Manual steps for the owner (cannot be automated here)
 - [ ] Scan the WhatsApp QR code with the phone and verify live logging of a real conversation (send, edit, delete)

@@ -73,6 +73,7 @@ export class Presenter {
         const push = this.reader.tryText(...F.contactPushname(id), row.pushname_enc);
         if (push) name = `~${push}`;
       }
+      if (!name) name = this.reader.tryText(...F.contactPhone(id), row.phone_enc);
     }
     if (!name) name = phoneOf(id) ?? id.replace(/@.*/, '');
     this.nameCache.set(id, name);

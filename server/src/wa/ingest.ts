@@ -11,7 +11,7 @@ export interface WaApi {
     pinned: boolean;
     muted: boolean;
   } | null>;
-  getContact(id: string): Promise<{ name: string | null; pushname: string | null; isMe: boolean; isBusiness: boolean } | null>;
+  getContact(id: string): Promise<{ name: string | null; pushname: string | null; phone?: string | null; isMe: boolean; isBusiness: boolean } | null>;
 }
 
 export interface MediaSink {
@@ -110,6 +110,7 @@ export class Ingest {
       id,
       name_enc: w.encrypt(...F.contactName(id), info?.name ?? null),
       pushname_enc: w.encrypt(...F.contactPushname(id), info?.pushname ?? notifyName),
+      phone_enc: w.encrypt(...F.contactPhone(id), info?.phone ?? null),
       is_me: info?.isMe ?? false,
       is_business: info?.isBusiness ?? false,
       now,

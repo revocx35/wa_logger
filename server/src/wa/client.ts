@@ -7,6 +7,7 @@ import { cdpReachable, cleanupTabs, focusWaTab, resolveBrowserUrl } from './brow
 import { Ingest, type WaApi } from './ingest.js';
 import { jid, phoneOf, type RawMsg } from './mapper.js';
 import { MediaQueue } from './media.js';
+import { chatInfo, contactInfo, fetchMessages, listChats, profilePicUrl } from './pageapi.js';
 import { INITIAL_SYNC_KEY, Sync, type SyncApi } from './sync.js';
 
 const { Client, NoAuth } = wwebjs;
@@ -60,46 +61,31 @@ export class WaService implements WaController {
 
   constructor(private readonly ctx: AppContext) {
     this.media = new MediaQueue(ctx, () => this.page());
+    // Chat/contact/history reads go straight to WhatsApp Web's models (see pageapi.ts): the
+    // whatsapp-web.js chat helpers throw on current WhatsApp Web builds.
+    const livePage = () => {
+      const p = this.client?.pupPage;
+      return p && !p.isClosed() ? p : null;
+    };
     const api: WaApi = {
       getChat: async (chatId) => {
-        const c = this.client;
-        if (!c) return null;
-        const chat = await c.getChatById(chatId);
-        return {
-          name: chat.name || null,
-          timestamp: chat.timestamp ? chat.timestamp * 1000 : null,
-          archived: !!chat.archived,
-          pinned: !!chat.pinned,
-          muted: !!chat.isMuted,
-        };
+        const page = livePage();
+        return page ? chatInfo(page, chatId) : null;
       },
       getContact: async (id) => {
-        const c = this.client;
-        if (!c) return null;
-        const ct = await c.getContactById(id);
-        return { name: ct.name || null, pushname: ct.pushname || null, isMe: !!ct.isMe, isBusiness: !!ct.isBusiness };
+        const page = livePage();
+        return page ? contactInfo(page, id) : null;
       },
     };
     this.ingest = new Ingest(ctx, api, this.media);
     const syncApi: SyncApi = {
       listChats: async () => {
-        const c = this.client;
-        if (!c) return [];
-        return (await c.getChats()).map((chat) => ({
-          id: chat.id._serialized,
-          name: chat.name || null,
-          timestamp: chat.timestamp ? chat.timestamp * 1000 : null,
-          archived: !!chat.archived,
-          pinned: !!chat.pinned,
-          muted: !!chat.isMuted,
-        }));
+        const page = livePage();
+        return page ? listChats(page) : [];
       },
       fetchMessages: async (chatId, limit) => {
-        const c = this.client;
-        if (!c) return [];
-        const chat = await c.getChatById(chatId);
-        const msgs = await chat.fetchMessages({ limit });
-        return msgs.map(rawOf);
+        const page = livePage();
+        return page ? fetchMessages(page, chatId, limit) : [];
       },
     };
     this.sync = new Sync(ctx, this.ingest, syncApi, (p) => {
@@ -401,7 +387,7 @@ export class WaService implements WaController {
     const page = this.page();
     if (!client || !page || gen !== this.generation) return;
     try {
-      await refreshAvatars(this.ctx, page, async (chatId) => (await client.getProfilePicUrl(chatId)) || null);
+      await refreshAvatars(this.ctx, page, (chatId) => profilePicUrl(page, chatId));
     } catch (err) {
       this.ctx.log.debug({ err: (err as Error).message }, 'avatar refresh failed');
     }
