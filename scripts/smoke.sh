@@ -83,6 +83,8 @@ C=(curl -sk --max-time 15 -c "$JAR" -b "$JAR")
 
 echo "== checks"
 [[ "$("${C[@]}" -o /dev/null -w '%{http_code}' "$BASE/healthz")" == "200" ]] && ok "health endpoint via Caddy/TLS" || bad "health endpoint"
+# Opening the site by IP sends no SNI (browsers never send IP SNI); Caddy must still complete the handshake.
+[[ "$(curl -sk --max-time 15 -o /dev/null -w '%{http_code}' "https://127.0.0.1:${PORT_HTTPS}/healthz")" == "200" ]] && ok "TLS works without SNI (site opened by IP)" || bad "TLS handshake fails without SNI"
 
 HDRS="$("${C[@]}" -D - -o /dev/null "$BASE/api/state")"
 for h in "content-security-policy: default-src 'self'" "strict-transport-security" "x-content-type-options: nosniff" "x-frame-options: deny" "referrer-policy: no-referrer" "cache-control: no-store"; do

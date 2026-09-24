@@ -102,6 +102,8 @@ Update this file whenever a step is completed.
 - [x] CI publishes `wa_logger-app`, `wa_logger-chromium`, `wa_logger-caddy` to GHCR on `main` and `v*` tags; validates both compose files
 - [x] `scripts/smoke.sh --deploy` tests the standalone layout from an empty directory (22/22)
 - [x] README: both install options + full example compose file
+- [x] Fix: TLS handshake failed when the site is opened by IP (no SNI) → Caddy `default_sni`; smoke check added (23/23)
+- [x] Deployed on this LXC: /opt/wa_logger (prebuilt images) at https://192.168.68.23
 
 ## Manual steps for the owner (cannot be automated here)
 - [ ] Scan the WhatsApp QR code with the phone and verify live logging of a real conversation (send, edit, delete)

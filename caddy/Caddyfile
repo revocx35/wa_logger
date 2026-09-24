@@ -2,6 +2,9 @@
 	admin off
 	# Never try to install Caddy's local CA into the (container's) system trust store.
 	skip_install_trust
+	# Browsers send no SNI when a site is opened by IP address (e.g. https://192.168.1.50); without a
+	# default, Caddy cannot choose a certificate and aborts the handshake ("tlsv1 alert internal error").
+	default_sni {$SITE_ADDRESS}
 	# Client-side timeouts against slow-loris style connection exhaustion. There is deliberately no
 	# write timeout: SSE, the VNC WebSocket and video streaming are long-lived responses.
 	servers {
