@@ -96,9 +96,18 @@ export async function downloadMessageMedia(ctx: AppContext, page: Page, messageI
         } catch {
           /* fall through to the stage check */
         }
+        // Older media has expired on WhatsApp's CDN: WhatsApp then asks the phone to re-upload it
+        // (stage FETCHING / REUPLOADING). Give the phone a moment instead of failing straight away.
+        const deadline = Date.now() + 25_000;
+        while (Date.now() < deadline) {
+          const st = String(msg.mediaData.mediaStage);
+          if (st === 'RESOLVED' || st.includes('ERROR')) break;
+          await new Promise((r) => setTimeout(r, 1000));
+        }
       }
       const stage = String(msg.mediaData.mediaStage);
-      if (stage.includes('ERROR') || stage === 'FETCHING') return { status: 'failed', reason: stage };
+      if (stage.includes('ERROR')) return { status: 'failed', reason: stage };
+      if (stage !== 'RESOLVED') return { status: 'retry', reason: stage };
       const qpl = {
         addAnnotations() {
           return this;
