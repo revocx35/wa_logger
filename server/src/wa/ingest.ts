@@ -1,6 +1,6 @@
 import type { AppContext } from '../context.js';
 import { F, type MessageRow, type NewMessage } from '../db/repo.js';
-import { chatKind, jid, looksLikeBase64Blob, mapMessage, type MappedMessage, type RawMsg } from './mapper.js';
+import { chatKind, jid, looksLikeBase64Blob, mapMessage, msgKey, type MappedMessage, type RawMsg } from './mapper.js';
 
 /** The subset of the WhatsApp client ingest needs (abstracted for tests). */
 export interface WaApi {
@@ -383,7 +383,7 @@ export class Ingest {
   reaction(r: { msgId: unknown; senderId: unknown; reaction: unknown; timestamp: unknown }): void {
     const w = this.writer;
     if (!w) return;
-    const messageId = jid(r.msgId);
+    const messageId = msgKey(r.msgId);
     const senderId = jid(r.senderId);
     if (!messageId || !senderId) return;
     const existing = this.ctx.repo.getMessage(messageId);

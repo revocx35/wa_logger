@@ -26,6 +26,10 @@ These are facts about the library that the design relies on, checked against
 - wa_logger therefore reads chats, contacts, history and avatars directly from WhatsApp Web's models
   (`wa/pageapi.ts`), isolating errors per chat. Message serialization (`WWebJS.getMessageModel`) and the event
   hooks still work and are still used.
+- Message keys (`msg.id`) no longer carry `_serialized`. The key string is rebuilt as
+  `<fromMe>_<remote>_<id>[_<participant>][_<self>]` (own messages end in `_out`); this matched WhatsApp's own
+  `MsgKey.toString()` for 3570/3570 loaded messages. Without it, messages were stored under the bare stanza id and
+  media downloads, quotes and reactions could not be matched (`mapper.ts#msgKey`).
 - One-to-one chats and group participants now use **LID** ids (`…@lid`) instead of phone-number ids (`…@c.us`).
   The phone number comes from `contact.phoneNumber` or `WAWebLidMigrationUtils.toPn()` and is stored encrypted as a
   name fallback.

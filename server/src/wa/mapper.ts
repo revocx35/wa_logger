@@ -19,6 +19,24 @@ export function jid(v: unknown): string | null {
   return null;
 }
 
+/**
+ * Serialized WhatsApp message key: `<fromMe>_<remote>_<id>[_<participant>][_<self>]` (e.g. own messages end
+ * in "_out"). Older builds exposed it as `_serialized`; current WhatsApp Web builds don't, so it is rebuilt
+ * from the key's parts (verified identical to WhatsApp's own MsgKey.toString() on every loaded message).
+ */
+export function msgKey(v: unknown): string | null {
+  if (!v) return null;
+  if (typeof v === 'string') return v;
+  if (typeof v !== 'object') return null;
+  const o = v as RawMsg;
+  if (typeof o._serialized === 'string' && o._serialized) return o._serialized;
+  const remote = jid(o.remote);
+  if (!remote || typeof o.id !== 'string' || !o.id) return null;
+  const participant = jid(o.participant);
+  const self = typeof o.self === 'string' && o.self ? `_${o.self}` : '';
+  return `${o.fromMe ? 'true' : 'false'}_${remote}_${o.id}${participant ? `_${participant}` : ''}${self}`;
+}
+
 export function chatKind(chatId: string): ChatKind {
   if (chatId === 'status@broadcast') return 'status';
   if (chatId.endsWith('@g.us')) return 'group';
@@ -185,7 +203,7 @@ function quotedText(q: RawMsg): string | null {
 
 export function mapMessage(raw: RawMsg): MappedMessage {
   const idObj = raw.id ?? {};
-  const id = jid(idObj) ?? String(idObj.id ?? '');
+  const id = msgKey(idObj) ?? '';
   const rawType = String(raw.type ?? 'unknown');
   const fromMe = !!idObj.fromMe;
   const chatId = jid(idObj.remote) ?? (fromMe ? jid(raw.to) : jid(raw.from)) ?? 'unknown@c.us';
@@ -291,7 +309,7 @@ export function mapMessage(raw: RawMsg): MappedMessage {
 
   const tSec = num(raw.t) ?? 0;
   const editKeyObj = raw.latestEditMsgKey;
-  const editKey = editKeyObj ? (jid(editKeyObj) ?? str(editKeyObj.id) ?? null) : null;
+  const editKey = editKeyObj ? (msgKey(editKeyObj) ?? str(editKeyObj.id) ?? null) : null;
 
   return {
     id,
@@ -316,7 +334,8 @@ export function mapMessage(raw: RawMsg): MappedMessage {
     editKey,
     editTs: num(raw.latestEditSenderTimestampMs),
     notifyName: str(raw.notifyName),
-    skip: SKIP_TYPES.has(rawType) || !id,
+    // Never store a message without its full key (media, quotes and reactions are looked up by it).
+    skip: SKIP_TYPES.has(rawType) || !id || !id.includes('_'),
   };
 }
 

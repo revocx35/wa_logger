@@ -107,6 +107,8 @@ Update this file whenever a step is completed.
 - [x] Fix (found after the first real link): history import failed — whatsapp-web.js chat helpers throw on current
       WhatsApp Web (getChatModel IDB error for ~90% of chats). Chats/contacts/history/avatars are now read directly
       from WhatsApp Web's models (`wa/pageapi.ts`); LID contacts get their phone number (encrypted) as name fallback
+- [x] Fix: message keys lost `_serialized` on current WhatsApp Web → rebuilt from parts (matches MsgKey.toString()
+      for 100% of messages); media downloads, quotes and reactions work again
 
 ## Manual steps for the owner (cannot be automated here)
 - [ ] Scan the WhatsApp QR code with the phone and verify live logging of a real conversation (send, edit, delete)

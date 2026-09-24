@@ -186,6 +186,21 @@ describe('mapMessage', () => {
   });
 });
 
+describe('message keys without _serialized (current WhatsApp Web)', () => {
+  it('rebuilds keys exactly like MsgKey.toString()', () => {
+    const inGroup = mapMessage({ id: { fromMe: false, remote: '120363@g.us', id: 'ABC', participant: { _serialized: '123@lid' } }, type: 'chat', body: 'x', t: 1 });
+    expect(inGroup.id).toBe('false_120363@g.us_ABC_123@lid');
+    const own = mapMessage({ id: { fromMe: true, remote: '555@lid', id: 'DEF', self: 'out' }, type: 'chat', body: 'y', t: 1 });
+    expect(own.id).toBe('true_555@lid_DEF_out');
+    const oneToOne = mapMessage({ id: { fromMe: false, remote: '555@lid', id: 'GHI' }, type: 'chat', body: 'z', t: 1 });
+    expect(oneToOne.id).toBe('false_555@lid_GHI');
+    expect(oneToOne.skip).toBe(false);
+  });
+  it('refuses to store a message whose full key cannot be built', () => {
+    expect(mapMessage({ id: { id: 'ONLYSTANZA' }, type: 'chat', body: 'x', t: 1 }).skip).toBe(true);
+  });
+});
+
 describe('renderSystemText', () => {
   const names: Record<string, string> = { 'x@c.us': 'Xena', 'y@c.us': 'Yusuf' };
   const nameOf = (id: string | null) => (id ? (names[id] ?? id) : 'Someone');
