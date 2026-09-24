@@ -93,7 +93,7 @@ Update this file whenever a step is completed.
 ## Phase 9 — Release
 - [x] `README.md` (install, first-run, backup, upgrade, troubleshooting)
 - [x] GitHub Actions CI (tests, typecheck, build)
-- [ ] Publish to GitHub as `wa_logger` (private) and push
+- [x] Publish to GitHub as `wa_logger` (private) and push — https://github.com/revocx35/wa_logger (CI green)
 
 ## Manual steps for the owner (cannot be automated here)
 - [ ] Scan the WhatsApp QR code with the phone and verify live logging of a real conversation (send, edit, delete)
