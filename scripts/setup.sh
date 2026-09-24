@@ -1,12 +1,21 @@
 #!/usr/bin/env bash
 # Creates .env with strong random secrets for wa_logger.
 #
-#   scripts/setup.sh                                   # interactive
+#   scripts/setup.sh                                   # interactive (or: bash setup.sh when downloaded standalone)
 #   scripts/setup.sh --site 192.168.1.50               # LAN / IP address (Caddy internal CA)
 #   scripts/setup.sh --site wa.example.com --email me@example.com   # public domain (Let's Encrypt)
 #   options: --https-port 443 --http-port 80 --env-file .env --force
 set -euo pipefail
-cd "$(dirname "$0")/.."
+
+# Inside a git checkout: write .env at the repository root (next to docker-compose.yml).
+# Standalone (downloaded next to deploy/docker-compose.yml): write it in the current directory.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+if [[ -f "$SCRIPT_DIR/../docker-compose.yml" && -d "$SCRIPT_DIR/../chromium" ]]; then
+  cd "$SCRIPT_DIR/.."
+  START_CMD="docker compose up -d --build"
+else
+  START_CMD="docker compose up -d"
+fi
 
 SITE="" EMAIL="" HTTPS_PORT="443" HTTP_PORT="80" ENV_FILE=".env" FORCE=0
 while [[ $# -gt 0 ]]; do
@@ -106,7 +115,7 @@ Created $ENV_FILE (mode 600).
                 (also stored in $ENV_FILE — you need it once, on the signup page)
 
 Next:
-  docker compose up -d --build
+  $START_CMD
 EOF
 if [[ "$CADDY_TLS" == "internal" ]]; then
   echo

@@ -66,21 +66,191 @@ and [ARCHITECTURE.md](ARCHITECTURE.md) for details.
 - x86_64 (arm64 should work but is untested).
 - Proxmox/LXC works. The container needs `nesting=1` (and `keyctl=1` if unprivileged) so Docker can run inside it.
 
-## Install
+## Install (Docker Compose)
+
+There are two ways to deploy. Both give you the same three containers (`caddy`, `app` and `chromium`) and the same security settings.
+
+### Option A: prebuilt images (no clone, no build)
+
+Images are published to GitHub Container Registry by CI:
+`ghcr.io/revocx35/wa_logger-app`, `…-chromium` and `…-caddy`, tagged `latest`, `x.y.z` and `sha-…`.
 
 ```bash
-git clone git@github.com:revocx35/wa_logger.git
-cd wa_logger
-scripts/setup.sh            # asks for the address you will use, writes .env with random secrets
-docker compose up -d --build
+mkdir wa_logger && cd wa_logger
+curl -fsSLO https://raw.githubusercontent.com/revocx35/wa_logger/main/deploy/docker-compose.yml
+curl -fsSLO https://raw.githubusercontent.com/revocx35/wa_logger/main/chromium/seccomp-chromium.json
+curl -fsSLO https://raw.githubusercontent.com/revocx35/wa_logger/main/scripts/setup.sh
+bash setup.sh --site 192.168.1.50     # your server's IP or domain; writes .env with random secrets
+docker compose up -d
 ```
 
-`scripts/setup.sh` options:
+The folder then contains exactly these files:
+
+```
+wa_logger/
+├── docker-compose.yml       # below
+├── seccomp-chromium.json    # Docker's default seccomp profile + what Chromium's sandbox needs
+├── setup.sh                 # only needed once
+└── .env                     # generated secrets and settings (chmod 600)
+```
+
+<details>
+<summary><b>Example <code>docker-compose.yml</code></b> (same as <a href="deploy/docker-compose.yml">deploy/docker-compose.yml</a>)</summary>
+
+```yaml
+# wa_logger — standalone deployment with prebuilt images (no git clone, no build).
+#
+#   mkdir wa_logger && cd wa_logger
+#   curl -fsSLO https://raw.githubusercontent.com/revocx35/wa_logger/main/deploy/docker-compose.yml
+#   curl -fsSLO https://raw.githubusercontent.com/revocx35/wa_logger/main/chromium/seccomp-chromium.json
+#   curl -fsSLO https://raw.githubusercontent.com/revocx35/wa_logger/main/scripts/setup.sh
+#   bash setup.sh --site 192.168.1.50        # writes .env with random secrets (see README)
+#   docker compose up -d
+#
+# Services:
+#   caddy    : TLS termination, the only service with published ports
+#   app      : Node server + web UI (no internet access: internal networks only)
+#   chromium : WhatsApp Web in a sandboxed, policy-locked Chromium (only this talks to WhatsApp)
+# Pin a release with WAL_VERSION=x.y.z in .env (default: latest).
+
+name: wa_logger
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+  logging: *logging
+
+services:
+  caddy:
+    image: ghcr.io/revocx35/wa_logger-caddy:${WAL_VERSION:-latest}
+    restart: unless-stopped
+    <<: *hardening
+    cap_add: [NET_BIND_SERVICE]
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?create .env first (bash setup.sh)}
+      CADDY_TLS: ${CADDY_TLS:-internal}
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    networks: [public, edge]
+    depends_on:
+      app:
+        condition: service_healthy
+    mem_limit: 256m
+    pids_limit: 128
+
+  app:
+    image: ghcr.io/revocx35/wa_logger-app:${WAL_VERSION:-latest}
+    restart: unless-stopped
+    <<: *hardening
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /data
+      PORT: "8080"
+      HOST: 0.0.0.0
+      CHROMIUM_HOST: chromium
+      TRUST_PROXY: "true"
+    volumes:
+      - app_data:/data
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    networks: [edge, backend]
+    depends_on:
+      chromium:
+        condition: service_healthy
+    mem_limit: 1g
+    pids_limit: 256
+
+  chromium:
+    image: ghcr.io/revocx35/wa_logger-chromium:${WAL_VERSION:-latest}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      # Docker's default profile + the syscalls Chromium's namespace sandbox needs (sandbox stays ON).
+      # Download it next to this file (see the header).
+      - seccomp=./seccomp-chromium.json
+    logging: *logging
+    environment:
+      VNC_PASSWORD: ${VNC_PASSWORD:?create .env first (bash setup.sh)}
+      SCREEN: ${SCREEN:-1280x800x24}
+      BACKEND_PEER: app
+    volumes:
+      - chromium_profile:/data
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=512m
+      - /home/chrome:rw,nosuid,nodev,size=256m,uid=10002,gid=10002,mode=0700
+    shm_size: 1gb
+    networks: [backend, egress]
+    mem_limit: 2500m
+    pids_limit: 1024
+    stop_grace_period: 20s
+
+
+networks:
+  public: {}
+  edge:
+    internal: true
+  backend:
+    internal: true
+  egress: {}
+
+volumes:
+  app_data: {}
+  chromium_profile: {}
+  caddy_data: {}
+  caddy_config: {}
+```
+
+</details>
+
+Example `.env` (generated by `setup.sh`. See [.env.example](.env.example) for every option):
+
+```dotenv
+SITE_ADDRESS=192.168.1.50            # domain or IP you open wa_logger at
+CADDY_TLS=internal                   # "internal" (self-signed, LAN) or your e-mail for Let's Encrypt
+HTTPS_PORT=443
+HTTP_PORT=80
+PUBLIC_ORIGIN=https://192.168.1.50   # exact browser origin (add :port if not 443)
+SETUP_TOKEN=<32 random characters>   # asked once on the signup page
+VNC_PASSWORD=<24 random characters>
+# WAL_VERSION=1.0.0                  # pin a release instead of "latest"
+```
+
+Update with `docker compose pull && docker compose up -d`.
+
+### Option B: build from source
+
+```bash
+git clone https://github.com/revocx35/wa_logger.git
+cd wa_logger
+scripts/setup.sh --site 192.168.1.50
+docker compose up -d --build        # uses the repository's docker-compose.yml, which builds all images locally
+```
+
+Update with `git pull && docker compose up -d --build`.
+
+### `setup.sh` options
 
 | Situation | Command |
 |---|---|
-| LAN / IP address (self-signed CA from Caddy) | `scripts/setup.sh --site 192.168.1.50` |
-| Public domain with Let's Encrypt | `scripts/setup.sh --site wa.example.com --email you@example.com` |
+| LAN / IP address (self-signed CA from Caddy) | `setup.sh --site 192.168.1.50` |
+| Public domain with Let's Encrypt | `setup.sh --site wa.example.com --email you@example.com` |
 | Other ports | `--https-port 8443 --http-port 8080` |
 
 With a public domain, the DNS name must point to the server and ports 80 and 443 must be reachable for Let's Encrypt.
@@ -130,7 +300,7 @@ In a chat, deleted messages have a **red frame** and the time they were deleted.
 ```bash
 docker compose ps                 # health
 docker compose logs -f app        # app logs (never contain message content)
-git pull && docker compose up -d --build   # update
+docker compose pull && docker compose up -d   # update (prebuilt images; from source: git pull && docker compose up -d --build)
 docker compose down               # stop (data stays in Docker volumes)
 ```
 
@@ -158,13 +328,15 @@ docker run --rm -v wa_logger_app_data:/data -v "$PWD":/backup debian:trixie-slim
 | Status stuck at "Starting" | `docker compose logs chromium app`; check that the chromium container can reach `web.whatsapp.com`. |
 | WhatsApp says "open in another window" | wa_logger takes the session over automatically. If it persists, press **Restart** on the WA Web page. |
 | Lost password | Use **Forgot your password?** on the login page with your recovery key. |
+| Custom reverse-proxy settings | Mount your own Caddyfile: `volumes: [./Caddyfile:/etc/caddy/Caddyfile:ro]` on the `caddy` service. |
 
 ## Development
 
 ```bash
 cd server && PUPPETEER_SKIP_DOWNLOAD=true npm ci && npm test && npm run typecheck
 cd web && npm ci && npm test && npm run build
-scripts/smoke.sh     # full stack end-to-end test in an isolated compose project (22 checks)
+scripts/smoke.sh            # full stack end-to-end test in an isolated compose project (22 checks)
+scripts/smoke.sh --deploy   # same checks against deploy/docker-compose.yml from an empty directory
 ```
 
 Useful docs: [ARCHITECTURE.md](ARCHITECTURE.md) (design), [progress.md](progress.md) (build checklist),

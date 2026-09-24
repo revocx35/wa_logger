@@ -95,5 +95,13 @@ Update this file whenever a step is completed.
 - [x] GitHub Actions CI (tests, typecheck, build)
 - [x] Publish to GitHub as `wa_logger` (private) and push — https://github.com/revocx35/wa_logger (CI green)
 
+## Phase 10 — Standalone deployment
+- [x] `caddy/Dockerfile` (Caddyfile baked in, read-only friendly); root compose builds it
+- [x] `deploy/docker-compose.yml` using prebuilt GHCR images (+ `seccomp-chromium.json` + `.env` only)
+- [x] `setup.sh` works standalone (writes `.env` in the current directory outside a checkout)
+- [x] CI publishes `wa_logger-app`, `wa_logger-chromium`, `wa_logger-caddy` to GHCR on `main` and `v*` tags; validates both compose files
+- [x] `scripts/smoke.sh --deploy` tests the standalone layout from an empty directory (22/22)
+- [x] README: both install options + full example compose file
+
 ## Manual steps for the owner (cannot be automated here)
 - [ ] Scan the WhatsApp QR code with the phone and verify live logging of a real conversation (send, edit, delete)

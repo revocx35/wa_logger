@@ -1,11 +1,19 @@
-# wa_logger — docker compose stack.
+# wa_logger — standalone deployment with prebuilt images (no git clone, no build).
+#
+#   mkdir wa_logger && cd wa_logger
+#   curl -fsSLO https://raw.githubusercontent.com/revocx35/wa_logger/main/deploy/docker-compose.yml
+#   curl -fsSLO https://raw.githubusercontent.com/revocx35/wa_logger/main/chromium/seccomp-chromium.json
+#   curl -fsSLO https://raw.githubusercontent.com/revocx35/wa_logger/main/scripts/setup.sh
+#   bash setup.sh --site 192.168.1.50        # writes .env with random secrets (see README)
+#   docker compose up -d
+#
+# Services:
 #   caddy    : TLS termination, the only service with published ports
 #   app      : Node server + web UI (no internet access: internal networks only)
 #   chromium : WhatsApp Web in a sandboxed, policy-locked Chromium (only this talks to WhatsApp)
-#
-# First run:  scripts/setup.sh   (creates .env)   then   docker compose up -d --build
+# Pin a release with WAL_VERSION=x.y.z in .env (default: latest).
 
-name: ${COMPOSE_PROJECT_NAME:-wa_logger}
+name: wa_logger
 
 x-logging: &logging
   driver: json-file
@@ -22,9 +30,7 @@ x-hardening: &hardening
 
 services:
   caddy:
-    build:
-      context: ./caddy
-    image: wa_logger-caddy:local
+    image: ghcr.io/revocx35/wa_logger-caddy:${WAL_VERSION:-latest}
     restart: unless-stopped
     <<: *hardening
     cap_add: [NET_BIND_SERVICE]
@@ -32,7 +38,7 @@ services:
       - "${HTTP_PORT:-80}:80"
       - "${HTTPS_PORT:-443}:443"
     environment:
-      SITE_ADDRESS: ${SITE_ADDRESS:?run scripts/setup.sh first}
+      SITE_ADDRESS: ${SITE_ADDRESS:?create .env first (bash setup.sh)}
       CADDY_TLS: ${CADDY_TLS:-internal}
     volumes:
       - caddy_data:/data
@@ -47,14 +53,11 @@ services:
     pids_limit: 128
 
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: wa_logger-app:local
+    image: ghcr.io/revocx35/wa_logger-app:${WAL_VERSION:-latest}
     restart: unless-stopped
     <<: *hardening
     env_file:
-      - ${WAL_ENV_FILE:-.env}
+      - .env
     environment:
       DATA_DIR: /data
       PORT: "8080"
@@ -73,19 +76,18 @@ services:
     pids_limit: 256
 
   chromium:
-    build:
-      context: ./chromium
-    image: wa_logger-chromium:local
+    image: ghcr.io/revocx35/wa_logger-chromium:${WAL_VERSION:-latest}
     restart: unless-stopped
     read_only: true
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
       # Docker's default profile + the syscalls Chromium's namespace sandbox needs (sandbox stays ON).
-      - seccomp=./chromium/seccomp-chromium.json
+      # Download it next to this file (see the header).
+      - seccomp=./seccomp-chromium.json
     logging: *logging
     environment:
-      VNC_PASSWORD: ${VNC_PASSWORD:?run scripts/setup.sh first}
+      VNC_PASSWORD: ${VNC_PASSWORD:?create .env first (bash setup.sh)}
       SCREEN: ${SCREEN:-1280x800x24}
       BACKEND_PEER: app
     volumes:
@@ -99,16 +101,13 @@ services:
     pids_limit: 1024
     stop_grace_period: 20s
 
+
 networks:
-  # Published ports live here (caddy only).
   public: {}
-  # caddy <-> app. internal: no route to the internet.
   edge:
     internal: true
-  # app <-> chromium (CDP + VNC). internal: no route to the internet.
   backend:
     internal: true
-  # chromium -> WhatsApp.
   egress: {}
 
 volumes:

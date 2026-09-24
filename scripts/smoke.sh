@@ -5,18 +5,29 @@
 #   health, security headers, cookie flags, signup, WhatsApp reaching the QR state, the VNC
 #   bridge (RFB handshake), cross-origin rejection, and that the app container has no internet.
 #
-#   scripts/smoke.sh            # build, test, tear down (volumes removed)
-#   scripts/smoke.sh --keep     # leave the stack running afterwards
+#   scripts/smoke.sh                 # source build (docker-compose.yml), test, tear down (volumes removed)
+#   scripts/smoke.sh --deploy        # the standalone deploy/docker-compose.yml (prebuilt-image layout),
+#                                    # run from an empty directory holding only the files a user downloads;
+#                                    # images are built locally and tagged like the published ones
+#   scripts/smoke.sh --keep          # leave the stack running afterwards (combinable with --deploy)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 KEEP=0
-[[ "${1:-}" == "--keep" ]] && KEEP=1
+DEPLOY=0
+for arg in "$@"; do
+  case "$arg" in
+    --keep) KEEP=1 ;;
+    --deploy) DEPLOY=1 ;;
+    *) echo "unknown option: $arg" >&2; exit 2 ;;
+  esac
+done
 PROJECT="wal_smoke_$$"
 PORT_HTTPS="${SMOKE_HTTPS_PORT:-28443}"
 PORT_HTTP="${SMOKE_HTTP_PORT:-28080}"
 WORK="$(mktemp -d)"
 ENV_FILE="$WORK/smoke.env"
+[[ $DEPLOY -eq 1 ]] && ENV_FILE="$WORK/.env"
 JAR="$WORK/cookies.txt"
 BASE="https://localhost:${PORT_HTTPS}"
 PASS=0
@@ -24,7 +35,13 @@ FAIL=0
 
 ok() { printf '  \033[32mPASS\033[0m %s\n' "$*"; PASS=$((PASS + 1)); }
 bad() { printf '  \033[31mFAIL\033[0m %s\n' "$*"; FAIL=$((FAIL + 1)); }
-dc() { WAL_ENV_FILE="$ENV_FILE" docker compose --env-file "$ENV_FILE" -p "$PROJECT" "$@"; }
+dc() {
+  if [[ $DEPLOY -eq 1 ]]; then
+    docker compose --project-directory "$WORK" -f "$WORK/docker-compose.yml" -p "$PROJECT" "$@"
+  else
+    WAL_ENV_FILE="$ENV_FILE" docker compose --env-file "$ENV_FILE" -p "$PROJECT" "$@"
+  fi
+}
 
 cleanup() {
   if [[ $KEEP -eq 0 ]]; then
@@ -38,14 +55,29 @@ cleanup() {
 trap cleanup EXIT
 
 echo "== generating isolated config"
-scripts/setup.sh --site localhost --https-port "$PORT_HTTPS" --http-port "$PORT_HTTP" --env-file "$ENV_FILE" --force >/dev/null
+if [[ $DEPLOY -eq 1 ]]; then
+  # Exactly the files the README tells users to download, in an otherwise empty directory.
+  cp deploy/docker-compose.yml chromium/seccomp-chromium.json scripts/setup.sh "$WORK/"
+  (cd "$WORK" && bash setup.sh --site localhost --https-port "$PORT_HTTPS" --http-port "$PORT_HTTP" --force >/dev/null)
+  echo "WAL_VERSION=smoke" >>"$ENV_FILE"
+  echo "== building images tagged like the published ones"
+  docker build -q -t ghcr.io/revocx35/wa_logger-app:smoke . >/dev/null
+  docker build -q -t ghcr.io/revocx35/wa_logger-chromium:smoke chromium >/dev/null
+  docker build -q -t ghcr.io/revocx35/wa_logger-caddy:smoke caddy >/dev/null
+else
+  scripts/setup.sh --site localhost --https-port "$PORT_HTTPS" --http-port "$PORT_HTTP" --env-file "$ENV_FILE" --force >/dev/null
+fi
 set -a
 # shellcheck disable=SC1090
 . "$ENV_FILE"
 set +a
 
-echo "== building and starting ($PROJECT)"
-dc up -d --build --wait --wait-timeout 300 >/dev/null
+echo "== starting ($PROJECT)"
+if [[ $DEPLOY -eq 1 ]]; then
+  dc up -d --pull never --wait --wait-timeout 300 >/dev/null
+else
+  dc up -d --build --wait --wait-timeout 300 >/dev/null
+fi
 
 C=(curl -sk --max-time 15 -c "$JAR" -b "$JAR")
 
@@ -83,7 +115,13 @@ for _ in $(seq 1 60); do
   [[ "$STATE" == "qr" || "$STATE" == "ready" ]] && break
   sleep 3
 done
-[[ "$STATE" == "qr" || "$STATE" == "ready" ]] && ok "WhatsApp Web loaded in Chromium (state=$STATE)" || bad "WhatsApp state stuck at '$STATE'"
+if [[ "$STATE" == "qr" || "$STATE" == "ready" ]]; then
+  ok "WhatsApp Web loaded in Chromium (state=$STATE)"
+else
+  bad "WhatsApp state stuck at '$STATE'"
+  "${C[@]}" "$BASE/api/wa/status"; echo
+  dc logs --tail 40 app chromium 2>&1 | grep -vE 'healthz|incoming request|request completed' | tail -30
+fi
 
 timeout 8 curl -sk --http1.1 -N -b "$JAR" -H "Origin: $PUBLIC_ORIGIN" -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
   -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' "$BASE/api/vnc" -o "$WORK/ws.bin" || true

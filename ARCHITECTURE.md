@@ -56,6 +56,10 @@ Out of scope on purpose: sending messages, multiple WhatsApp accounts or tenants
                 internet
 ```
 
+* Two compose files: `docker-compose.yml` builds all three images from source (`Dockerfile`, `chromium/`, `caddy/`),
+  and `deploy/docker-compose.yml` uses the images CI publishes to GHCR (`ghcr.io/revocx35/wa_logger-{app,chromium,caddy}`).
+  The standalone variant only needs `seccomp-chromium.json` and `.env` next to it. The Caddyfile is baked into the
+  caddy image so Caddy keeps a read-only root filesystem (compose `configs.content` cannot be used with `read_only`).
 * Only **caddy** publishes ports. The **app** has no route to the internet (it sits only on internal networks).
   **chromium** is the only component that talks to WhatsApp.
 * CDP has no authentication, so it is reachable only on `backend`, where the app is the only other container.
