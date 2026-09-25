@@ -11,3 +11,5 @@ data/
 .DS_Store
 .vscode/
 .idea/
+# The Android client has a Kotlin package named "data" (source code, not runtime data).
+!android_client/app/src/main/java/io/github/revocx35/walogger/data/
