@@ -19,12 +19,17 @@ Read these first, every session:
 - DB migrations are append-only (`server/src/db/db.ts`). Encrypted columns are AAD-bound to their row id, so ids
   can't be changed after the fact.
 - Commits end with the Co-Authored-By trailer. CI must stay green: it publishes the GHCR images on `main`.
+- Android (`android_client/`, ARCHITECTURE §12): all network I/O and JSON decoding off the main thread (ApiClient
+  already runs requests on `Dispatchers.IO`; keep it that way and never read a response body elsewhere on the
+  caller's thread). Nothing may throw on OkHttp threads (cookie jar, interceptors, listeners): it kills the app.
+  Keep R8 off until minified builds are tested on a device/emulator. Never log message content there either.
 
 ## Commands
 - Server: `cd server && npm test && npm run typecheck` (install with `PUPPETEER_SKIP_DOWNLOAD=true npm ci`).
 - Web: `cd web && npm test && npm run build`.
-- Android: `cd android_client && ./gradlew :core:test :app:testDebugUnitTest :app:assembleDebug` (JDK 21, SDK at
-  /opt/android-sdk on this LXC). Screenshots: `./gradlew :app:recordRoborazziDebug`. See `android_client/README.md`.
+- Android: `cd android_client && ./gradlew :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug`
+  (= the CI job; JDK 21 and SDK at /opt/android-sdk on this LXC). Screenshots: `./gradlew :app:recordRoborazziDebug`.
+  Live end-to-end: `LiveServerTest` (see `android_client/README.md`). Release: ARCHITECTURE §12 "Build, test, release".
 - Full stack from source: `scripts/smoke.sh` (23 checks). Standalone layout: `scripts/smoke.sh --deploy`.
 - UI/SSE browser tests: `scripts/dev/README.md`. Sample data: `server/src/testutil/seed.ts`.
 - Live instance health (read-only, aggregates only): `docker compose exec -T app node - < scripts/wa-diagnose.js`.
@@ -40,6 +45,11 @@ Read these first, every session:
 - The dev LXC has 4 GB RAM: never run a Docker stack build/start and Gradle at the same time (the LXC froze once).
   Gradle is capped in `android_client/gradle.properties`; stop the smoke stack while Gradle runs.
 - `android_client/core` mirrors `shared/api.d.ts` and ports `web/src/lib/{waText,format}`: change them together.
+- The Android JVM tests can't see Android-only rules. 0.1.0 read responses on the main thread (NetworkOnMainThreadException)
+  and every test passed. No emulator here (no KVM): when the owner reports an app problem, ask for the in-app crash
+  report (Settings → App → Crash reports) before guessing.
+- The root `.gitignore` ignores `data/`; android_client's Kotlin `data` package is re-included explicitly. Build from a
+  fresh `git clone` before pushing (a local build passes with untracked or ignored files).
 - Inside `page.evaluate()` run via `tsx`, named helper functions get wrapped with `__name` (undefined in the page).
 - Compose `configs.content` fails for `read_only` services, so the Caddyfiles are baked into the caddy image.
 - Opening the site by IP means no SNI, so Caddy needs `default_sni`. Some browsers block `crossorigin` scripts on self-signed certs.

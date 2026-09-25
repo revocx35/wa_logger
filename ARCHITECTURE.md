@@ -388,27 +388,86 @@ AAD context `msgbody|<messageId>`, so an edit can move the old ciphertext into `
 
 ## 12. Android client — `android_client/`
 
-A native client for the same API (no WebView). Kotlin 2.4, Jetpack Compose, AGP 9 (built-in Kotlin),
-minSdk 26, compile/target SDK 37. Two Gradle modules:
+A native client for the same API (no WebView, no server changes needed). Kotlin 2.4, Jetpack Compose,
+AGP 9.4 (built-in Kotlin), Gradle 9.8 (wrapper with pinned checksum), minSdk 26, compile/target SDK 37.
+Package `io.github.revocx35.walogger` (debug builds get the `.debug` suffix and install side by side).
+Current release: 0.1.1 (versionCode 2), confirmed working by the owner on a Samsung, One UI 8.5 / Android 16,
+server in HTTP mode.
 
-* `core/` — pure Kotlin/JVM, unit-tested on the JVM and against a live stack (`LiveServerTest`):
-  `Models.kt` mirrors `shared/api.d.ts` (unknown enum values fall back to defaults), `ApiClient` (OkHttp,
-  JSON, `X-CSRF-Token` on non-GET, the browser-equivalent `Origin` header on requests to the server, never
-  follows redirects), `EventStream` (SSE with backoff; `reopened` lets screens reload what they missed),
-  `WaText` (1:1 port of `web/src/lib/waText.tsx`, same tests), `Format` (port of `format.ts`, identical
-  `colorFor`), `vnc/` (RFB 3.3–3.8 client: VNC auth with a built-in DES, Raw/CopyRect/ZRLE,
-  DesktopSize/LastRect; the server clipboard is never read) over the `/api/vnc` WebSocket bridge.
-* `app/` — the UI. `ui/theme` holds the web's CSS tokens (light/dark) and its SVG icons; screens mirror
-  the web pages; layout switches at 900 dp like the web (bottom rail on phones, side rail + two panes on
-  tablets). `data/`: `SecureCookieJar` (session cookie encrypted with an AES-GCM key in the Android
-  Keystore, `noBackupFilesDir`), `ServerTrust` (system CAs first; certificates the owner imports or confirms
-  by fingerprint are trusted only for the configured server host; hostname verification unchanged),
-  `AppController` (the web's route guard: server → signup → login/recover → recovery key → link → main;
-  events run only in the foreground while logged in). `media/`: shared ExoPlayer for voice notes,
-  full-screen viewer, save via the system file picker, "open with" through a FileProvider cache copy.
+### Modules
+* `core/` — pure Kotlin/JVM (no Android classes), so protocol code is tested without an emulator:
+  * `Models.kt` mirrors `shared/api.d.ts`. Every field has a default where possible, unknown enum values fall
+    back to a default (`coerceInputValues`), numbers that may be fractional are `Double` (media width/height).
+  * `ApiClient` — OkHttp + kotlinx.serialization. Adds the browser-equivalent `Origin` header to requests
+    for the configured server (the server's Origin/CSRF checks apply unchanged), `X-CSRF-Token` on non-GET,
+    never follows redirects (a 3xx becomes an error that names the target), maps transport errors to
+    `ApiException` codes (`network`, `tls_untrusted`, `tls`, `redirect`, `not_wa_logger`). `probe()` checks
+    that `/api/state` really comes from wa_logger. **The whole request (send, body read, JSON decode) runs
+    in `withContext(Dispatchers.IO)`**: callers are on Android's main thread, where socket reads throw
+    `NetworkOnMainThreadException` (the 0.1.0 bug, see DEVLOG). `MainThreadNetworkTest` enforces this.
+  * `EventStream` — SSE (`/api/events`) with backoff 3 s→30 s, 65 s read timeout (server heartbeat 20 s),
+    stops on 401; `reopened` fires after a reconnect so screens reload what they missed.
+  * `WaText` (1:1 port of `web/src/lib/waText.tsx`, same test cases, same linear-time guarantees, UTF-16
+    indexing like JS; Extended_Pictographic table built in because Android's regex engine differs by version)
+    and `Format` (port of `format.ts`; `colorFor` gives the web's exact colors).
+  * `vnc/` — RFB 3.3/3.7/3.8 client over the `/api/vnc` WebSocket bridge: VNC auth with a built-in DES
+    (not every Android provider has plain DES), Raw/CopyRect/ZRLE, DesktopSize/LastRect; the remote
+    clipboard is skipped and never kept. Our pixel format is 32 bpp little-endian, so a ZRLE CPIXEL is B,G,R.
+* `app/` — the Android UI:
+  * `ui/theme` — the web's CSS tokens (`WaColors`, light/dark following the system) and the web's SVG icon
+    paths (`WaIcons`, generated from `web/src/components/Icon.tsx` plus a few extras). Custom components
+    (`ui/components`) reproduce `.btn`, `.pill`, `.badge`, `.chip`, `.search-box`, bubbles, etc.
+  * Screens mirror the web pages. Layout switches at 900 dp like the web: bottom rail on phones (hidden in a
+    chat), side rail + two panes on tablets. Navigation Compose with type-safe routes (`MainShell.kt`).
+    Screens take small state interfaces (`ChatState`, `ChatListState`, `DeletedState`) so screenshot tests
+    can render them with fake data.
+  * `data/` — `AppGraph` (singletons; `ServerSession` per server with its `ApiClient`, `EventStream`, Coil
+    image loader, shared audio player), `AppController` (the web's route guard: server → signup →
+    login/recover → recovery key → link → main; events run only in the foreground while logged in),
+    `SecureCookieJar` (session cookie AES-GCM-encrypted with a non-exportable Android Keystore key in
+    `noBackupFilesDir`, loaded lazily on a network thread, never throws on OkHttp threads), `ServerTrust`
+    (system CAs first; certificates the owner imports or confirms by SHA-256 fingerprint are trusted only
+    for the configured server host; hostname verification unchanged), `Prefs`, `Diagnostics`.
+  * `media/` — one shared ExoPlayer for voice notes, full-screen viewer (zoomable photos, streamed
+    video/GIF via OkHttp data source with Range), save through the system file picker, "open with" through
+    a FileProvider copy in the app cache (deleted at the next start).
+  * `ui/vnc/VncView` — double-buffered bitmap, tap = click, drag = wheel scroll (pan when zoomed or
+    view-only), pinch = zoom, keyboard bar that sends typed text as keysyms (needed for "Log in with phone
+    number" when WhatsApp is on the same phone).
 
-Security choices: `FLAG_SECURE` on by default, `allowBackup=false` + data extraction rules excluding
-everything, no disk cache for media (Coil memory cache only, ExoPlayer without cache), user-installed CAs
-not trusted (network security config), cleartext allowed by the platform config but gated in the app
-(explicit confirmation for HTTP to a non-private address). CI (`android` job) runs the unit tests, lint and
-builds a debug APK artifact.
+### Robustness and diagnostics
+* App and session coroutine scopes carry a `CoroutineExceptionHandler` that records failures instead of
+  crashing; view models report unexpected (non-API) errors through `ServerSession.fail()`.
+* `Diagnostics` writes local crash reports (uncaught exceptions) and picks up ANR traces of the main thread
+  from `ApplicationExitInfo` (Android 11+). The next start shows them with a Copy button (also Settings →
+  App → Crash reports). Reports hold stack frames, exception types, sanitized messages (JSON input excerpts
+  removed), app/Android version and phone model — never content — and are never sent anywhere. When the owner
+  reports a problem, ask for this report first.
+* Lists are de-duplicated before `LazyColumn` (duplicate keys crash Compose); jump-to-message uses
+  `scrollToItem` + `scrollBy` (no negative offsets).
+
+### Security choices
+`FLAG_SECURE` on by default (switch in Settings → App), `allowBackup=false` + data extraction rules excluding
+everything, no disk cache for media (Coil memory cache only, ExoPlayer without cache), user-installed CAs not
+trusted (network security config), cleartext allowed by the platform config but gated in the app (explicit
+confirmation for HTTP to a non-private address), only `http(s)` links are tappable, copied message text is
+marked sensitive.
+
+### Build, test, release
+* Tests: `:core:test` (unit tests incl. the UI-thread rule, ZRLE/RFB/DES, MockWebServer client tests),
+  `:app:testDebugUnitTest` (Robolectric renders of every main screen; `recordRoborazziDebug` writes PNGs to
+  `app/build/screenshots/` to compare with the web's `docs/screenshots`), and `LiveServerTest` (opt-in via
+  `WAL_IT_*` env vars) against a real stack: `scripts/smoke.sh --keep`, seed with `server/src/testutil/seed.ts`
+  into the stack's `app_data` volume (`chown -R 10001:10001` afterwards), trust Caddy's `root.crt`.
+* No device or emulator is available on the dev LXC (no KVM). Code that only misbehaves on Android
+  (threading rules, Keystore, R8) can't be caught by the JVM tests, so reason about it explicitly.
+* **R8 is disabled** for release builds (`isMinifyEnabled = false`): minified builds couldn't be verified
+  (0.1.0's mapping renamed route classes; Navigation resolves route serializers reflectively). Re-enable
+  only after testing a minified build on an emulator/device; `proguard-rules.pro` is kept for that.
+* CI job `android`: `:core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug` and uploads the
+  debug APK artifact.
+* Releases are manual (the signing key never goes to CI): bump `versionCode`/`versionName` in
+  `app/build.gradle.kts`, build `assembleRelease` from a clean clone, `gh release create android-vX.Y.Z <apk>`
+  with the APK and signing-certificate SHA-256 in the notes. Use the `android-v` tag prefix: plain `v*` tags
+  make CI publish versioned server images. Updates must be signed with the same key (location in Claude's
+  project memory, not in the repo).

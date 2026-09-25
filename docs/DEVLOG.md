@@ -140,3 +140,4 @@ messages didn't load, the app crashed now and then, and it sometimes showed "not
   showed renamed route classes; navigation resolves route serializers reflectively).
 - Verification: unit + screenshot tests, lint, and the live end-to-end test against a fresh smoke stack.
   Still not run on a device (no KVM on the LXC; the owner plans a bigger server).
+- The owner installed 0.1.1 and confirmed it works (chats and messages load, no crashes).

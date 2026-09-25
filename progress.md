@@ -136,7 +136,7 @@ Update this file whenever a step is completed.
 - [x] Tests: 25 core unit tests, 11 screenshot renders (Robolectric/Roborazzi), live end-to-end test against the smoke stack (incl. real x11vnc)
 - [x] CI `android` job (tests, lint, debug APK artifact); signed release build (key kept outside the repo)
 - [x] 0.1.1: network reads off the main thread (fixes messages not loading / crashes / ANR on a real phone), crash & ANR reports, R8 off
-- [ ] Owner: confirm 0.1.1 on the phone (send the in-app crash report if anything still fails)
+- [x] Owner confirmed 0.1.1 works on the phone (Samsung, One UI 8.5, HTTP mode)
 - [ ] Emulator on a KVM-capable host to verify release builds, then re-enable R8
 
 ## Next ideas (not started)
