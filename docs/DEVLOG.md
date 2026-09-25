@@ -87,3 +87,32 @@ CDP probes, now packaged as `scripts/wa-diagnose.js`:
 ### Not verified yet
 - Real-world behaviour of edits, revokes and reactions for *live* messages on the owner's account. Unit and
   fake-event tests pass; the owner should send, edit and delete a test message.
+
+## 2026-09-25 — native Android client
+
+### What was built
+- `android_client/`: Kotlin + Jetpack Compose app with the web UI's design (CSS tokens, SVG icons, bubbles,
+  badges, pills, 900 dp breakpoint), not a WebView wrapper. Pure-JVM `core` module (API, SSE, formatter,
+  RFB) so the protocol code is testable without an emulator; `app` module for the UI.
+- WA Web is a native VNC client (RFB over the existing `/api/vnc` WebSocket bridge, ZRLE decoding, VNC auth
+  with a built-in DES because not every Android provider exposes plain DES). Touch: tap = click, drag = wheel
+  scroll, pinch = zoom; a keyboard bar sends typed text (needed for "Log in with phone number" when the
+  phone with WhatsApp is the same phone running the app).
+- No server changes were needed: the app sends the same `Origin` a browser would, so the existing
+  Origin/CSRF checks apply unchanged.
+
+### Verification
+- No KVM on the LXC, so no emulator. Instead: core unit tests (formatter tests ported from the web,
+  `colorFor` parity values computed from the web code, ZRLE against a test encoder, a scripted RFB server,
+  DES against the JDK + FIPS vector, MockWebServer for the client), Robolectric/Roborazzi renders of every
+  main screen compared by eye with `docs/screenshots` (phone, dark, tablet two-pane), and `LiveServerTest`
+  against a real smoke stack with seed data: login, CSRF, decrypted chats/edits/quotes, Range media,
+  SSE, a real x11vnc session (the decoded framebuffer showed WhatsApp Web's QR page), logout.
+
+### Incident
+- The LXC froze and had to be rebooted from Proxmox while `scripts/smoke.sh` was building the three images
+  and Gradle + Robolectric were running at the same time (4 GB RAM). Now: Gradle heap capped, Kotlin
+  compiled in-process, and Docker builds and Gradle are run one after the other.
+
+### Not verified yet
+- Running on a real phone (no device/emulator here), release build (R8) behaviour on device.

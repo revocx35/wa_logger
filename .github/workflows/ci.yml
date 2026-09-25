@@ -60,6 +60,30 @@ jobs:
       - name: Built UI must not need inline scripts (strict CSP)
         run: "! grep -E '<script>|<script [^>]*>[^<]' web/dist/index.html"
 
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android_client
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          validate-wrappers: true
+      - name: Unit tests (core + UI screenshots render), lint, debug APK
+        run: ./gradlew --no-daemon :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wa_logger-android-debug
+          path: android_client/app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+
   images:
     runs-on: ubuntu-latest
     needs: [server, web]

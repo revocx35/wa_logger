@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Only the system CAs are trusted by the platform (user-installed CAs are NOT: a CA someone adds to the
+  phone must not be able to read private messages). Certificates the owner trusts for their own server
+  are handled inside the app (ServerTrust), scoped to that server.
+  Cleartext is permitted at this level because self-hosted servers often run plain HTTP inside the home
+  network (HTTP mode); the app asks for explicit confirmation before using HTTP to a public address.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

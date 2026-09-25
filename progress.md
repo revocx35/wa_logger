@@ -127,7 +127,18 @@ Update this file whenever a step is completed.
 - [x] `scripts/dev/` (UI walkthrough, live-update test) + README; `docs/DEVLOG.md`; ARCHITECTURE §11; CLAUDE.md
 - [x] Old LXC deployment and its data deleted (production runs on the owner's VM, HTTP mode behind their proxy)
 
+## Phase 13 — Native Android client (`android_client/`)
+- [x] Gradle project: `core` (pure Kotlin/JVM) + `app` (Compose); wrapper with pinned checksum
+- [x] core: API models/client (Origin + CSRF), SSE event stream, WhatsApp formatter + formatting ports, RFB/VNC client (ZRLE, DES)
+- [x] app: web design tokens + icons, all pages (connect, signup, login, recover, recovery key, link, chats, chat, deleted, search, WA Web, settings)
+- [x] Native media (photo viewer, streamed video/GIF, voice player, stickers, save/open documents), native VNC view with touch + keyboard
+- [x] Security: Keystore-encrypted session cookie, no backups, FLAG_SECURE default, server-scoped certificate trust, HTTP gating, no media disk cache
+- [x] Tests: 25 core unit tests, 11 screenshot renders (Robolectric/Roborazzi), live end-to-end test against the smoke stack (incl. real x11vnc)
+- [x] CI `android` job (tests, lint, debug APK artifact); signed release build (key kept outside the repo)
+- [ ] Owner: install on a phone and try it against the production server
+
 ## Next ideas (not started)
+- Android: push notifications for deletions (needs a server-side push channel; SSE only runs in the foreground)
 - Retry expired history media via WhatsApp's phone re-upload ("media retry") instead of marking it unavailable
 - Poll vote tallies (`vote_update` events) and group participant lists
 - Export (encrypted archive) / import for moving instances without copying Docker volumes

@@ -23,6 +23,8 @@ Read these first, every session:
 ## Commands
 - Server: `cd server && npm test && npm run typecheck` (install with `PUPPETEER_SKIP_DOWNLOAD=true npm ci`).
 - Web: `cd web && npm test && npm run build`.
+- Android: `cd android_client && ./gradlew :core:test :app:testDebugUnitTest :app:assembleDebug` (JDK 21, SDK at
+  /opt/android-sdk on this LXC). Screenshots: `./gradlew :app:recordRoborazziDebug`. See `android_client/README.md`.
 - Full stack from source: `scripts/smoke.sh` (23 checks). Standalone layout: `scripts/smoke.sh --deploy`.
 - UI/SSE browser tests: `scripts/dev/README.md`. Sample data: `server/src/testutil/seed.ts`.
 - Live instance health (read-only, aggregates only): `docker compose exec -T app node - < scripts/wa-diagnose.js`.
@@ -35,6 +37,9 @@ Read these first, every session:
   WhatsApp session): `docker compose up -d --no-deps app`.
 
 ## Gotchas learned the hard way
+- The dev LXC has 4 GB RAM: never run a Docker stack build/start and Gradle at the same time (the LXC froze once).
+  Gradle is capped in `android_client/gradle.properties`; stop the smoke stack while Gradle runs.
+- `android_client/core` mirrors `shared/api.d.ts` and ports `web/src/lib/{waText,format}`: change them together.
 - Inside `page.evaluate()` run via `tsx`, named helper functions get wrapped with `__name` (undefined in the page).
 - Compose `configs.content` fails for `read_only` services, so the Caddyfiles are baked into the caddy image.
 - Opening the site by IP means no SNI, so Caddy needs `default_sni`. Some browsers block `crossorigin` scripts on self-signed certs.

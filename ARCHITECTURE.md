@@ -385,3 +385,30 @@ AAD context `msgbody|<messageId>`, so an edit can move the old ciphertext into `
   run `docker compose exec -T app node - < scripts/wa-diagnose.js` on the host. It prints only aggregates (no
   content): WhatsApp Web version, chat counts, whether whatsapp-web.js chat helpers still work, whether rebuilt
   message keys still match `MsgKey.toString()`, media stages, and DB stats. Then check `docs/wwebjs-notes.md`.
+
+## 12. Android client — `android_client/`
+
+A native client for the same API (no WebView). Kotlin 2.4, Jetpack Compose, AGP 9 (built-in Kotlin),
+minSdk 26, compile/target SDK 37. Two Gradle modules:
+
+* `core/` — pure Kotlin/JVM, unit-tested on the JVM and against a live stack (`LiveServerTest`):
+  `Models.kt` mirrors `shared/api.d.ts` (unknown enum values fall back to defaults), `ApiClient` (OkHttp,
+  JSON, `X-CSRF-Token` on non-GET, the browser-equivalent `Origin` header on requests to the server, never
+  follows redirects), `EventStream` (SSE with backoff; `reopened` lets screens reload what they missed),
+  `WaText` (1:1 port of `web/src/lib/waText.tsx`, same tests), `Format` (port of `format.ts`, identical
+  `colorFor`), `vnc/` (RFB 3.3–3.8 client: VNC auth with a built-in DES, Raw/CopyRect/ZRLE,
+  DesktopSize/LastRect; the server clipboard is never read) over the `/api/vnc` WebSocket bridge.
+* `app/` — the UI. `ui/theme` holds the web's CSS tokens (light/dark) and its SVG icons; screens mirror
+  the web pages; layout switches at 900 dp like the web (bottom rail on phones, side rail + two panes on
+  tablets). `data/`: `SecureCookieJar` (session cookie encrypted with an AES-GCM key in the Android
+  Keystore, `noBackupFilesDir`), `ServerTrust` (system CAs first; certificates the owner imports or confirms
+  by fingerprint are trusted only for the configured server host; hostname verification unchanged),
+  `AppController` (the web's route guard: server → signup → login/recover → recovery key → link → main;
+  events run only in the foreground while logged in). `media/`: shared ExoPlayer for voice notes,
+  full-screen viewer, save via the system file picker, "open with" through a FileProvider cache copy.
+
+Security choices: `FLAG_SECURE` on by default, `allowBackup=false` + data extraction rules excluding
+everything, no disk cache for media (Coil memory cache only, ExoPlayer without cache), user-installed CAs
+not trusted (network security config), cleartext allowed by the platform config but gated in the app
+(explicit confirmation for HTTP to a non-private address). CI (`android` job) runs the unit tests, lint and
+builds a debug APK artifact.

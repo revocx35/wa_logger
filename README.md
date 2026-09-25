@@ -374,6 +374,12 @@ docker run --rm -v wa_logger_app_data:/data -v "$PWD":/backup debian:trixie-slim
 | Lost password | Use **Forgot your password?** on the login page with your recovery key. |
 | Custom reverse-proxy settings | Mount your own Caddyfile: `volumes: [./Caddyfile:/etc/caddy/Caddyfile:ro]` on the `caddy` service. |
 
+## Android app
+
+`android_client/` is a native Android client with the same design as the web UI (chats, deleted feed,
+search, media, WA Web, settings, onboarding). See [android_client/README.md](android_client/README.md) for
+installing, connecting (HTTPS, HTTP mode, Caddy's internal CA) and building.
+
 ## Development
 
 ```bash
@@ -381,6 +387,7 @@ cd server && PUPPETEER_SKIP_DOWNLOAD=true npm ci && npm test && npm run typechec
 cd web && npm ci && npm test && npm run build
 scripts/smoke.sh            # full stack end-to-end test in an isolated compose project (22 checks)
 scripts/smoke.sh --deploy   # same checks against deploy/docker-compose.yml from an empty directory
+cd android_client && ./gradlew :core:test :app:testDebugUnitTest :app:assembleDebug   # Android client
 ```
 
 Useful docs: [ARCHITECTURE.md](ARCHITECTURE.md) (design), [progress.md](progress.md) (build checklist),
