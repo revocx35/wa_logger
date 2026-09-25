@@ -2,6 +2,7 @@ package io.github.revocx35.walogger
 
 import android.app.Application
 import io.github.revocx35.walogger.data.AppGraph
+import io.github.revocx35.walogger.data.Diagnostics
 import io.github.revocx35.walogger.media.MediaOps
 
 class WaLoggerApp : Application() {
@@ -10,7 +11,8 @@ class WaLoggerApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        val diagnostics = Diagnostics(this).also { it.install() }
         MediaOps.cleanup(this)
-        graph = AppGraph(this)
+        graph = AppGraph(this, diagnostics)
     }
 }

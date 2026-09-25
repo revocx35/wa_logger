@@ -22,8 +22,8 @@ android {
         applicationId = "io.github.revocx35.walogger"
         minSdk = 26
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
     }
 
     signingConfigs {
@@ -39,8 +39,11 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            // R8 is off until release builds can be checked on a device/emulator: minified code differs
+            // from what the tests run (e.g. reflective serializer lookups for navigation routes), and 0.1.0
+            // showed release-only problems can't be caught here. Re-enable with proguard-rules.pro then.
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.findByName("release")
         }

@@ -125,6 +125,17 @@ fun AppRoot(graph: AppGraph) {
         }
     }
 
+    // A crash or "not responding" since the last start: offer the report (stays on the phone unless copied).
+    var report by remember { mutableStateOf(graph.diagnostics.unseen()) }
+    report?.let {
+        io.github.revocx35.walogger.ui.components.ReportDialog(
+            "wa_logger stopped unexpectedly",
+            "Something went wrong the last time the app ran. The report below contains only technical details (no messages, names or passwords). Copy it and send it to whoever maintains your app.",
+            it,
+            onClose = { graph.diagnostics.markSeen(); report = null },
+        )
+    }
+
     val cert = reviewCert
     val sess = session
     if (cert != null && sess != null) {

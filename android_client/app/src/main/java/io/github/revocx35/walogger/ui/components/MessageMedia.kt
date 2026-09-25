@@ -159,7 +159,9 @@ fun MessageMedia(msg: Message, maxWidth: Dp) {
         return
     }
     val width = minOf(330.dp, maxWidth)
-    val aspect = if ((m.width ?: 0) > 0 && (m.height ?: 0) > 0) m.width!!.toFloat() / m.height!! else null
+    val w = m.width ?: 0.0
+    val h = m.height ?: 0.0
+    val aspect = if (w > 0 && h > 0) (w / h).toFloat() else null
     when (msg.type) {
         MessageType.Image -> {
             val shape = RoundedCornerShape(6.dp)

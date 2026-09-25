@@ -11,7 +11,10 @@ import io.github.revocx35.walogger.BuildConfig
 import io.github.revocx35.walogger.core.ApiClient
 import io.github.revocx35.walogger.core.EventStream
 import io.github.revocx35.walogger.core.parseServerUrl
+import io.github.revocx35.walogger.core.userMessage
 import io.github.revocx35.walogger.media.AudioController
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -22,11 +25,13 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /** App-wide singletons (created once in [io.github.revocx35.walogger.WaLoggerApp]). */
-class AppGraph(val context: Context) {
+class AppGraph(val context: Context, val diagnostics: Diagnostics) {
     val prefs = Prefs(context)
     val cookies = SecureCookieJar(context)
     val trust = ServerTrust(prefs)
-    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    /** Background work must never take the app down: record unexpected failures instead. */
+    val errors = CoroutineExceptionHandler { ctx, e -> diagnostics.recordNonFatal(ctx[CoroutineName]?.name ?: "app", e) }
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + errors)
 
     private val userAgent = "wa_logger-android/${BuildConfig.VERSION_NAME} (Android ${Build.VERSION.RELEASE}; ${Build.MANUFACTURER} ${Build.MODEL})"
 
@@ -51,7 +56,7 @@ class AppGraph(val context: Context) {
  */
 class ServerSession(graph: AppGraph, val baseUrl: HttpUrl) {
     val id: String = UUID.randomUUID().toString()
-    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + graph.errors)
     val api = ApiClient(graph.baseClient, baseUrl)
     val events = EventStream(api, scope)
 
@@ -70,6 +75,14 @@ class ServerSession(graph: AppGraph, val baseUrl: HttpUrl) {
     val audio: AudioController by lazy {
         audioUsed = true
         AudioController(graph.context, api.http, scope)
+    }
+
+    private val diagnostics = graph.diagnostics
+
+    /** UI text for a failed operation; unexpected (non-API) failures also go into the crash report. */
+    fun fail(where: String, e: Throwable): String {
+        if (e !is io.github.revocx35.walogger.core.ApiException && e !is kotlinx.coroutines.CancellationException) diagnostics.recordNonFatal(where, e)
+        return e.userMessage()
     }
 
     /** Absolute URL for a server-relative `/api/media/…` URL. */

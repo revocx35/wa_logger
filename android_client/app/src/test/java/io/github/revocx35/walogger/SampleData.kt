@@ -74,7 +74,7 @@ object SampleData {
             m(ALI, ALI, t0 + 180_000, text = "Actually I told Zeynep your secret 🙈 (oops)") { copy(deletedAt = t0 + 180_000, deletedBy = "sender") },
             m(ALI, ALI, now - D, text = "Meet at 8pm instead") { copy(edited = true, editCount = 1, editedAt = now - D) },
             m(ALI, ALI, now - D + 400_000, MessageType.Image, "The venue 📍") {
-                copy(media = MediaInfo(MediaStatus.Downloaded, "/api/media/1", "image/png", null, 40_000, 640, 400, null, checker(160, 100, 0xFF00A884.toInt())))
+                copy(media = MediaInfo(MediaStatus.Downloaded, "/api/media/1", "image/png", null, 40_000, 640.0, 400.0, null, checker(160, 100, 0xFF00A884.toInt())))
             },
             m(ALI, ALI, now - D + 1_400_000, MessageType.Location) { copy(location = LocationInfo(41.0082, 28.9784, "Sultanahmet Square", "Istanbul")) },
             m(ALI, null, now - D + 2_400_000, MessageType.Ptt) { copy(media = MediaInfo(MediaStatus.Failed, null, "audio/ogg", null, 24_000, null, null, 12.0, null)) },
@@ -95,7 +95,7 @@ object SampleData {
             m(GROUP, ZEYNEP, g0 + 90_000, MessageType.Document) { copy(media = MediaInfo(MediaStatus.Downloaded, "/api/media/2", "text/plain", "shopping-list.txt", 17, null, null, null, null)) },
             m(GROUP, ZEYNEP, g0 + 120_000, MessageType.Vcard) { copy(vcards = listOf(VcardInfo("Baker Shop", "BEGIN:VCARD\nFN:Baker Shop\nEND:VCARD"))) },
             m(GROUP, MERT, g0 + 150_000, MessageType.Image, "Embarrassing photo") {
-                copy(forwarded = true, deletedAt = g0 + 150_000, deletedBy = "admin", media = MediaInfo(MediaStatus.Downloaded, "/api/media/3", "image/png", null, 30_000, 400, 400, null, checker(100, 100, 0xFFEA0038.toInt())))
+                copy(forwarded = true, deletedAt = g0 + 150_000, deletedBy = "admin", media = MediaInfo(MediaStatus.Downloaded, "/api/media/3", "image/png", null, 30_000, 400.0, 400.0, null, checker(100, 100, 0xFFEA0038.toInt())))
             },
             m(GROUP, null, g0 + 200_000, text = "See you all 👋"),
             m(GROUP, MERT, g0 + 240_000, MessageType.CallLog) { copy(call = CallLogInfo(video = true, outcome = "missed")) },

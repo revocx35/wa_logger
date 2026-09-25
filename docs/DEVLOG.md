@@ -116,3 +116,27 @@ CDP probes, now packaged as `scripts/wa-diagnose.js`:
 
 ### Not verified yet
 - Running on a real phone (no device/emulator here), release build (R8) behaviour on device.
+
+## 2026-09-25 — Android 0.1.1: fixes for the first real-phone report
+
+The owner installed 0.1.0 on a Samsung (One UI 8.5 / Android 16, server in HTTP mode): login worked, but
+messages didn't load, the app crashed now and then, and it sometimes showed "not responding" on start.
+
+- **Root cause:** `ApiClient` resumed on the caller's dispatcher (the main thread) after the HTTP call and
+  read and decoded the response body there. Android forbids socket reads on the main thread
+  (`NetworkOnMainThreadException`): small responses (login) happened to be buffered already, larger ones
+  (chat list, message pages) failed, and uncaught cases crashed the app. The whole request now runs on
+  `Dispatchers.IO`. `MainThreadNetworkTest` recreates the Android rule on the JVM (sockets refuse reads on
+  the "UI" thread); it fails on the old code and passes now. The JVM tests had missed it because the JVM
+  has no such rule.
+- Startup: the Keystore-encrypted cookie store is loaded lazily on a network thread instead of in
+  `Application.onCreate`. Cookie persistence failures no longer throw on OkHttp threads.
+- Safety net: app/session coroutine scopes record unexpected failures instead of crashing; view models
+  record unexpected errors. New local **crash/ANR reports** (uncaught exceptions + `ApplicationExitInfo`
+  ANR traces of the main thread), shown on the next start with a Copy button; no message content.
+- Smaller: jump-to-message no longer uses a negative scroll offset; list items are de-duplicated (duplicate
+  keys crash LazyColumn); media width/height accepted as decimals.
+- R8 is disabled for release builds until a device/emulator can verify minified builds (0.1.0's mapping
+  showed renamed route classes; navigation resolves route serializers reflectively).
+- Verification: unit + screenshot tests, lint, and the live end-to-end test against a fresh smoke stack.
+  Still not run on a device (no KVM on the LXC; the owner plans a bigger server).

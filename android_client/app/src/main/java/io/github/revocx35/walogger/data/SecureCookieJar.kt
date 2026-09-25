@@ -24,31 +24,41 @@ import javax.crypto.spec.GCMParameterSpec
 class SecureCookieJar(context: Context) : CookieJar {
     private val file = File(context.noBackupFilesDir, "session.bin")
     private val cookies = ArrayList<Cookie>()
+    private var loaded = false
 
-    init {
+    // Loaded on first use (a network thread), not at app start: Keystore + file I/O on the main
+    // thread can take long enough on some phones to delay startup.
+    private fun ensureLoaded() {
+        if (loaded) return
+        loaded = true
         runCatching { load() }.onFailure { file.delete() }
     }
 
     @Synchronized
     override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+        ensureLoaded()
         var changed = false
         for (c in cookies) {
             this.cookies.removeAll { it.name == c.name && it.domain == c.domain && it.path == c.path }
             if (c.expiresAt > System.currentTimeMillis()) this.cookies.add(c)
             changed = true
         }
-        if (changed) persist()
+        // An exception here would surface on OkHttp's thread and kill the app: keep the cookie in
+        // memory only if the Keystore misbehaves.
+        if (changed) runCatching { persist() }.onFailure { file.delete() }
     }
 
     @Synchronized
     override fun loadForRequest(url: HttpUrl): List<Cookie> {
+        ensureLoaded()
         val now = System.currentTimeMillis()
-        if (cookies.removeAll { it.expiresAt <= now }) persist()
+        if (cookies.removeAll { it.expiresAt <= now }) runCatching { persist() }
         return cookies.filter { it.matches(url) }
     }
 
     @Synchronized
     fun clear() {
+        loaded = true
         cookies.clear()
         file.delete()
     }

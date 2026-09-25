@@ -80,7 +80,7 @@ SDK (`sdk.dir=/path/to/android-sdk`) or set `ANDROID_HOME`.
 ```bash
 cd android_client
 ./gradlew :app:assembleDebug        # app/build/outputs/apk/debug/app-debug.apk (installs as "…walogger.debug")
-./gradlew :app:assembleRelease      # minified; signed if keystore.properties exists (see below)
+./gradlew :app:assembleRelease      # signed if keystore.properties exists (see below); R8 is off for now
 ```
 
 Release signing: create `android_client/keystore.properties` (never committed):
@@ -100,7 +100,7 @@ prefix: plain `v*` tags make CI publish versioned server images.
 ## Tests
 
 ```bash
-./gradlew :core:test                    # API client, event parsing, WhatsApp formatter (ported web tests),
+./gradlew :core:test                    # API client (incl. "no network reads on the UI thread"), events, formatter (ported web tests),
                                         # formatting parity with the web, RFB/ZRLE/DES (VNC)
 ./gradlew :app:testDebugUnitTest        # renders every main screen (Robolectric)
 ./gradlew :app:recordRoborazziDebug     # …and writes the screenshots to app/build/screenshots/
@@ -121,6 +121,13 @@ core/   pure Kotlin/JVM (no Android): API DTOs (mirror of shared/api.d.ts), ApiC
 app/    Android UI: theme (web CSS tokens), components (bubbles, media, avatars…), screens, VNC view,
         data/ (Keystore cookie jar, server trust, session/controller), media/ (player, viewer, save/open)
 ```
+
+## Crash reports
+
+If the app crashes or Android says it isn't responding, the next start shows a report with a **Copy report**
+button (also under Settings → App → Crash reports). It contains only technical details (stack frames,
+error types, app/Android version, phone model), never messages, names or passwords, and it is not sent
+anywhere by itself.
 
 ## Not included (yet)
 

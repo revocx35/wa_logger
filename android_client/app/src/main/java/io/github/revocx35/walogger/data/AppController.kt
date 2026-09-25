@@ -135,9 +135,10 @@ class AppController(private val graph: AppGraph) {
                 st.wa?.let { _wa.value = it }
                 syncEvents()
                 if (!st.authenticated) graph.cookies.clear()
-            } catch (e: ApiException) {
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 if (_session.value === s) {
-                    _error.value = e
+                    _error.value = e as? ApiException ?: ApiException(0, "internal", s.fail("state", e), cause = e)
                     // Keep showing the last known state on transient errors once logged in.
                     if (_state.value?.authenticated != true) _state.value = null
                 }

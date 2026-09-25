@@ -174,8 +174,9 @@ data class MediaInfo(
     val mime: String? = null,
     val filename: String? = null,
     val size: Long? = null,
-    val width: Int? = null,
-    val height: Int? = null,
+    // WhatsApp's media dimensions are occasionally non-integers; accept any number.
+    val width: Double? = null,
+    val height: Double? = null,
     val durationSec: Double? = null,
     val thumbDataUrl: String? = null,
 )

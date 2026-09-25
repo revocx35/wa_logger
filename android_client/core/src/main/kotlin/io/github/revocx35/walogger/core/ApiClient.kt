@@ -1,6 +1,8 @@
 package io.github.revocx35.walogger.core
 
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.serializer
@@ -160,29 +162,34 @@ class ApiClient(baseClient: OkHttpClient, val baseUrl: HttpUrl) {
             builder.method(method, json.toRequestBody(JSON_TYPE))
             csrfToken?.let { builder.header("X-CSRF-Token", it) }
         }
-        val response = try {
-            http.newCall(builder.build()).await()
-        } catch (e: IOException) {
-            throw mapTransportError(e)
-        }
-        response.use { res ->
-            val text = try {
-                res.body.string()
+        // Everything that touches the socket (sending, reading the body) and the JSON decoding runs on the
+        // IO dispatcher: callers are usually on Android's main thread, where network reads are forbidden
+        // (NetworkOnMainThreadException) and slow ones would freeze the UI.
+        return withContext(Dispatchers.IO) {
+            val response = try {
+                http.newCall(builder.build()).await()
             } catch (e: IOException) {
                 throw mapTransportError(e)
             }
-            if (!res.isSuccessful) {
-                if (res.isRedirect) {
-                    throw ApiException(res.code, ApiException.REDIRECT, "The server redirected the request (to ${res.header("Location")?.toHttpUrlOrNull()?.originString() ?: "another address"}). Use that address instead.")
+            response.use { res ->
+                val text = try {
+                    res.body.string()
+                } catch (e: IOException) {
+                    throw mapTransportError(e)
                 }
-                val err = runCatching { WaJson.decodeFromString(ApiErrorBody.serializer(), text).error }.getOrNull()
-                if (res.code == 401 && err?.code == "unauthorized") onUnauthorized?.invoke()
-                throw ApiException(res.code, err?.code ?: "http_error", err?.message?.takeIf { it.isNotBlank() } ?: "Request failed (${res.code}).", err?.retryAfter)
-            }
-            return try {
-                WaJson.decodeFromString(out, text.ifEmpty { "null" })
-            } catch (e: Exception) {
-                throw ApiException(res.code, ApiException.NOT_WA_LOGGER, "Unexpected response from the server. Is this a wa_logger server?", cause = e)
+                if (!res.isSuccessful) {
+                    if (res.isRedirect) {
+                        throw ApiException(res.code, ApiException.REDIRECT, "The server redirected the request (to ${res.header("Location")?.toHttpUrlOrNull()?.originString() ?: "another address"}). Use that address instead.")
+                    }
+                    val err = runCatching { WaJson.decodeFromString(ApiErrorBody.serializer(), text).error }.getOrNull()
+                    if (res.code == 401 && err?.code == "unauthorized") onUnauthorized?.invoke()
+                    throw ApiException(res.code, err?.code ?: "http_error", err?.message?.takeIf { it.isNotBlank() } ?: "Request failed (${res.code}).", err?.retryAfter)
+                }
+                try {
+                    WaJson.decodeFromString(out, text.ifEmpty { "null" })
+                } catch (e: Exception) {
+                    throw ApiException(res.code, ApiException.NOT_WA_LOGGER, "Unexpected response from the server. Is this a wa_logger server?", cause = e)
+                }
             }
         }
     }

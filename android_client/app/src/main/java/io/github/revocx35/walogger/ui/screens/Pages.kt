@@ -91,11 +91,11 @@ class DeletedViewModel(private val session: ServerSession) : ViewModel(), Delete
         viewModelScope.launch {
             try {
                 val page = session.api.deleted(before)
-                items = if (more) (items ?: emptyList()) + page.items else page.items
+                items = (if (more) (items ?: emptyList()) + page.items else page.items).distinctBy { it.message.id }
                 next = page.nextBefore
                 error = null
             } catch (e: Exception) {
-                error = e.userMessage()
+                error = session.fail(javaClass.simpleName, e)
             } finally {
                 busy = false
             }
@@ -186,7 +186,7 @@ class SearchViewModel(private val session: ServerSession, initial: String) : Vie
             try {
                 result = session.api.search(q)
             } catch (e: Exception) {
-                error = e.userMessage()
+                error = session.fail(javaClass.simpleName, e)
             } finally {
                 busy = false
             }
@@ -214,7 +214,7 @@ fun SearchScreen(query: String, onQuery: (String) -> Unit, result: SearchRespons
             item {
                 MutedText("${result.hits.size} result${if (result.hits.size == 1) "" else "s"}" + if (result.truncated) " (search stopped early — refine your query for more)" else "", style = WaType.small)
             }
-            items(result.hits, key = { it.message.id }) { h ->
+            items(result.hits.distinctBy { it.message.id }, key = { it.message.id }) { h ->
                 Row(
                     Modifier.widthIn(max = 900.dp).fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(c.panel2).clickable { onOpen(h.chat.id, h.message.id) }.padding(horizontal = 12.dp, vertical = 10.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),

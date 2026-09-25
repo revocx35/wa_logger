@@ -449,6 +449,18 @@ private fun AppSection(d: SettingsDeps) {
         }
         WaButton("Import a CA certificate…", { importCa.launch(arrayOf("*/*")) }, style = BtnStyle.Ghost, icon = WaIcons.shield)
         ErrorNote(error)
+        var reports by remember { mutableStateOf<String?>(null) }
+        var showReports by remember { mutableStateOf(false) }
+        WaButton("Crash reports", { reports = graph?.diagnostics?.all(); showReports = true }, style = BtnStyle.Ghost, icon = WaIcons.warning)
+        if (showReports) {
+            io.github.revocx35.walogger.ui.components.ReportDialog(
+                "Crash reports",
+                "Crashes, \"not responding\" events and unexpected errors recorded on this phone. Only technical details, never message content.",
+                reports,
+                onClose = { graph?.diagnostics?.markSeen(); showReports = false },
+                onClear = { graph?.diagnostics?.clear(); reports = null },
+            )
+        }
         MutedText("wa_logger for Android ${BuildConfig.VERSION_NAME}", style = WaType.small)
     }
 }

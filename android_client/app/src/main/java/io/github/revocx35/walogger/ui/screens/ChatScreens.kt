@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -107,7 +109,7 @@ fun ChatListPane(
         }
         ErrorNote(state.error, Modifier.padding(horizontal = 12.dp))
         val chats = state.chats
-        val visible = state.visible()
+        val visible = state.visible().distinctBy { it.id }
         when {
             chats == null -> Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { Spinner() }
             visible.isEmpty() -> EmptyState(WaIcons.chats, if (chats.isNotEmpty()) "No matching chats" else "No chats logged yet") {
@@ -214,7 +216,7 @@ fun ChatPane(state: ChatState, onBack: (() -> Unit)?, wide: Boolean, baseActions
         val out = ArrayList<Row_>()
         var lastDay = Long.MIN_VALUE
         var prev: Message? = null
-        for (m in state.messages) {
+        for (m in state.messages.distinctBy { it.id }) {
             val dk = fmt.dayKey(m.ts)
             if (dk != lastDay) {
                 out.add(Row_.Day("d-$dk", fmt.dayLabel(m.ts)))
@@ -253,8 +255,15 @@ fun ChatPane(state: ChatState, onBack: (() -> Unit)?, wide: Boolean, baseActions
                     val r = withTimeoutOrNull(5000) { snapshotFlow { currentRows }.first { indexIn(it, s.messageId) >= 0 } } ?: return@collect
                     withFrameNanos { }
                     val i = indexIn(r, s.messageId)
-                    val offset = -(listState.layoutInfo.viewportSize.height / 3)
-                    if (s.smooth) listState.animateScrollToItem(i, offset) else listState.scrollToItem(i, offset)
+                    // Put the message about a third down the screen (scroll to it, then back up a bit).
+                    val back = listState.layoutInfo.viewportSize.height / 3f
+                    if (s.smooth) {
+                        listState.animateScrollToItem(i)
+                        listState.animateScrollBy(-back)
+                    } else {
+                        listState.scrollToItem(i)
+                        listState.scrollBy(-back)
+                    }
                 }
             }
         }
@@ -301,7 +310,7 @@ fun ChatPane(state: ChatState, onBack: (() -> Unit)?, wide: Boolean, baseActions
                     if (hits != null) {
                         LazyColumn {
                             if (hits.isEmpty()) item { MutedText("No results", Modifier.padding(16.dp), style = WaType.small) }
-                            items(hits, key = { it.message.id }) { h ->
+                            items(hits.distinctBy { it.message.id }, key = { it.message.id }) { h ->
                                 Column(
                                     Modifier.fillMaxWidth().clickable { state.jump(h.message.id) }.padding(horizontal = 16.dp, vertical = 8.dp),
                                 ) {

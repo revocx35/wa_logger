@@ -81,7 +81,7 @@ class ChatListViewModel(private val session: ServerSession) : ViewModel(), ChatL
                 chats = session.api.chats()
                 error = null
             } catch (e: Exception) {
-                error = e.userMessage()
+                error = session.fail(javaClass.simpleName, e)
             }
         }
     }
@@ -190,7 +190,7 @@ class ChatViewModel(private val session: ServerSession, override val chatId: Str
                     _scroll.tryEmit(ChatScroll.Bottom)
                 }
             } catch (e: Exception) {
-                error = e.userMessage()
+                error = session.fail(javaClass.simpleName, e)
             } finally {
                 loading = false
             }
@@ -236,7 +236,7 @@ class ChatViewModel(private val session: ServerSession, override val chatId: Str
                 messages = sortMessages(page.messages.filter { it.id !in known } + messages)
                 nextBefore = page.nextBefore
             } catch (e: Exception) {
-                error = e.userMessage()
+                error = session.fail(javaClass.simpleName, e)
             } finally {
                 loadingOlder = false
             }
@@ -254,7 +254,7 @@ class ChatViewModel(private val session: ServerSession, override val chatId: Str
                 messages = sortMessages(messages + page.messages.filter { it.id !in known })
                 nextAfter = page.nextAfter
             } catch (e: Exception) {
-                error = e.userMessage()
+                error = session.fail(javaClass.simpleName, e)
             } finally {
                 loadingNewer = false
             }
@@ -287,7 +287,7 @@ class ChatViewModel(private val session: ServerSession, override val chatId: Str
             try {
                 hits = session.api.search(q, chatId).hits
             } catch (e: Exception) {
-                error = e.userMessage()
+                error = session.fail(javaClass.simpleName, e)
             }
         }
     }
