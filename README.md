@@ -378,7 +378,8 @@ docker run --rm -v wa_logger_app_data:/data -v "$PWD":/backup debian:trixie-slim
 
 `android_client/` is a native Android client with the same design as the web UI (chats, deleted feed,
 search, media, WA Web, settings, onboarding). See [android_client/README.md](android_client/README.md) for
-installing, connecting (HTTPS, HTTP mode, Caddy's internal CA) and building.
+installing, connecting (HTTPS, HTTP mode, Caddy's internal CA) and building. The APK is on the
+[Releases](https://github.com/revocx35/wa_logger/releases) page.
 
 ## Development
 

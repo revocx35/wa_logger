@@ -31,9 +31,10 @@ Everything the web UI does, through the same server API (`shared/api.d.ts`):
 
 ## Install
 
-1. Get the APK: a debug build is attached to every CI run (**Actions → CI → wa_logger-android-debug**), or
-   build it yourself (below). Copy it to the phone and open it (allow "install unknown apps" for your file
-   manager / browser once).
+1. Download the APK from the [Releases](https://github.com/revocx35/wa_logger/releases) page (tags
+   `android-v…`), copy it to the phone and open it (allow "install unknown apps" for your file manager or
+   browser once). Every CI run also has an unsigned-for-release debug build (**Actions → CI →
+   wa_logger-android-debug**; it installs as a separate app).
 2. Open **wa_logger**, enter your server address — the same one you open in the browser.
 
 Requires Android 8.0 (API 26) or newer.
@@ -90,6 +91,11 @@ keyAlias=…
 keyPassword=…
 ```
 Keep that keystore: Android only installs updates signed with the same key.
+
+Publishing a release (done by hand, the signing key never goes to CI): bump `versionCode`/`versionName` in
+`app/build.gradle.kts`, build the release APK, then
+`gh release create android-vX.Y.Z wa_logger-android-X.Y.Z.apk --title "Android X.Y.Z"`. Use the `android-v`
+prefix: plain `v*` tags make CI publish versioned server images.
 
 ## Tests
 
