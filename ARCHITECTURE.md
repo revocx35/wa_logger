@@ -63,6 +63,16 @@ Out of scope on purpose: sending messages, multiple WhatsApp accounts or tenants
 * HTTP mode (`CADDY_CONFIG=Caddyfile.http`, `setup.sh --http-only`): Caddy serves plain HTTP behind the user's own
   TLS reverse proxy and trusts X-Forwarded-* from private ranges. The app uses `TRUST_PROXY=2` and
   `COOKIE_SECURE=auto`: `Secure`/`__Host-` cookies and HSTS whenever the request arrived over HTTPS.
+  * Client IP (used by the login throttle): Nginx Proxy Manager *appends* the address it saw to the client's
+    `X-Forwarded-For` (`$proxy_add_x_forwarded_for`), and Caddy, trusting NPM's private address, appends NPM's. The
+    app trusts exactly `TRUST_PROXY` hops from the right (Caddy's socket + NPM's entry), so the client IP is the
+    entry NPM appended, and anything a client puts in front of it is ignored.
+  * The hop count must match reality. Too low (`1` behind NPM): every client looks like NPM, and 5 failures lock the
+    per-IP throttle for everyone coming through it. Too high: clients can pick their own IP. Another proxy in front of
+    NPM (e.g. Cloudflare) makes it `3`.
+  * Caddy trusts any private address, so a LAN host that reaches port 80 directly can claim any client IP and get
+    around the per-IP limit (the global limit still applies). That's why port 80 in HTTP mode should be reachable only
+    from the proxy.
 * Only **caddy** publishes ports. The **app** has no route to the internet (it sits only on internal networks).
   **chromium** is the only component that talks to WhatsApp.
 * CDP has no authentication, so it is reachable only on `backend`, where the app is the only other container.
@@ -214,9 +224,11 @@ session), and WhatsApp's own terms of service (unofficial client; ban risk is th
   It disables TOTP and rotates the recovery key.
 * Brute force (`auth/throttle.ts`): every credential check (login, TOTP, password re-entry, recovery) is
   *charged before* scrypt runs, synchronously, so parallel requests cannot race past a lock. The lock is **per IP**
-  (after 5 failures: 30 s … 1 h exponential), so one attacker cannot lock the owner out. It is backed by a **global**
-  per-account counter in the DB (after 50 consecutive failures from any IPs: one attempt per 30 s … 15 min). Recovery
-  keys (256-bit) only use the per-IP limit. Route rate limits come on top. All auth events go to `audit_log`.
+  (after 5 failures: 30 s … 1 h exponential), so one attacker's failures don't lock the owner's IP. It is backed by a
+  **global** per-account counter in the DB (after 50 consecutive failures from any IPs: one attempt per 30 s … 15 min).
+  Anyone who can reach the login can keep that global lock engaged, which delays the owner's password logins too;
+  existing sessions keep working, and recovery (256-bit key) only uses the per-IP limit and resets the global counter.
+  Route rate limits come on top. All auth events go to `audit_log`.
 * TOTP codes are consumed atomically (`UPDATE … WHERE totp_last_step < step`), so a code works once even in
   parallel requests. Enabling 2FA needs the password (a stolen session alone can't lock the owner out). Wipe and
   recovery-key rotation need the password **and** the 2FA code when 2FA is enabled.
@@ -350,7 +362,8 @@ AAD context `msgbody|<messageId>`, so an edit can move the old ciphertext into `
 `HTTP_PORT`/`HTTPS_PORT`, `HTTP_BIND`/`HTTPS_BIND` (bind address of the published ports), `WAL_VERSION` (image tag),
 `SESSION_IDLE_HOURS`, `SESSION_MAX_DAYS`, `MEDIA_MAX_MB` (default 100), `HISTORY_PER_CHAT` (200),
 `RECONCILE_MINUTES` (10), `CHROMIUM_HOST` (`chromium`), `CDP_PORT` (9223), `VNC_PORT` (5900),
-`SCREEN` (`1280x800x24`), `LOG_LEVEL` (info), `TRUST_PROXY` (proxy hops: 1 = bundled Caddy, 2 = + external proxy).
+`SCREEN` (`1280x800x24`), `LOG_LEVEL` (info), `TRUST_PROXY` (proxy hops: 1 = bundled Caddy, 2 = + external proxy,
+3 = + another proxy/CDN in front of that; see §3 for why it must match).
 
 ## 10. Testing
 

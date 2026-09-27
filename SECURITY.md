@@ -9,7 +9,7 @@ and how to run it safely. The design details are in [ARCHITECTURE.md](ARCHITECTU
 
 | Threat | Mitigation |
 |---|---|
-| Someone on the network finds the login page | Single owner. Signup needs the one-time `SETUP_TOKEN` and closes after the first account. scrypt (N=2¹⁷) passwords. Race-free throttling: each attempt is charged before hashing. Per-IP exponential lockout means one attacker can't lock you out, and a global per-account cap bounds distributed guessing. Atomic single-use TOTP codes, optional 2FA, audit log. |
+| Someone on the network finds the login page | Single owner. Signup needs the one-time `SETUP_TOKEN` and closes after the first account. scrypt (N=2¹⁷) passwords. Race-free throttling: each attempt is charged before hashing. Per-IP exponential lockout means one attacker's failures don't lock your IP, and a global per-account cap bounds distributed guessing (an attacker can keep that cap engaged and delay your password logins; your sessions keep working and the recovery key bypasses it). Atomic single-use TOTP codes, optional 2FA, audit log. |
 | Theft of the database, media files or backups | Envelope encryption (see below). Without the password or recovery key, stored content is unreadable. |
 | Stolen database *and* the server's `.env` | `.env` holds no data keys, so this is still unreadable. |
 | Malicious message content (HTML, SVG, scripts, crafted file names, links) | Never rendered as HTML (React text nodes only), strict CSP, only `http(s)` links (`rel=noopener noreferrer nofollow`). Media served with `Content-Security-Policy: sandbox`, `nosniff`, and as a download unless it is a raster image, audio or video. |
@@ -57,6 +57,8 @@ DEK ──chunked AES-256-GCM (64 KiB chunks, index + final flag in AAD)──�
 
 1. Keep `.env` private (`chmod 600`, which `setup.sh` sets) and don't commit it (`.gitignore` covers it).
 2. Prefer LAN/VPN-only access. If you must expose it, use a real domain with Let's Encrypt and enable **2FA**.
+   Behind your own reverse proxy (e.g. Nginx Proxy Manager), use `setup.sh --http-only`, keep `TRUST_PROXY=2`
+   (`3` if another proxy such as Cloudflare sits in front), and let only the proxy reach port 80.
 3. Store the recovery key offline (password manager or paper).
 4. Encrypt the host disk (LUKS / encrypted ZFS dataset). It protects the metadata and the WhatsApp session.
 5. Update regularly: `git pull && docker compose up -d --build`. WhatsApp Web changes often.
