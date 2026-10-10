@@ -140,6 +140,7 @@ Update this file whenever a step is completed.
 - [x] 0.2.0: auto-save new photos (optionally videos/status) to the phone; server `GET /api/media-feed`
 - [x] 0.3.0: auto-save option "only disappearing-message chats" (server stores `ephemeral_sec`); Android 17 local network permission (found on the emulator)
 - [x] Emulator on this LXC (KVM): on-device tests + adb walkthrough of auto-save incl. the background job
+- [x] 0.4.0: multi-select photos/videos in a chat → save to the gallery at once (tested on the emulator)
 - [ ] Verify a minified (R8) release build on the emulator to verify release builds, then re-enable R8
 
 ## Next ideas (not started)

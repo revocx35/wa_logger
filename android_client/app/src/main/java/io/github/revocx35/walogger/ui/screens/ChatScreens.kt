@@ -57,6 +57,8 @@ import io.github.revocx35.walogger.core.MessageType
 import io.github.revocx35.walogger.core.WaText
 import io.github.revocx35.walogger.ui.LocalFormatter
 import io.github.revocx35.walogger.ui.LocalMessageActions
+import io.github.revocx35.walogger.ui.LocalSelection
+import io.github.revocx35.walogger.ui.MessageSelection
 import io.github.revocx35.walogger.ui.MessageActions
 import io.github.revocx35.walogger.ui.components.Avatar
 import io.github.revocx35.walogger.ui.components.Badge
@@ -199,7 +201,14 @@ private const val GROUP_GAP_MS = 5 * 60_000L
 /** The chat log: header, in-chat search, messages with sticky day separators, read-only footer. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ChatPane(state: ChatState, onBack: (() -> Unit)?, wide: Boolean, baseActions: MessageActions, modifier: Modifier = Modifier) {
+fun ChatPane(
+    state: ChatState,
+    onBack: (() -> Unit)?,
+    wide: Boolean,
+    baseActions: MessageActions,
+    modifier: Modifier = Modifier,
+    selection: MessageSelection = remember(state.chatId) { MessageSelection() },
+) {
     val c = Wa.colors
     val fmt = LocalFormatter.current
     val chat = state.chat
@@ -278,9 +287,26 @@ fun ChatPane(state: ChatState, onBack: (() -> Unit)?, wide: Boolean, baseActions
             .collect { if (state.nextAfter != null) state.loadNewer() }
     }
 
-    androidx.compose.runtime.CompositionLocalProvider(LocalMessageActions provides actions) {
+    androidx.activity.compose.BackHandler(enabled = selection.active) { selection.clear() }
+
+    androidx.compose.runtime.CompositionLocalProvider(LocalMessageActions provides actions, LocalSelection provides selection) {
         Column(modifier.background(c.chatBg)) {
-            Row(
+            if (selection.active) {
+                // Selection mode replaces the header, like WhatsApp.
+                Row(
+                    Modifier.fillMaxWidth().background(c.head).statusBarsPadding().height(60.dp).padding(start = 4.dp, end = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    IconBtn(WaIcons.close, "Cancel selection", selection::clear)
+                    Text("${selection.count} selected", style = WaType.chatName, color = c.text, modifier = Modifier.weight(1f), maxLines = 1)
+                    WaButton("Select all", { selection.selectAll(state.messages) }, tiny = true, style = BtnStyle.Ghost)
+                    IconBtn(WaIcons.download, "Save to gallery", {
+                        actions.saveToGallery(selection.messages)
+                        selection.clear()
+                    }, tint = c.accent)
+                }
+            } else Row(
                 Modifier.fillMaxWidth().background(c.head).statusBarsPadding().height(60.dp).padding(start = if (onBack != null) 4.dp else 16.dp, end = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),

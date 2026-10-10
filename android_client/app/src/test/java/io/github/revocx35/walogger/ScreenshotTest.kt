@@ -138,6 +138,12 @@ class ScreenshotTest {
     }
 
     @Test
+    fun phoneChatSelecting() = shot("phone_chat_selecting") {
+        val selection = io.github.revocx35.walogger.ui.MessageSelection().apply { selectAll(SampleData.aliChat) }
+        ChatPane(FakeChat(aliSummary, SampleData.aliChat), {}, false, NoMessageActions, Modifier.fillMaxSize(), selection)
+    }
+
+    @Test
     fun phoneGroup() = shot("phone_chat_group") {
         ChatPane(FakeChat(groupSummary, SampleData.groupChat, highlight = null), {}, false, NoMessageActions, Modifier.fillMaxSize())
     }

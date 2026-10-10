@@ -22,6 +22,8 @@ interface MessageActions {
     fun jump(messageId: String) {}
     fun openMedia(msg: Message) {}
     fun saveMedia(msg: Message) {}
+    /** Saves several photos/videos to the gallery at once (chat multi-select). */
+    fun saveToGallery(messages: List<Message>) {}
     fun openDocument(msg: Message) {}
     suspend fun retryMedia(messageId: String) {}
     suspend fun edits(messageId: String): List<MessageEdit> = emptyList()

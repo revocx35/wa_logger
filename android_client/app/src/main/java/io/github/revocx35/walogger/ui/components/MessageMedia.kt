@@ -3,6 +3,7 @@ package io.github.revocx35.walogger.ui.components
 import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -53,6 +54,8 @@ import io.github.revocx35.walogger.core.formatDuration
 import io.github.revocx35.walogger.core.userMessage
 import io.github.revocx35.walogger.ui.LocalMediaHost
 import io.github.revocx35.walogger.ui.LocalMessageActions
+import io.github.revocx35.walogger.ui.LocalSelection
+import io.github.revocx35.walogger.ui.MessageSelection
 import io.github.revocx35.walogger.ui.theme.Wa
 import io.github.revocx35.walogger.ui.theme.WaIcons
 import io.github.revocx35.walogger.ui.theme.WaType
@@ -77,6 +80,19 @@ fun mediaLabel(msg: Message): String = when (msg.type) {
     MessageType.Audio -> "Audio"
     MessageType.Sticker -> "Sticker"
     else -> msg.media?.filename ?: "Document"
+}
+
+/** Open on tap; long-press starts selecting (chat multi-select), and while selecting a tap toggles instead. */
+@Composable
+private fun Modifier.mediaClick(msg: Message, label: String, role: Role, open: () -> Unit): Modifier {
+    val selection = LocalSelection.current
+    return combinedClickable(
+        role = role,
+        onClickLabel = label,
+        onClick = { if (selection?.active == true) selection.toggle(msg) else open() },
+        onLongClickLabel = if (selection != null && MessageSelection.selectable(msg)) "Select" else null,
+        onLongClick = if (selection != null && MessageSelection.selectable(msg)) ({ selection.toggle(msg) }) else null,
+    )
 }
 
 private fun Modifier.dashedBorder(color: Color) = drawBehind {
@@ -168,7 +184,7 @@ fun MessageMedia(msg: Message, maxWidth: Dp) {
             Box(
                 Modifier.padding(bottom = 4.dp).width(width).then(if (aspect != null) Modifier.aspectRatio(aspect.coerceIn(width.value / 420f, 3f)) else Modifier.heightIn(min = 180.dp))
                     .clip(shape).background(c.quoteBg)
-                    .clickable(role = Role.Image, onClickLabel = "Open photo") { actions.openMedia(msg) },
+                    .mediaClick(msg, "Open photo", Role.Image) { actions.openMedia(msg) },
             ) {
                 if (url != null && host.imageLoader != null) {
                     AsyncImage(url, contentDescription = msg.text, imageLoader = host.imageLoader!!, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
@@ -188,7 +204,7 @@ fun MessageMedia(msg: Message, maxWidth: Dp) {
             Column(Modifier.padding(bottom = 4.dp)) {
                 Box(
                     Modifier.width(width).aspectRatio((aspect ?: (16f / 9f)).coerceIn(width.value / 420f, 3f)).clip(RoundedCornerShape(6.dp)).background(Color.Black)
-                        .clickable(role = Role.Button, onClickLabel = "Play video") { actions.openMedia(msg) },
+                        .mediaClick(msg, "Play video", Role.Button) { actions.openMedia(msg) },
                     contentAlignment = Alignment.Center,
                 ) {
                     DataUrlImage(m.thumbDataUrl, Modifier.fillMaxSize())

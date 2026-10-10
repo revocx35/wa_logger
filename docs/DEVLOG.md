@@ -194,3 +194,14 @@ The owner asked for incoming images to be saved to the phone automatically.
   the "cannot reach" screen (e.g. after a system update).
 - Notes: `am kill` counts as a force-stop for WorkManager (it reschedules instead of running). Screenshots are black
   while FLAG_SECURE is on; use `uiautomator dump`.
+
+## 2026-10-10 — Android 0.4.0: select several photos/videos and save them at once
+
+- In a chat, long-pressing a downloaded photo, video or GIF starts selection mode (the header shows "N selected",
+  "Select all" and a save button). Taps toggle while selecting, Back cancels. Saving writes everything to the gallery
+  (`Pictures/wa_logger`, `Movies/wa_logger`) in chat order and reports the result in a toast. The MediaStore code
+  moved from AutoSaver to `MediaOps.saveToGallery` so both features share it.
+- "Select all" covers what is loaded in the chat view (scroll up / "Load older" for more).
+- Verified on the emulator with the release APK: long-press, add a second photo, save (both files appeared in
+  MediaStore), Select all, Back, and a normal tap still opens the viewer. Plus unit tests, a screenshot render of
+  selection mode, and the on-device auto-save tests (still passing after the refactor).

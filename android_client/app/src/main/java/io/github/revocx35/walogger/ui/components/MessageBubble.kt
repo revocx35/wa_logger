@@ -56,6 +56,8 @@ import io.github.revocx35.walogger.core.formatDuration
 import io.github.revocx35.walogger.core.userMessage
 import io.github.revocx35.walogger.ui.LocalFormatter
 import io.github.revocx35.walogger.ui.LocalMessageActions
+import io.github.revocx35.walogger.ui.LocalSelection
+import io.github.revocx35.walogger.ui.MessageSelection
 import io.github.revocx35.walogger.ui.theme.Wa
 import io.github.revocx35.walogger.ui.theme.WaIcons
 import io.github.revocx35.walogger.ui.theme.WaType
@@ -268,9 +270,15 @@ fun MessageBubble(msg: Message, isGroup: Boolean, showSender: Boolean, highlight
         else -> c.bubbleIn
     }
     val innerMax = maxBubbleWidth - 17.dp
+    val selection = LocalSelection.current
+    val selectable = selection != null && MessageSelection.selectable(msg)
+    val selected = selection?.isSelected(msg.id) == true
 
     Column(
-        modifier.fillMaxWidth().padding(vertical = 1.dp),
+        modifier.fillMaxWidth()
+            .then(if (selected) Modifier.background(c.accent.copy(alpha = 0.16f)) else Modifier)
+            .then(if (selection?.active == true && selectable) Modifier.clickable(onClickLabel = if (selected) "Unselect" else "Select") { selection.toggle(msg) } else Modifier)
+            .padding(vertical = 1.dp),
         horizontalAlignment = if (msg.fromMe) Alignment.End else Alignment.Start,
     ) {
         Box(
@@ -279,6 +287,7 @@ fun MessageBubble(msg: Message, isGroup: Boolean, showSender: Boolean, highlight
                 .then(if (sticker) Modifier else Modifier.shadow(1.dp, shape, ambientColor = c.shadow, spotColor = c.shadow))
                 .then(
                     when {
+                        selected -> Modifier.border(3.dp, c.accent, shape)
                         highlighted -> Modifier.border(3.dp, c.warn, shape)
                         deleted -> Modifier.border(2.dp, c.danger, shape)
                         else -> Modifier
@@ -289,9 +298,14 @@ fun MessageBubble(msg: Message, isGroup: Boolean, showSender: Boolean, highlight
                 .combinedClickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
-                    onClick = {},
-                    onLongClickLabel = "Copy text",
+                    onClick = { if (selection?.active == true && selectable) selection.toggle(msg) },
+                    onLongClickLabel = if (selectable) "Select" else "Copy text",
                     onLongClick = {
+                        // Photos/videos: long-press selects (save several at once); everything else copies its text.
+                        if (selectable) {
+                            selection?.toggle(msg)
+                            return@combinedClickable
+                        }
                         val text = msg.text ?: return@combinedClickable
                         val clip = ClipData.newPlainText("message", text)
                         // Keep message text out of clipboard previews and keyboard suggestions.

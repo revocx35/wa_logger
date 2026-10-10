@@ -1,11 +1,7 @@
 package io.github.revocx35.walogger.media
 
-import android.content.ContentValues
 import android.content.Context
 import android.os.Build
-import android.os.Environment
-import android.provider.MediaStore
-import androidx.annotation.RequiresApi
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -151,7 +147,7 @@ class AutoSaver(private val context: Context, private val prefs: Prefs, private 
                     if (!prefs.autoSave) return@withLock true
                     if (AutoSavePolicy.wants(item, prefs.autoSaveVideos, prefs.autoSaveStatus, prefs.autoSaveOnlyDisappearing)) {
                         try {
-                            saveToGallery(api, item)
+                            MediaOps.saveToGallery(context, api, item.message)
                             prefs.autoSaveCount += 1
                         } catch (e: MediaOps.HttpStatusException) {
                             // Gone on the server (wiped/deleted): nothing to save, move on.
@@ -185,40 +181,6 @@ class AutoSaver(private val context: Context, private val prefs: Prefs, private 
             publish()
         }
         ok
-    }
-
-    private suspend fun saveToGallery(api: ApiClient, item: MediaFeedItem) {
-        if (Build.VERSION.SDK_INT < 29) return
-        withContext(Dispatchers.IO) { insert(api, item) }
-    }
-
-    @RequiresApi(29)
-    private suspend fun insert(api: ApiClient, item: MediaFeedItem) {
-        val msg = item.message
-        val video = msg.type != MessageType.Image
-        val collection = if (video) {
-            MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        } else {
-            MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        }
-        val mime = msg.media?.mime?.substringBefore(';')?.trim()?.takeIf { it.startsWith(if (video) "video/" else "image/") }
-            ?: if (video) "video/mp4" else "image/jpeg"
-        val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, MediaOps.defaultName(msg))
-            put(MediaStore.MediaColumns.MIME_TYPE, mime)
-            put(MediaStore.MediaColumns.RELATIVE_PATH, (if (video) Environment.DIRECTORY_MOVIES else Environment.DIRECTORY_PICTURES) + "/wa_logger")
-            put(MediaStore.MediaColumns.DATE_TAKEN, msg.ts)
-            put(MediaStore.MediaColumns.IS_PENDING, 1)
-        }
-        val resolver = context.contentResolver
-        val uri = resolver.insert(collection, values) ?: throw IOException("cannot create file")
-        try {
-            resolver.openOutputStream(uri, "w")?.use { out -> MediaOps.download(api, msg, out) } ?: throw IOException("cannot write")
-            resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
-        } catch (e: Throwable) {
-            runCatching { resolver.delete(uri, null, null) }
-            throw e
-        }
     }
 
     companion object {
