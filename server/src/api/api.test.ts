@@ -1,6 +1,7 @@
 import http from 'node:http';
 import net from 'node:net';
 import type { AddressInfo } from 'node:net';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import WebSocket from 'ws';
@@ -133,6 +134,37 @@ describe('api', () => {
     // A cursor from before a data wipe restarts at the current end instead of waiting forever.
     expect(((await c.req('GET', '/api/media-feed?after=999999')).body as MediaFeedPage).cursor).toBe(end);
     expect((await c.req('GET', '/api/media-feed?after=-1')).status).toBe(400);
+  });
+
+  it('downloads several media files as one ZIP (checked by an independent unzip)', async () => {
+    const a = Buffer.from(Array.from({ length: 150_000 }, (_, i) => (i * 7) & 255));
+    const b = Buffer.from('second file');
+    const ma = await seedMedia(h, a, 'image/jpeg', null);
+    const mb = await seedMedia(h, b, 'video/mp4', 'clip.mp4');
+    const mc = await seedMedia(h, b, 'image/jpeg', null);
+    h.ctx.repo.updateMessage(`false_${CHAT}_M1`, { type: 'image', media_id: ma, media_status: 'downloaded' });
+    h.ctx.repo.updateMessage(`false_${CHAT}_M2`, { type: 'video', media_id: mb, media_status: 'downloaded' });
+    h.ctx.repo.updateMessage(`false_${CHAT}_M3`, { type: 'image', media_id: mc, media_status: 'downloaded', ts: h.ctx.repo.getMessage(`false_${CHAT}_M1`)!.ts });
+    const r = await h.app.inject({ method: 'GET', url: `/api/media-zip?ids=${ma},${mb},${mc},${ma}`, headers: { cookie: c.cookie } });
+    expect(r.statusCode).toBe(200);
+    expect(r.headers['content-type']).toBe('application/zip');
+    expect(r.headers['content-disposition']).toMatch(/^attachment; filename="wa_logger-media-/);
+    expect(Number(r.headers['content-length'])).toBe(r.rawPayload.length);
+    const zipFile = path.join(h.dir, 'out.zip');
+    await fs.writeFile(zipFile, r.rawPayload);
+    const py = spawnSync('python3', ['-c', `import zipfile,sys,json
+z=zipfile.ZipFile(sys.argv[1]); assert z.testzip() is None
+print(json.dumps([[i.filename, z.read(i).hex()] for i in z.infolist()]))`, zipFile], { encoding: 'utf8' });
+    expect(py.stderr).toBe('');
+    const files = JSON.parse(py.stdout) as [string, string][];
+    const stamp = new Date(h.ctx.repo.getMessage(`false_${CHAT}_M1`)!.ts).toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-');
+    expect(files.map((f) => f[0])).toEqual([`wa_photo_${stamp}.jpg`, 'clip.mp4', `wa_photo_${stamp} (2).jpg`]);
+    expect(Buffer.from(files[0]![1], 'hex').equals(a)).toBe(true);
+    expect(Buffer.from(files[1]![1], 'hex').equals(b)).toBe(true);
+
+    expect((await h.app.inject({ method: 'GET', url: `/api/media-zip?ids=${ma},999`, headers: { cookie: c.cookie } })).statusCode).toBe(404);
+    expect((await h.app.inject({ method: 'GET', url: '/api/media-zip?ids=1;2', headers: { cookie: c.cookie } })).statusCode).toBe(400);
+    expect((await h.app.inject({ method: 'GET', url: `/api/media-zip?ids=${ma}` })).statusCode).toBe(401);
   });
 
   it('searches decrypted content, optionally within a chat', async () => {

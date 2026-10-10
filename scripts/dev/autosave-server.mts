@@ -1,8 +1,9 @@
-// Android auto-save end-to-end: a real wa_logger server (in-process test harness, no WhatsApp) that the
-// emulator reaches at http://10.0.2.2:18091, plus a local control endpoint that simulates "a photo arrived
-// and finished downloading" through the real ingest code and media storage.
+// Media end-to-end (Android auto-save / multi-select, web "Download ZIP"): a real wa_logger server (in-process
+// test harness, no WhatsApp) that the emulator reaches at http://10.0.2.2:18091 (the web UI is served too when
+// web/dist exists), plus a local control endpoint that simulates "a photo arrived and finished downloading"
+// through the real ingest code and media storage.
 //
-//   cd server && npx tsx ../scripts/dev/autosave-server.mts
+//   (cd web && npm run build); cd server && npx tsx ../scripts/dev/autosave-server.mts
 //   curl 'http://127.0.0.1:18092/inject?kind=plain'       # normal chat
 //   curl 'http://127.0.0.1:18092/inject?kind=disappearing' # chat with disappearing messages (7 days)
 //
@@ -18,7 +19,9 @@ const CONTROL = 18092;
 const JPEG = process.env.JPEG ?? '/opt/android-sdk/emulator/resources/default.jpg';
 
 // No PUBLIC_ORIGIN: Origin checks fall back to the Host header, like the owner's deployment.
-const h = await makeHarness({ COOKIE_SECURE: 'false', PUBLIC_ORIGIN: '', TRUST_PROXY: '0' });
+const WEB_DIR = new URL('../../web/dist', import.meta.url).pathname;
+const web = await fs.stat(WEB_DIR).then(() => ({ WEB_DIR }), () => ({}));
+const h = await makeHarness({ COOKIE_SECURE: 'false', PUBLIC_ORIGIN: '', TRUST_PROXY: '0', ...web });
 await h.app.listen({ port: PORT, host: '0.0.0.0' });
 
 const signup = await fetch(`http://127.0.0.1:${PORT}/api/auth/signup`, {

@@ -199,7 +199,8 @@ quoted replies (click to jump); forwarded label; edited badge with an edit-histo
 deleted badge (red, "Deleted for everyone · logged copy") while still showing the content; reactions; ticks for
 own messages; image lightbox; `<video>`/`<audio>` players (Range-served); documents download as attachments;
 stickers; location cards (coordinates plus an OpenStreetMap link, no embedded map); vCards; polls; call logs and
-system messages as centered pills; a view-once placeholder; infinite scroll upward; live updates via SSE;
+system messages as centered pills; a view-once placeholder; select photos/videos (header download button, click
+rows, Select all, Esc) and download them as one ZIP; infinite scroll upward; live updates via SSE;
 per-chat and global search. Layout is responsive (single pane under 900px). Light and dark themes follow the system.
 
 ## 6. Security model
@@ -346,6 +347,7 @@ AAD context `msgbody|<messageId>`, so an edit can move the old ciphertext into `
 | GET | /api/chats/:chatId/messages/around/:messageId | ✓ | page centered on a message (jump to quote/search hit) |
 | GET | /api/messages/:messageId/edits | ✓ | edit history |
 | GET | /api/media/:mediaId | ✓ | decrypted stream, Range supported |
+| GET | /api/media-zip?ids= | ✓ | several message media files (media ids, ≤ 500, < 4 GB) as one ZIP: stored entries, decrypted while streaming, exact Content-Length (web "Select → Download ZIP") |
 | POST | /api/messages/:messageId/media/retry | ✓ | re-queue download |
 | GET | /api/deleted?before= | ✓ | feed of deleted messages across chats |
 | GET | /api/media-feed?after=&limit= | ✓ | `MediaFeedPage`: media downloaded after a cursor (media id), oldest first; no `after` = current cursor only (Android auto-save) |

@@ -205,3 +205,17 @@ The owner asked for incoming images to be saved to the phone automatically.
 - Verified on the emulator with the release APK: long-press, add a second photo, save (both files appeared in
   MediaStore), Select all, Back, and a normal tap still opens the viewer. Plus unit tests, a screenshot render of
   selection mode, and the on-device auto-save tests (still passing after the refactor).
+
+## 2026-10-10 — Web: select photos/videos and download them as one ZIP
+
+- Server: `GET /api/media-zip?ids=` (media ids, at most 500, under 4 GB) streams a ZIP. `http/zip.ts` is a small
+  writer: stored entries (media is already compressed), CRC and sizes in data descriptors, UTF-8 names, no ZIP64.
+  Files are decrypted while streaming and never written to disk unencrypted. The exact Content-Length is computed up
+  front so browsers show progress. Entry names: the original file name, or `wa_photo_<UTC date>_<time>.jpg`, made
+  unique with " (2)". The API test checks the archive with Python's `zipfile` (an independent reader).
+- Web: a download button in the chat header starts selection mode. Rows of downloaded photos/videos/GIFs become
+  checkboxes (pointer events inside are off, so nothing opens or plays), with Select all, Esc to cancel, and
+  "Download ZIP" (a plain `<a download>`, so the browser streams it to disk).
+- Verified in headless Chromium against `scripts/dev/autosave-server.mts` (which now also serves `web/dist`): log in,
+  select two photos (no lightbox opened), download. The file passed `unzip -t` and its content was byte-identical
+  to the source photo. Esc, Select all, the phone-width layout, and no browser errors.

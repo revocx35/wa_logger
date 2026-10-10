@@ -4,7 +4,7 @@ import type { ChatSummary, Message, SearchHit } from '../../../shared/api';
 import { api, errorMessage } from '../api/client';
 import { useServerEvents } from '../api/events';
 import { Icon } from '../components/Icon';
-import { MessageBubble } from '../components/MessageBubble';
+import { MessageBubble, isSelectable } from '../components/MessageBubble';
 import { Avatar, ErrorNote, Spinner } from '../components/ui';
 import { dayKey, formatDayLabel, formatListTime } from '../lib/format';
 
@@ -46,6 +46,28 @@ export function ChatView({ chatId }: { chatId: string }) {
   const scrollTarget = useRef<string | null>(null);
 
   const isGroup = chat?.kind === 'group' || chat?.kind === 'status' || chat?.kind === 'broadcast';
+
+  // Select photos/videos and download them as one ZIP (GET /api/media-zip, streamed by the server).
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const toggle = useCallback((id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  }, []);
+  const stopSelecting = useCallback(() => {
+    setSelecting(false);
+    setSelected(new Set());
+  }, []);
+  useEffect(stopSelecting, [chatId, stopSelecting]);
+  useEffect(() => {
+    if (!selecting) return;
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && stopSelecting();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selecting, stopSelecting]);
 
   const loadChatInfo = useCallback(async () => {
     try {
@@ -207,26 +229,61 @@ export function ChatView({ chatId }: { chatId: string }) {
   }, [messages]);
 
   const title = chat?.name ?? '…';
+  const selectable = useMemo(() => messages.filter(isSelectable), [messages]);
+  // Media ids in chat order (oldest first); the server names the files.
+  const zipIds = selectable.filter((m) => selected.has(m.id)).map((m) => m.media!.url!.split('/').pop()).join(',');
+  const selectionProps = useMemo(() => {
+    const map = new Map<string, { selected: boolean; onToggle: (id: string) => void }>();
+    if (selecting) for (const m of selectable) map.set(m.id, { selected: selected.has(m.id), onToggle: toggle });
+    return map;
+  }, [selecting, selectable, selected, toggle]);
 
   return (
     <section className="chat-view" aria-label={`Chat ${title}`}>
-      <header className="chat-head">
-        <button className="icon-btn mobile-only" onClick={() => navigate('/')} aria-label="Back to chats">
-          <Icon name="back" />
-        </button>
-        <Avatar id={chatId} name={title} url={chat?.avatarUrl} kind={chat?.kind} size={40} />
-        <div className="chat-head-info">
-          <div className="chat-head-name">{title}</div>
-          <div className="muted small">
-            {chat
-              ? `${chat.messageCount} logged${chat.deletedCount ? ` · ${chat.deletedCount} deleted preserved` : ''}${chat.removed ? ' · removed from WhatsApp' : ''}${chat.lastTs ? ` · last ${formatListTime(chat.lastTs)}` : ''}`
-              : ''}
+      {selecting ? (
+        <header className="chat-head selecting">
+          <button className="icon-btn" onClick={stopSelecting} aria-label="Cancel selection">
+            <Icon name="close" />
+          </button>
+          <div className="chat-head-info">
+            <div className="chat-head-name">{selected.size ? `${selected.size} selected` : 'Select photos and videos'}</div>
+            <div className="muted small">{selectable.length ? 'Click to select · Esc to cancel' : 'No downloaded photos or videos loaded in this chat'}</div>
           </div>
-        </div>
-        <button className={searchOpen ? 'icon-btn active' : 'icon-btn'} onClick={() => setSearchOpen((v) => !v)} aria-label="Search in chat">
-          <Icon name="search" />
-        </button>
-      </header>
+          <button className="btn tiny ghost" onClick={() => setSelected(new Set(selectable.map((m) => m.id)))} disabled={!selectable.length}>
+            Select all
+          </button>
+          {zipIds ? (
+            <a className="btn tiny primary" href={`/api/media-zip?ids=${zipIds}`} download onClick={() => setTimeout(stopSelecting, 0)}>
+              <Icon name="download" size={16} /> Download ZIP
+            </a>
+          ) : (
+            <button className="btn tiny primary" disabled>
+              <Icon name="download" size={16} /> Download ZIP
+            </button>
+          )}
+        </header>
+      ) : (
+        <header className="chat-head">
+          <button className="icon-btn mobile-only" onClick={() => navigate('/')} aria-label="Back to chats">
+            <Icon name="back" />
+          </button>
+          <Avatar id={chatId} name={title} url={chat?.avatarUrl} kind={chat?.kind} size={40} />
+          <div className="chat-head-info">
+            <div className="chat-head-name">{title}</div>
+            <div className="muted small">
+              {chat
+                ? `${chat.messageCount} logged${chat.deletedCount ? ` · ${chat.deletedCount} deleted preserved` : ''}${chat.removed ? ' · removed from WhatsApp' : ''}${chat.lastTs ? ` · last ${formatListTime(chat.lastTs)}` : ''}`
+                : ''}
+            </div>
+          </div>
+          <button className="icon-btn" onClick={() => setSelecting(true)} aria-label="Select photos and videos to download" title="Select photos and videos to download">
+            <Icon name="download" />
+          </button>
+          <button className={searchOpen ? 'icon-btn active' : 'icon-btn'} onClick={() => setSearchOpen((v) => !v)} aria-label="Search in chat">
+            <Icon name="search" />
+          </button>
+        </header>
+      )}
       {searchOpen ? (
         <div className="chat-search">
           <form onSubmit={runSearch} className="search-box">
@@ -264,7 +321,7 @@ export function ChatView({ chatId }: { chatId: string }) {
               <span>{r.label}</span>
             </div>
           ) : (
-            <MessageBubble key={r.m.id} msg={r.m} isGroup={!!isGroup} showSender={r.showSender} highlighted={highlight === r.m.id} onJump={jump} />
+            <MessageBubble key={r.m.id} msg={r.m} isGroup={!!isGroup} showSender={r.showSender} highlighted={highlight === r.m.id} onJump={jump} selection={selectionProps.get(r.m.id)} />
           ),
         )}
         {nextAfter ? (

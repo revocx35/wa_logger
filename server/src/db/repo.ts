@@ -624,6 +624,10 @@ export class Repo implements DataKeyStore {
       .all(after, limit) as MessageRow[];
   }
 
+  getMessageByMediaId(mediaId: number): MessageRow | undefined {
+    return this.db.prepare(`SELECT ${MSG_COLS} FROM messages WHERE media_id = ?`).get(mediaId) as MessageRow | undefined;
+  }
+
   maxMessageMediaId(): number {
     return (this.db.prepare('SELECT COALESCE(MAX(media_id), 0) AS m FROM messages').get() as { m: number }).m;
   }

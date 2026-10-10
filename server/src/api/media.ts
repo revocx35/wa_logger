@@ -1,12 +1,14 @@
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { AppContext } from '../context.js';
-import { decryptRange, openMediaFile } from '../crypto/stream.js';
-import { F } from '../db/repo.js';
+import { decryptRange, openMediaFile, plaintextSizeFromFileSize } from '../crypto/stream.js';
+import { F, type MediaRow, type MessageRow } from '../db/repo.js';
 import { Errors } from '../errors.js';
 import { getReader } from '../http/server.js';
+import { ZIP_MAX_BYTES, zipStream } from '../http/zip.js';
 
 /**
  * Only these types are ever served inline. Everything else (HTML, SVG, PDF, scripts, unknown) is
@@ -58,7 +60,97 @@ function parseRange(header: string | undefined, size: number): { start: number; 
   return { start, end };
 }
 
+const EXT: Record<string, string> = {
+  'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif', 'image/heic': 'heic',
+  'video/mp4': 'mp4', 'video/3gpp': '3gp', 'video/quicktime': 'mov', 'video/webm': 'webm',
+  'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'application/pdf': 'pdf',
+};
+
+/** Name inside a ZIP: the original file name if WhatsApp had one, else e.g. "wa_photo_2026-10-10_13-05-22.jpg" (UTC). */
+export function zipEntryName(msg: Pick<MessageRow, 'type' | 'ts'>, mime: string | null, filename: string | null): string {
+  if (filename) return safeFilename(filename, 'file');
+  const base = (mime ?? '').split(';')[0]!.trim().toLowerCase();
+  const ext = EXT[base] ?? 'bin';
+  const kind = msg.type === 'image' ? 'photo' : msg.type === 'video' || msg.type === 'gif' ? 'video' : msg.type === 'sticker' ? 'sticker' : 'file';
+  const stamp = new Date(msg.ts).toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-');
+  return `wa_${kind}_${stamp}.${ext}`;
+}
+
+/** Makes names unique inside one ZIP: "a.jpg", "a (2).jpg", … */
+export function uniqueNames(names: string[]): string[] {
+  const seen = new Map<string, number>();
+  return names.map((n) => {
+    const key = n.toLowerCase();
+    const count = (seen.get(key) ?? 0) + 1;
+    seen.set(key, count);
+    if (count === 1) return n;
+    const dot = n.lastIndexOf('.');
+    return dot > 0 ? `${n.slice(0, dot)} (${count})${n.slice(dot)}` : `${n} (${count})`;
+  });
+}
+
+const ZIP_MAX_FILES = 500;
+
 export function registerMediaRoutes(app: FastifyInstance, ctx: AppContext): void {
+  /** The absolute path of a stored media file, refusing anything outside the media directory. */
+  const mediaPath = (row: MediaRow): string => {
+    const abs = path.join(ctx.config.mediaDir, row.path);
+    if (!abs.startsWith(ctx.config.mediaDir + path.sep)) throw Errors.notFound('Media');
+    return abs;
+  };
+
+  // Several message media files as one ZIP download (web "select → Download"). Decrypted on the fly, never
+  // written to disk unencrypted. Ids are media ids (the number in a message's media.url).
+  app.get('/api/media-zip', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const { ids } = z.object({ ids: z.string().regex(/^\d{1,12}(,\d{1,12})*$/) }).parse(req.query);
+    const unique = [...new Set(ids.split(',').map(Number))];
+    if (unique.length > ZIP_MAX_FILES) throw Errors.validation(`Select at most ${ZIP_MAX_FILES} files at once.`);
+    const reader = getReader(ctx, req);
+    const items = [];
+    let total = 0;
+    for (const id of unique) {
+      const row = ctx.repo.getMedia(id);
+      const msg = row?.kind === 'message' ? ctx.repo.getMessageByMediaId(id) : undefined;
+      if (!row || !msg) throw Errors.notFound('Media');
+      const abs = mediaPath(row);
+      let size: number;
+      try {
+        size = plaintextSizeFromFileSize((await fs.stat(abs)).size);
+      } catch {
+        throw Errors.notFound('Media');
+      }
+      total += size;
+      const mime = reader.tryText(...F.mediaMime(row.path), row.mime_enc);
+      const filename = reader.tryText(...F.mediaFilename(row.path), row.filename_enc);
+      items.push({ row, msg, abs, size, name: zipEntryName(msg, mime, filename) });
+    }
+    if (total > ZIP_MAX_BYTES) throw Errors.validation('Too large for one download (4 GB). Select fewer files.');
+    const names = uniqueNames(items.map((i) => i.name));
+    // Exact length: lets the browser show progress. Per entry: local header 30 + name, data, descriptor 16,
+    // central entry 46 + name; then the 22-byte end record.
+    const length = items.reduce((n, it, i) => n + 30 + 16 + 46 + 2 * Buffer.byteLength(names[i]!, 'utf8') + it.size, 22);
+    const entries = items.map((it, i) => ({
+      name: names[i]!,
+      mtime: it.msg.ts,
+      data: async function* () {
+        const media = await openMediaFile(it.abs);
+        try {
+          if (`${media.header.fileId.toString('hex')}.bin` !== path.basename(it.row.path) || media.size !== it.size) throw new Error('media file mismatch');
+          if (media.size > 0) yield* decryptRange(media, reader.key(media.header.keyId), 0, media.size - 1);
+        } finally {
+          await media.fh.close().catch(() => undefined);
+        }
+      },
+    }));
+    const stamp = new Date().toISOString().slice(0, 10);
+    reply.header('Content-Type', 'application/zip');
+    reply.header('Content-Disposition', contentDisposition('attachment', `wa_logger-media-${stamp}.zip`));
+    reply.header('Content-Security-Policy', "sandbox; default-src 'none'");
+    reply.header('Cache-Control', 'private, no-store');
+    reply.header('Content-Length', String(length));
+    return reply.send(Readable.from(zipStream(entries)));
+  });
+
   app.get('/api/media/:mediaId', { config: { rateLimit: { max: 3000, timeWindow: '1 minute' } } }, async (req, reply) => {
     const { mediaId } = z.object({ mediaId: z.coerce.number().int().positive() }).parse(req.params);
     const { download } = z.object({ download: z.enum(['1']).optional() }).parse(req.query);
@@ -67,8 +159,7 @@ export function registerMediaRoutes(app: FastifyInstance, ctx: AppContext): void
     const reader = getReader(ctx, req);
     const mime = reader.tryText(...F.mediaMime(row.path), row.mime_enc);
     const filename = safeFilename(reader.tryText(...F.mediaFilename(row.path), row.filename_enc), `media-${mediaId}`);
-    const abs = path.join(ctx.config.mediaDir, row.path);
-    if (!abs.startsWith(ctx.config.mediaDir + path.sep)) throw Errors.notFound('Media');
+    const abs = mediaPath(row);
 
     let media;
     try {

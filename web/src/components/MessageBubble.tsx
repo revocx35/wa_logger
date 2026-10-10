@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from 'react';
+import { memo, type KeyboardEvent, useEffect, useState } from 'react';
 import type { Message, MessageEdit, MessageType } from '../../../shared/api';
 import { api, errorMessage } from '../api/client';
 import { colorFor, dayKey, formatDateTime, formatDuration, formatTime } from '../lib/format';
@@ -111,9 +111,16 @@ export interface BubbleProps {
   showSender: boolean;
   highlighted: boolean;
   onJump: (messageId: string) => void;
+  /** Selection mode (select photos/videos to download together): set only while selecting. */
+  selection?: { selected: boolean; onToggle: (messageId: string) => void };
 }
 
-function BubbleImpl({ msg, isGroup, showSender, highlighted, onJump }: BubbleProps) {
+/** Photos, videos and GIFs that have been downloaded can be selected for "Download ZIP". */
+export function isSelectable(msg: Message): boolean {
+  return msg.media?.status === 'downloaded' && !!msg.media.url && (msg.type === 'image' || msg.type === 'video' || msg.type === 'gif');
+}
+
+function BubbleImpl({ msg, isGroup, showSender, highlighted, onJump, selection }: BubbleProps) {
   const [showEdits, setShowEdits] = useState(false);
 
   if (msg.type === 'system' || msg.type === 'call_log') {
@@ -136,8 +143,32 @@ function BubbleImpl({ msg, isGroup, showSender, highlighted, onJump }: BubblePro
     .filter(Boolean)
     .join(' ');
 
+  const rowClass = [msg.fromMe ? 'msg-row out' : 'msg-row in', selection ? 'selectable' : '', selection?.selected ? 'selected' : ''].filter(Boolean).join(' ');
+  // While selecting, the whole row is one checkbox: clicks never reach the photo/video inside (CSS turns off
+  // their pointer events), so nothing opens or plays by accident.
+  const selectProps = selection
+    ? {
+        role: 'checkbox',
+        'aria-checked': selection.selected,
+        'aria-label': msg.type === 'image' ? 'Select photo' : 'Select video',
+        tabIndex: 0,
+        onClick: () => selection.onToggle(msg.id),
+        onKeyDown: (e: KeyboardEvent) => {
+          if (e.key === ' ' || e.key === 'Enter') {
+            e.preventDefault();
+            selection.onToggle(msg.id);
+          }
+        },
+      }
+    : {};
+
   return (
-    <div className={msg.fromMe ? 'msg-row out' : 'msg-row in'} id={`m-${msg.id}`}>
+    <div className={rowClass} id={`m-${msg.id}`} {...selectProps}>
+      {selection ? (
+        <span className="select-check" aria-hidden="true">
+          {selection.selected ? <Icon name="check" size={16} /> : null}
+        </span>
+      ) : null}
       <div className={classes}>
         {deleted ? (
           <div className="deleted-banner" title={`Deleted ${formatDateTime(msg.deletedAt!)}`}>
