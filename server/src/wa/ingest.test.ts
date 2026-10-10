@@ -92,6 +92,16 @@ describe('ingest', () => {
     expect(enqueued).toHaveLength(1);
   });
 
+  it('re-queues failed media only after the row is pending again (the queue skips other rows)', async () => {
+    const img: RawMsg = { ...text('F1', ''), type: 'image', directPath: '/p', size: 10, mimetype: 'image/jpeg' };
+    const id = (await ingest.message(img, 'live'))!;
+    h.ctx.repo.updateMessage(id, { media_status: 'failed', media_attempts: 4 });
+    const seen: string[] = [];
+    ingest = new Ingest(h.ctx, api, { enqueue: (qid) => seen.push(h.ctx.repo.getMessage(qid)!.media_status) });
+    await ingest.message(img, 'history');
+    expect(seen).toEqual(['pending']);
+  });
+
   it('keeps deleted-for-everyone messages and flags them', async () => {
     const id = (await ingest.message(text('D1', 'will be deleted'), 'live'))!;
     await ingest.revoke({ ...text('D1', ''), type: 'revoked', subtype: 'sender' }, null);

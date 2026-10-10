@@ -136,12 +136,14 @@ export async function downloadMessageMedia(ctx: AppContext, page: Page, messageI
           mediaKey: msg.mediaKey,
           mediaKeyTimestamp: msg.mediaKeyTimestamp,
           type: msg.type,
+          // Since WhatsApp Web 2.3000.1049x the result is checked against this (absent = octet-stream → rejected).
+          mimetype: msg.mimetype,
           signal: new AbortController().signal,
           downloadQpl: qpl,
         }), 120_000);
       } catch (e: any) {
         if (e && (e.status === 404 || e.status === 410)) return { status: 'unavailable', reason: 'gone' };
-        return { status: 'failed', reason: 'download_error' };
+        return { status: 'failed', reason: `download_error:${String(e?.name || 'unknown').slice(0, 40)}` };
       }
       if (buf === 'timeout') return { status: 'retry', reason: 'download_timeout' };
       if (buf.byteLength > max) return { status: 'too_large', size: buf.byteLength };
@@ -323,6 +325,7 @@ export class MediaQueue {
       // Expired on WhatsApp's servers: one confirmation retry, then give up (the UI offers "Retry").
       if (out.status === 'unavailable' && attempts >= 2) return finish({ media_status: 'unavailable' });
       if (attempts >= MAX_ATTEMPTS) {
+        if (out.status === 'failed') log.warn({ reason: out.reason, msg: maskId(id) }, 'media download failed');
         return finish({ media_status: out.status === 'unavailable' ? 'unavailable' : 'failed' });
       }
       repo.updateMessage(id, { media_attempts: attempts });

@@ -276,10 +276,11 @@ export class Ingest {
     // Media that failed earlier can be retried when WhatsApp offers it again.
     if (existing.media_status === 'failed' && m.downloadable && existing.media_attempts < 8) {
       patch.media_status = 'pending';
-      this.media.enqueue(existing.id, source);
     }
     if (Object.keys(patch).length) {
       repo.updateMessage(existing.id, { ...patch, updated_at: now });
+      // Enqueue only after the row says "pending": the queue skips rows that don't.
+      if (patch.media_status === 'pending') this.media.enqueue(existing.id, source);
       events.emit({ type: 'message_update', chatId: existing.chat_id, messageId: existing.id, reason: patch.ack !== undefined ? 'ack' : 'media' });
     }
   }

@@ -77,6 +77,9 @@ These are facts about the library that the design relies on, checked against
 - Observed on WhatsApp Web 2.3000.1048x: media older than the CDN retention (~2–4 weeks) goes INIT → NEED_POKE →
   (downloadMedia) FETCHING → 404 → NEED_POKE again; WhatsApp Web does not re-request it from the phone without a
   manual click. `msg.downloadMedia()` can also hang indefinitely, so every call is raced against a timer.
+- Since WhatsApp Web 2.3000.1049x (first seen 2026-10-04), `downloadAndMaybeDecrypt` checks the decrypted file
+  against a `mimetype` argument. Without one it assumes `application/octet-stream` and throws
+  `InvalidMediaFileType` ("Unexpected mimetype … for media type image"), so pass `mimetype: msg.mimetype`.
 
 ## Avatars
 - `client.getProfilePicUrl(id)` returns a signed `pps.whatsapp.net` URL. The app container has no internet, so we

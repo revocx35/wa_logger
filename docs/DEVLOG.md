@@ -141,3 +141,19 @@ messages didn't load, the app crashed now and then, and it sometimes showed "not
 - Verification: unit + screenshot tests, lint, and the live end-to-end test against a fresh smoke stack.
   Still not run on a device (no KVM on the LXC; the owner plans a bigger server).
 - The owner installed 0.1.1 and confirmed it works (chats and messages load, no crashes).
+
+## 2026-10-10 — media downloads stopped ("stuck downloading")
+
+The owner reported that images were stuck in "downloading". On the live instance, the last media download was on
+2026-10-04 09:42. After that, 105 downloads failed that day and 46 stayed `pending` without being processed.
+
+- **Root cause:** WhatsApp Web 2.3000.1049880737 made `WAWebDownloadManager.downloadAndMaybeDecrypt` check the
+  file's mimetype. We didn't pass one, so every image and sticker failed with `InvalidMediaFileType`.
+  Fix: pass `mimetype: msg.mimetype`. Verified on the live page by a structural probe (error class/status only):
+  every call failed without the argument and succeeded with it.
+- **Why the rows stayed "downloading":** reconcile re-queues `failed` media, but `Ingest` enqueued the id *before*
+  it set the row back to `pending`. The queue worker reads the row synchronously, saw `failed` and dropped it,
+  and the row then stayed `pending` until the next restart. It is now enqueued after the update (regression test
+  in `ingest.test.ts`).
+- Final failures now log the in-page error class (`download_error:<name>`, no content), so the next WhatsApp
+  change shows up in `docker compose logs app` and doesn't fail silently.
