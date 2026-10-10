@@ -274,7 +274,7 @@ The logger writes while the owner is logged out, but must not be able to read ol
   thumbnails, edit history, reaction emoji, chat names, contact names, pushnames, and all media (including avatars)
   with their mime type and filename.
 * **Plaintext (metadata):** WA IDs (these contain phone numbers), timestamps, message types, flags (deleted/edited/fromMe/
-  forwarded), acks, and media sizes/dimensions. Documented. Host full-disk encryption is recommended.
+  forwarded), the disappearing-messages timer, acks, and media sizes/dimensions. Documented. Host full-disk encryption is recommended.
 * A password change re-wraps only the private key (cheap). A lost password plus a lost recovery key means **the data is gone by design**.
 
 ### HTTP hardening
@@ -405,7 +405,8 @@ AAD context `msgbody|<messageId>`, so an edit can move the old ciphertext into `
 A native client for the same API (no WebView, no server changes needed). Kotlin 2.4, Jetpack Compose,
 AGP 9.4 (built-in Kotlin), Gradle 9.8 (wrapper with pinned checksum), minSdk 26, compile/target SDK 37.
 Package `io.github.revocx35.walogger` (debug builds get the `.debug` suffix and install side by side).
-Current release: 0.2.0 (versionCode 3, adds auto-save). 0.1.1 (versionCode 2) was confirmed working by the owner on a Samsung, One UI 8.5 / Android 16,
+Current release: 0.3.0 (versionCode 4: auto-save with a disappearing-messages-only option, Android 17 local network
+permission). 0.1.1 (versionCode 2) was confirmed working by the owner on a Samsung, One UI 8.5 / Android 16,
 server in HTTP mode.
 
 ### Modules
@@ -450,6 +451,9 @@ server in HTTP mode.
     (optionally videos/GIFs, optionally status updates; never stickers) to `Pictures/wa_logger` /
     `Movies/wa_logger` through MediaStore (no storage permission). Triggered by `message_update` media events and
     app start while in the foreground, and by a 15-minute WorkManager job (network required) in the background.
+    Option "Only from chats with disappearing messages" saves only media whose `Message.disappearingSec` is set:
+    exactly the media WhatsApp's own app never saves to the gallery (the server stores WhatsApp's per-message
+    `ephemeralDuration` as `messages.ephemeral_sec`; rows logged before 2026-10-10 get it when the message is seen again).
     The cursor is stored per server and advanced per item, so an interrupted run doesn't save duplicates. The copies
     are unencrypted by design (the setting says so) and the run keeps the session cookie in use.
   * `ui/vnc/VncView` — double-buffered bitmap, tap = click, drag = wheel scroll (pan when zoomed or
@@ -468,6 +472,9 @@ server in HTTP mode.
   `scrollToItem` + `scrollBy` (no negative offsets).
 
 ### Security choices
+Android 17 (target SDK 37) blocks connections to private addresses unless the owner grants `ACCESS_LOCAL_NETWORK`
+(shown as "Nearby devices"): `data/LocalNetwork.kt` asks when connecting to a local address and offers it on the
+"cannot reach" screen. Without it, a home-network server is unreachable (found on the emulator, 2026-10-10).
 Auto-save is the only path that writes decrypted media outside the app on its own; it is off by default.
 `FLAG_SECURE` on by default (switch in Settings → App), `allowBackup=false` + data extraction rules excluding
 everything, no disk cache for media (Coil memory cache only, ExoPlayer without cache), user-installed CAs not
@@ -481,8 +488,12 @@ marked sensitive.
   `app/build/screenshots/` to compare with the web's `docs/screenshots`), and `LiveServerTest` (opt-in via
   `WAL_IT_*` env vars) against a real stack: `scripts/smoke.sh --keep`, seed with `server/src/testutil/seed.ts`
   into the stack's `app_data` volume (`chown -R 10001:10001` afterwards), trust Caddy's `root.crt`.
-* No device or emulator is available on the dev LXC (no KVM). Code that only misbehaves on Android
-  (threading rules, Keystore, R8) can't be caught by the JVM tests, so reason about it explicitly.
+* The dev LXC has KVM and an emulator (AVD `wal_test`, Android 17 / API 37 google_apis x86_64). On-device tests in
+  `app/src/androidTest` (`:app:connectedDebugAndroidTest`; auto-save: MediaStore writes, WorkManager) aren't in CI
+  (no emulator there), so run them before a release. UI walkthroughs: `adb shell uiautomator dump` (screenshots are
+  black while FLAG_SECURE is on). Full auto-save end-to-end: `scripts/dev/autosave-server.mts` (see its header).
+  Code that only misbehaves on Android (threading rules, Keystore, R8, new permission rules) is invisible to the
+  JVM tests.
 * **R8 is disabled** for release builds (`isMinifyEnabled = false`): minified builds couldn't be verified
   (0.1.0's mapping renamed route classes; Navigation resolves route serializers reflectively). Re-enable
   only after testing a minified build on an emulator/device; `proguard-rules.pro` is kept for that.

@@ -173,3 +173,24 @@ The owner asked for incoming images to be saved to the phone automatically.
 - Not verified on a device (no emulator here): the WorkManager schedule on Samsung's battery management and the
   MediaStore writes. Unit tests cover the feed client, the selection policy and the cursor; the server endpoint has
   an API test.
+
+## 2026-10-10 — Android 0.3.0: "only disappearing-message chats", emulator, Android 17 local network
+
+- **New option:** auto-save "Only from chats with disappearing messages". WhatsApp's own app never saves media from
+  such chats to the gallery, so this saves exactly the photos the owner would otherwise lose. On the live page every
+  message carries `ephemeralDuration` (seconds), and it matched the chat setting (probe: 95 flagged messages, all in
+  the 14 chats with a timer). The server now stores it (migration 4, `messages.ephemeral_sec`, also backfilled when
+  an older row is seen again) and the API exposes `Message.disappearingSec`.
+- **Emulator:** the LXC now has KVM. AVD `wal_test` (Android 17, API 37). New on-device tests
+  (`app/src/androidTest/AutoSaveDeviceTest`) check the MediaStore writes, the filter and WorkManager scheduling.
+  A full adb walkthrough of the release APK against `scripts/dev/autosave-server.mts`: connect, log in, switch
+  auto-save on, a live photo arriving (saved in the foreground), and the background job in a process the job started
+  itself (forced through `cmd jobscheduler run -f`, with the clock moved 16 min ahead because WorkManager doesn't run
+  periodic work early). In both cases only the disappearing photo was saved.
+- **Bug found by the emulator:** on Android 17, apps targeting SDK 37 can't connect to private addresses
+  (192.168.x.x, 10.0.2.2) without `ACCESS_LOCAL_NETWORK`, which Android shows as "Nearby devices". 0.1.x–0.2.0 show
+  "Cannot reach the server" there. The owner's phone is on Android 16, where it works, but it would break with the
+  Android 17 update. 0.3.0 declares the permission, asks for it when connecting to a local address, and offers it on
+  the "cannot reach" screen (e.g. after a system update).
+- Notes: `am kill` counts as a force-stop for WorkManager (it reschedules instead of running). Screenshots are black
+  while FLAG_SECURE is on; use `uiautomator dump`.

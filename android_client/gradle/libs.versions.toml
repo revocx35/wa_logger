@@ -13,6 +13,8 @@ media3 = "1.11.1"
 coil = "3.6.3"
 zxing = "3.5.4"
 work = "2.11.2"
+androidx-test-runner = "1.7.0"
+androidx-test-ext-junit = "1.3.0"
 junit = "4.13.2"
 robolectric = "4.17"
 roborazzi = "1.75.0"
@@ -47,6 +49,8 @@ coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" 
 coil-network-okhttp = { module = "io.coil-kt.coil3:coil-network-okhttp", version.ref = "coil" }
 coil-gif = { module = "io.coil-kt.coil3:coil-gif", version.ref = "coil" }
 androidx-work-runtime = { module = "androidx.work:work-runtime-ktx", version.ref = "work" }
+androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidx-test-runner" }
+androidx-test-ext-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-test-ext-junit" }
 zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 junit = { module = "junit:junit", version.ref = "junit" }
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }

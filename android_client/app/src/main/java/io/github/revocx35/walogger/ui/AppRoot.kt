@@ -22,6 +22,8 @@ import coil3.ImageLoader
 import io.github.revocx35.walogger.core.ApiException
 import io.github.revocx35.walogger.core.Formatter
 import io.github.revocx35.walogger.data.AppGraph
+import io.github.revocx35.walogger.data.LocalNetwork
+import io.github.revocx35.walogger.data.rememberLocalNetworkRequest
 import io.github.revocx35.walogger.data.ServerSession
 import io.github.revocx35.walogger.media.AudioController
 import io.github.revocx35.walogger.ui.components.Spinner
@@ -71,6 +73,13 @@ fun AppRoot(graph: AppGraph) {
         }
     }
 
+    // Android 17+: e.g. after a system update, a saved home-network server needs local network access first.
+    var localNetworkMissing by remember { mutableStateOf(LocalNetwork.missing(context)) }
+    val askLocalNetwork = rememberLocalNetworkRequest { granted ->
+        localNetworkMissing = !granted
+        if (granted) ctrl.refresh()
+    }
+
     val s = session
     val host = remember(s) { s?.let { SessionMediaHost(it) } }
     CompositionLocalProvider(LocalFormatter provides formatter, LocalMediaHost provides host) {
@@ -88,6 +97,7 @@ fun AppRoot(graph: AppGraph) {
                     null
                 },
                 busy = loading,
+                onAllowLocalNetwork = if (localNetworkMissing && error?.code == ApiException.NETWORK) askLocalNetwork else null,
             )
             else -> {
                 val auth = remember(s) {

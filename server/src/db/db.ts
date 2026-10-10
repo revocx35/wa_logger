@@ -166,6 +166,12 @@ const MIGRATIONS: { id: number; name: string; sql: string }[] = [
     // GET /api/media-feed walks downloaded media in media id order.
     sql: `CREATE INDEX messages_media_id ON messages (media_id) WHERE media_id IS NOT NULL;`,
   },
+  {
+    id: 4,
+    name: 'messages_ephemeral',
+    // Disappearing-messages timer the message was sent with (seconds), NULL when off or unknown.
+    sql: `ALTER TABLE messages ADD COLUMN ephemeral_sec INTEGER;`,
+  },
 ];
 
 export function openDb(file: string): DB {

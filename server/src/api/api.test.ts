@@ -117,12 +117,13 @@ describe('api', () => {
     const ids = [`false_${CHAT}_M5`, `false_${OTHER}_O1`, `false_${CHAT}_M6`];
     for (const id of ids) {
       const mediaId = await seedMedia(h, Buffer.from('x'), 'image/jpeg', null);
-      h.ctx.repo.updateMessage(id, { type: 'image', media_id: mediaId, media_status: 'downloaded' });
+      h.ctx.repo.updateMessage(id, { type: 'image', media_id: mediaId, media_status: 'downloaded', ephemeral_sec: id.endsWith('O1') ? 86400 : null });
     }
     let r = (await c.req('GET', `/api/media-feed?after=${start.cursor}&limit=2`)).body as MediaFeedPage;
     expect(r.items.map((x) => x.message.id)).toEqual(ids.slice(0, 2));
     expect(r.items[0]!.chat.name).toBe('Ali Veli');
     expect(r.items[0]!.message.media?.url).toMatch(/^\/api\/media\/\d+$/);
+    expect(r.items.map((x) => x.message.disappearingSec)).toEqual([null, 86400]);
     expect(r.more).toBe(true);
     r = (await c.req('GET', `/api/media-feed?after=${r.cursor}`)).body as MediaFeedPage;
     expect(r.items.map((x) => x.message.id)).toEqual(ids.slice(2));

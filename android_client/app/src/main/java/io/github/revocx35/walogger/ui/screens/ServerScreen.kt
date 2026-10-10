@@ -30,6 +30,8 @@ import io.github.revocx35.walogger.core.isLocalHost
 import io.github.revocx35.walogger.core.parseServerUrl
 import io.github.revocx35.walogger.core.userMessage
 import io.github.revocx35.walogger.data.AppGraph
+import io.github.revocx35.walogger.data.LocalNetwork
+import io.github.revocx35.walogger.data.rememberLocalNetworkRequest
 import io.github.revocx35.walogger.data.ServerTrust
 import io.github.revocx35.walogger.ui.components.BtnStyle
 import io.github.revocx35.walogger.ui.components.CheckRow
@@ -101,7 +103,7 @@ fun ServerScreen(graph: AppGraph, onConnected: (HttpUrl, Boolean) -> Unit) {
     val insecure = url != null && !url.isHttps
     val publicHttp = url != null && !url.isHttps && !isLocalHost(url.host)
 
-    fun probe(target: HttpUrl) {
+    fun probeNow(target: HttpUrl) {
         busy = true
         error = null
         graph.trust.serverHost = target.host
@@ -113,6 +115,9 @@ fun ServerScreen(graph: AppGraph, onConnected: (HttpUrl, Boolean) -> Unit) {
                 val rejected = graph.trust.lastRejected
                 if (e.code == ApiException.TLS_UNTRUSTED && rejected != null && rejected.isNotEmpty()) {
                     reviewCert = target to rejected.last()
+                } else if (e.code == ApiException.NETWORK && LocalNetwork.missing(context)) {
+                    // A hostname can resolve to a private address too (local DNS).
+                    error = "${e.userMessage} ${LocalNetwork.HELP}"
                 } else if (e.code == ApiException.NETWORK && target.isHttps && isLocalHost(target.host)) {
                     error = "${e.userMessage} If your server runs in HTTP mode (setup.sh --http-only), use http://${target.host}${if (target.port != 443) ":${target.port}" else ""} instead."
                 } else {
@@ -122,6 +127,24 @@ fun ServerScreen(graph: AppGraph, onConnected: (HttpUrl, Boolean) -> Unit) {
                 busy = false
             }
         }
+    }
+
+    var pending by remember { mutableStateOf<HttpUrl?>(null) }
+    val askLocalNetwork = rememberLocalNetworkRequest { granted ->
+        val target = pending
+        pending = null
+        if (!granted) error = LocalNetwork.HELP
+        else if (target != null) probeNow(target)
+    }
+
+    fun probe(target: HttpUrl) {
+        // Android 17+: a home-network server is unreachable until the owner allows local network access.
+        if (isLocalHost(target.host) && LocalNetwork.missing(context)) {
+            pending = target
+            askLocalNetwork()
+            return
+        }
+        probeNow(target)
     }
 
     val importCa = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -156,6 +179,9 @@ fun ServerScreen(graph: AppGraph, onConnected: (HttpUrl, Boolean) -> Unit) {
             CheckRow(allowHttp, { allowHttp = it }, "I understand — connect over HTTP anyway")
         }
         ErrorNote(error)
+        if (error?.contains(LocalNetwork.HELP) == true && url != null && LocalNetwork.missing(context)) {
+            WaButton("Allow local network access", { pending = url; askLocalNetwork() }, block = true)
+        }
         WaButton("Connect", { url?.let { probe(it) } }, style = BtnStyle.Primary, block = true, busy = busy, enabled = url != null && (!publicHttp || allowHttp))
         LinkButton("Import a CA certificate…", { importCa.launch(arrayOf("*/*")) }, style = WaType.small, color = c.muted, icon = WaIcons.shield)
     }

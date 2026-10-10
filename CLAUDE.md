@@ -46,8 +46,11 @@ Read these first, every session:
   Gradle is capped in `android_client/gradle.properties`; stop the smoke stack while Gradle runs.
 - `android_client/core` mirrors `shared/api.d.ts` and ports `web/src/lib/{waText,format}`: change them together.
 - The Android JVM tests can't see Android-only rules. 0.1.0 read responses on the main thread (NetworkOnMainThreadException)
-  and every test passed. No emulator here (no KVM): when the owner reports an app problem, ask for the in-app crash
-  report (Settings → App → Crash reports) before guessing.
+  and every test passed. The LXC has KVM: run `:app:connectedDebugAndroidTest` on the emulator (AVD `wal_test`,
+  Android 17) before releases. When the owner reports an app problem, still ask for the in-app crash report
+  (Settings → App → Crash reports) before guessing.
+- Android 17 / target SDK 37 blocks private-network connections without `ACCESS_LOCAL_NETWORK` ("Nearby devices"):
+  0.1.x–0.2.0 couldn't reach a 192.168.x.x server there. Test new Android versions on the emulator.
 - The root `.gitignore` ignores `data/`; android_client's Kotlin `data` package is re-included explicitly. Build from a
   fresh `git clone` before pushing (a local build passes with untracked or ignored files).
 - Inside `page.evaluate()` run via `tsx`, named helper functions get wrapped with `__name` (undefined in the page).

@@ -226,6 +226,8 @@ data class Message(
     val mentions: List<Mention> = emptyList(),
     val forwarded: Boolean = false,
     val isStatus: Boolean = false,
+    /** Sent with disappearing messages on (timer in seconds); WhatsApp doesn't save such media to the gallery. */
+    val disappearingSec: Double? = null,
     val ack: Int? = null,
     val reactions: List<Reaction> = emptyList(),
     val edited: Boolean = false,

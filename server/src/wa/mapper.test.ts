@@ -184,6 +184,12 @@ describe('mapMessage', () => {
     expect(m.chatId).toBe('status@broadcast');
     expect(m.senderId).toBe('p@c.us');
   });
+
+  it('reads the disappearing-messages timer', () => {
+    expect(mapMessage(base({ id: id(false, 'a@c.us', 'E1'), type: 'image', ephemeralDuration: 604800, directPath: '/x' })).ephemeralSec).toBe(604800);
+    expect(mapMessage(base({ id: id(false, 'a@c.us', 'E2'), type: 'image', ephemeralDuration: 0, directPath: '/x' })).ephemeralSec).toBeNull();
+    expect(mapMessage(base({ id: id(false, 'a@c.us', 'E3'), type: 'image', directPath: '/x' })).ephemeralSec).toBeNull();
+  });
 });
 
 describe('message keys without _serialized (current WhatsApp Web)', () => {

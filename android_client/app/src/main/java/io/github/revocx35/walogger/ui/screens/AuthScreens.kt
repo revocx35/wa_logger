@@ -293,7 +293,7 @@ fun ServerFooter(onChangeServer: () -> Unit) {
 
 /** Full-screen message when the server can't be reached (like the web's fallback). */
 @Composable
-fun UnreachableScreen(error: String?, onRetry: () -> Unit, onChangeServer: () -> Unit, onReviewCertificate: (() -> Unit)?, busy: Boolean) {
+fun UnreachableScreen(error: String?, onRetry: () -> Unit, onChangeServer: () -> Unit, onReviewCertificate: (() -> Unit)?, busy: Boolean, onAllowLocalNetwork: (() -> Unit)? = null) {
     val c = Wa.colors
     Column(
         Modifier.fillMaxSize().background(c.bg).statusBarsPadding().padding(24.dp),
@@ -304,6 +304,10 @@ fun UnreachableScreen(error: String?, onRetry: () -> Unit, onChangeServer: () ->
         Text("Cannot reach the wa_logger server.", color = c.muted, style = WaType.base, textAlign = TextAlign.Center)
         if (error != null) MutedText(error, style = WaType.small, textAlign = TextAlign.Center)
         if (onReviewCertificate != null) WaButton("Review certificate", onReviewCertificate, style = BtnStyle.Primary)
+        if (onAllowLocalNetwork != null) {
+            MutedText(io.github.revocx35.walogger.data.LocalNetwork.HELP, style = WaType.small, textAlign = TextAlign.Center)
+            WaButton("Allow local network access", onAllowLocalNetwork, style = BtnStyle.Primary)
+        }
         WaButton("Retry", onRetry, busy = busy)
         LinkButton("Change server", onChangeServer, style = WaType.small, color = c.muted, icon = WaIcons.server)
     }

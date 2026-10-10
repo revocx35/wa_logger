@@ -111,6 +111,8 @@ export interface MappedMessage {
   isViewOnce: boolean;
   isForwarded: boolean;
   isStatus: boolean;
+  /** Disappearing-messages timer in seconds (`ephemeralDuration`), null when off. */
+  ephemeralSec: number | null;
   ack: number | null;
   revoked: boolean;
   revokedBy: string | null;
@@ -328,6 +330,7 @@ export function mapMessage(raw: RawMsg): MappedMessage {
     isViewOnce,
     isForwarded: !!raw.isForwarded,
     isStatus: !!raw.isStatusV3 || chatId === 'status@broadcast',
+    ephemeralSec: (num(raw.ephemeralDuration) ?? 0) > 0 ? num(raw.ephemeralDuration) : null,
     ack: num(raw.ack),
     revoked: rawType === 'revoked',
     revokedBy: rawType === 'revoked' ? (str(raw.subtype) === 'admin' ? 'admin' : 'sender') : null,

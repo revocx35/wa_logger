@@ -149,6 +149,7 @@ export class Ingest {
       is_view_once: m.isViewOnce ? 1 : 0,
       is_forwarded: m.isForwarded ? 1 : 0,
       is_status: m.isStatus ? 1 : 0,
+      ephemeral_sec: m.ephemeralSec,
       ack: m.ack,
       deleted_at: null,
       deleted_by: null,
@@ -221,6 +222,7 @@ export class Ingest {
       is_view_once: 0,
       is_forwarded: 0,
       is_status: m.isStatus ? 1 : 0,
+      ephemeral_sec: m.ephemeralSec,
       ack: m.ack,
       // Seen only as already-deleted during history import: the real deletion time is unknown, so use
       // the message time rather than pretending it was deleted "now".
@@ -273,6 +275,8 @@ export class Ingest {
 
     const patch: Parameters<typeof repo.updateMessage>[1] = {};
     if (m.ack !== null && (existing.ack === null || m.ack > existing.ack)) patch.ack = m.ack;
+    // Rows logged before the disappearing-messages flag was stored get it when the message is seen again.
+    if (m.ephemeralSec !== null && existing.ephemeral_sec === null) patch.ephemeral_sec = m.ephemeralSec;
     // Media that failed earlier can be retried when WhatsApp offers it again.
     if (existing.media_status === 'failed' && m.downloadable && existing.media_attempts < 8) {
       patch.media_status = 'pending';

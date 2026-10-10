@@ -494,6 +494,7 @@ private fun AutoSaveSettings(graph: AppGraph, api: ApiClient) {
         }
     }, "Save new photos to this phone automatically")
     if (st.enabled) {
+        CheckRow(st.onlyDisappearing, { graph.autoSave.setOnlyDisappearing(it) }, "Only from chats with disappearing messages (WhatsApp doesn't save those to your gallery)")
         CheckRow(st.videos, { graph.autoSave.setVideos(it) }, "Also save videos and GIFs")
         CheckRow(st.status, { graph.autoSave.setStatus(it) }, "Include status updates (stories)")
         val last = if (st.lastRunAt > 0) " · last check ${fmt.dateTime(st.lastRunAt)}" else ""

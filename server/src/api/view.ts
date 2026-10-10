@@ -205,6 +205,7 @@ export class Presenter {
         mentions: (meta?.mentions ?? []).map((id) => ({ id, name: this.contactName(id) })),
         forwarded: !!row.is_forwarded,
         isStatus: !!row.is_status,
+        disappearingSec: row.ephemeral_sec ?? null,
         ack: row.ack,
         reactions: byMsg.get(row.id) ?? [],
         edited: row.edited_at !== null || (editCounts.get(row.id) ?? 0) > 0,

@@ -104,6 +104,7 @@ prefix: plain `v*` tags make CI publish versioned server images.
                                         # formatting parity with the web, RFB/ZRLE/DES (VNC)
 ./gradlew :app:testDebugUnitTest        # renders every main screen (Robolectric)
 ./gradlew :app:recordRoborazziDebug     # …and writes the screenshots to app/build/screenshots/
+./gradlew :app:connectedDebugAndroidTest  # on a running emulator/device: auto-save (MediaStore, WorkManager)
 ```
 
 End-to-end against a real server (e.g. `scripts/smoke.sh --keep` plus `server/src/testutil/seed.ts` data):

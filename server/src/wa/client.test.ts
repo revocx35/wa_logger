@@ -123,7 +123,7 @@ describe('WaService event wiring', () => {
     h.ctx.repo.upsertChat({ id: CHAT, kind: 'user', now: 1 });
     const base = {
       chat_id: CHAT, sender_id: CHAT, from_me: 0, ts: 1, type: 'image', body_enc: null, meta_enc: null, thumb_enc: null, quoted_id: null,
-      media_id: null, media_attempts: 4, media_size: 10, media_w: null, media_h: null, media_duration: null, is_forwarded: 0, is_status: 0,
+      media_id: null, media_attempts: 4, media_size: 10, media_w: null, media_h: null, media_duration: null, is_forwarded: 0, is_status: 0, ephemeral_sec: null,
       ack: 1, deleted_at: null, deleted_by: null, deleted_for_me_at: null, edited_at: null, last_edit_key: null, source: 'live', captured_at: 1, updated_at: 1,
     };
     h.ctx.repo.insertMessage({ ...base, id: 'fail1', media_status: 'failed', is_view_once: 0 });

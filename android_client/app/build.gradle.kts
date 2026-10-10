@@ -22,8 +22,10 @@ android {
         applicationId = "io.github.revocx35.walogger"
         minSdk = 26
         targetSdk = 37
-        versionCode = 3
-        versionName = "0.2.0"
+        versionCode = 4
+        versionName = "0.3.0"
+        // On-device tests (app/src/androidTest): ./gradlew :app:connectedDebugAndroidTest with an emulator running.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -108,6 +110,10 @@ dependencies {
     implementation(libs.coil.gif)
     implementation(libs.zxing.core)
     implementation(libs.androidx.work.runtime)
+
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.okhttp.mockwebserver)
 
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)

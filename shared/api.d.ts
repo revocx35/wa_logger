@@ -176,6 +176,8 @@ export interface Message {
   mentions: { id: string; name: string | null }[];
   forwarded: boolean;
   isStatus: boolean;
+  /** Sent with disappearing messages on: the timer in seconds (null when off or unknown). WhatsApp doesn't save such media to the phone's gallery. */
+  disappearingSec: number | null;
   ack: number | null; // -1 error, 0 pending, 1 server, 2 device, 3 read, 4 played
   reactions: Reaction[];
   edited: boolean;

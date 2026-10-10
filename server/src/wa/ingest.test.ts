@@ -102,6 +102,15 @@ describe('ingest', () => {
     expect(seen).toEqual(['pending']);
   });
 
+  it('stores the disappearing-messages timer and backfills it on older rows', async () => {
+    const id = (await ingest.message({ ...text('E1', 'hi'), ephemeralDuration: 86400 }, 'live'))!;
+    expect(h.ctx.repo.getMessage(id)!.ephemeral_sec).toBe(86400);
+    const old = (await ingest.message(text('E2', 'logged before the flag existed'), 'live'))!;
+    expect(h.ctx.repo.getMessage(old)!.ephemeral_sec).toBeNull();
+    await ingest.message({ ...text('E2', 'logged before the flag existed'), ephemeralDuration: 604800 }, 'history');
+    expect(h.ctx.repo.getMessage(old)!.ephemeral_sec).toBe(604800);
+  });
+
   it('keeps deleted-for-everyone messages and flags them', async () => {
     const id = (await ingest.message(text('D1', 'will be deleted'), 'live'))!;
     await ingest.revoke({ ...text('D1', ''), type: 'revoked', subtype: 'sender' }, null);

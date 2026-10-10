@@ -46,6 +46,9 @@ class Prefs(context: Context) {
     var autoSaveStatus: Boolean
         get() = sp.getBoolean(KEY_AUTOSAVE_STATUS, false)
         set(v) = sp.edit().putBoolean(KEY_AUTOSAVE_STATUS, v).apply()
+    var autoSaveOnlyDisappearing: Boolean
+        get() = sp.getBoolean(KEY_AUTOSAVE_ONLY_DISAPPEARING, false)
+        set(v) = sp.edit().putBoolean(KEY_AUTOSAVE_ONLY_DISAPPEARING, v).apply()
     var autoSaveCount: Int
         get() = sp.getInt(KEY_AUTOSAVE_COUNT, 0)
         set(v) = sp.edit().putInt(KEY_AUTOSAVE_COUNT, v).apply()
@@ -76,6 +79,7 @@ class Prefs(context: Context) {
         const val KEY_AUTOSAVE = "autosave"
         const val KEY_AUTOSAVE_VIDEOS = "autosave_videos"
         const val KEY_AUTOSAVE_STATUS = "autosave_status"
+        const val KEY_AUTOSAVE_ONLY_DISAPPEARING = "autosave_only_disappearing"
         const val KEY_AUTOSAVE_COUNT = "autosave_count"
         const val KEY_AUTOSAVE_LAST_RUN = "autosave_last_run"
         const val KEY_AUTOSAVE_ERROR = "autosave_error"

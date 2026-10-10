@@ -39,11 +39,13 @@ import java.util.concurrent.TimeUnit
 
 /** Which media the owner wants copied to the phone. Pure, so it is unit-tested. */
 object AutoSavePolicy {
-    fun wants(item: MediaFeedItem, videos: Boolean, status: Boolean): Boolean {
+    fun wants(item: MediaFeedItem, videos: Boolean, status: Boolean, onlyDisappearing: Boolean = false): Boolean {
         val m = item.message
         val media = m.media ?: return false
         if (media.status != MediaStatus.Downloaded || media.url == null) return false
         if (!status && (m.isStatus || item.chat.kind == ChatKind.Status)) return false
+        // WhatsApp itself never saves disappearing-message media to the gallery: this fills exactly that gap.
+        if (onlyDisappearing && (m.disappearingSec ?: 0.0) <= 0.0) return false
         return when (m.type) {
             MessageType.Image -> true
             MessageType.Video, MessageType.Gif -> videos
@@ -59,6 +61,7 @@ data class AutoSaveState(
     val enabled: Boolean,
     val videos: Boolean,
     val status: Boolean,
+    val onlyDisappearing: Boolean,
     val saved: Int,
     val lastRunAt: Long,
     val error: String?,
@@ -79,7 +82,7 @@ class AutoSaver(private val context: Context, private val prefs: Prefs, private 
     private var kickJob: Job? = null
     private var again = false
 
-    private fun readState() = AutoSaveState(prefs.autoSave, prefs.autoSaveVideos, prefs.autoSaveStatus, prefs.autoSaveCount, prefs.autoSaveLastRun, prefs.autoSaveError)
+    private fun readState() = AutoSaveState(prefs.autoSave, prefs.autoSaveVideos, prefs.autoSaveStatus, prefs.autoSaveOnlyDisappearing, prefs.autoSaveCount, prefs.autoSaveLastRun, prefs.autoSaveError)
     private fun publish() {
         _state.value = readState()
     }
@@ -107,6 +110,11 @@ class AutoSaver(private val context: Context, private val prefs: Prefs, private 
 
     fun setStatus(on: Boolean) {
         prefs.autoSaveStatus = on
+        publish()
+    }
+
+    fun setOnlyDisappearing(on: Boolean) {
+        prefs.autoSaveOnlyDisappearing = on
         publish()
     }
 
@@ -141,7 +149,7 @@ class AutoSaver(private val context: Context, private val prefs: Prefs, private 
                 val page = api.mediaFeed(cursor, PAGE)
                 for (item in page.items) {
                     if (!prefs.autoSave) return@withLock true
-                    if (AutoSavePolicy.wants(item, prefs.autoSaveVideos, prefs.autoSaveStatus)) {
+                    if (AutoSavePolicy.wants(item, prefs.autoSaveVideos, prefs.autoSaveStatus, prefs.autoSaveOnlyDisappearing)) {
                         try {
                             saveToGallery(api, item)
                             prefs.autoSaveCount += 1

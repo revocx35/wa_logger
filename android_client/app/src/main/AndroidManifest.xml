@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Android 17+ (target SDK 37): needed to reach a server on a private address (home network, 192.168.x.x). -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
 
     <!-- No backups of any kind: the app holds an (encrypted) session cookie and its Keystore key. -->
     <application

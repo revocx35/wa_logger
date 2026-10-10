@@ -15,11 +15,20 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AutoSavePolicyTest {
-    private fun item(type: MessageType, kind: ChatKind = ChatKind.User, isStatus: Boolean = false, status: MediaStatus = MediaStatus.Downloaded, url: String? = "/api/media/7") =
+    private fun item(type: MessageType, kind: ChatKind = ChatKind.User, isStatus: Boolean = false, status: MediaStatus = MediaStatus.Downloaded, url: String? = "/api/media/7", disappearingSec: Double? = null) =
         MediaFeedItem(
             ChatRef("1@c.us", "A", kind),
-            Message(id = "m", chatId = "1@c.us", type = type, isStatus = isStatus, media = MediaInfo(status = status, url = url, mime = "image/jpeg")),
+            Message(id = "m", chatId = "1@c.us", type = type, isStatus = isStatus, disappearingSec = disappearingSec, media = MediaInfo(status = status, url = url, mime = "image/jpeg")),
         )
+
+    @Test
+    fun onlyDisappearingSkipsMediaWhatsAppSavesItself() {
+        assertTrue(AutoSavePolicy.wants(item(MessageType.Image, disappearingSec = 604800.0), videos = false, status = false, onlyDisappearing = true))
+        assertFalse(AutoSavePolicy.wants(item(MessageType.Image), videos = false, status = false, onlyDisappearing = true))
+        assertFalse(AutoSavePolicy.wants(item(MessageType.Image, disappearingSec = 0.0), videos = false, status = false, onlyDisappearing = true))
+        assertTrue(AutoSavePolicy.wants(item(MessageType.Image), videos = false, status = false, onlyDisappearing = false))
+        assertFalse(AutoSavePolicy.wants(item(MessageType.Video, disappearingSec = 86400.0), videos = false, status = false, onlyDisappearing = true))
+    }
 
     @Test
     fun savesPhotosOnlyByDefault() {

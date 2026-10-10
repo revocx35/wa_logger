@@ -100,6 +100,8 @@ export interface MessageRow {
   is_view_once: number;
   is_forwarded: number;
   is_status: number;
+  /** Disappearing-messages timer (seconds) the message was sent with; null when off or unknown. */
+  ephemeral_sec: number | null;
   ack: number | null;
   deleted_at: number | null;
   deleted_by: string | null;
@@ -204,6 +206,7 @@ const MESSAGE_UPDATABLE = new Set<keyof MessageRow>([
   'is_view_once',
   'is_forwarded',
   'is_status',
+  'ephemeral_sec',
   'ack',
   'deleted_at',
   'deleted_by',
