@@ -51,6 +51,18 @@ class ApiClientTest {
     }
 
     @Test
+    fun readsTheMediaFeed() = runBlocking {
+        server.enqueue(json("""{"items":[],"cursor":"41","more":false}"""))
+        server.enqueue(json("""{"items":[{"chat":{"id":"1@c.us","name":"A","kind":"user"},"message":{"id":"m1","chatId":"1@c.us","type":"image","ts":5,"media":{"status":"downloaded","url":"/api/media/42","mime":"image/jpeg"}}}],"cursor":"42","more":true}"""))
+        assertEquals("41", api.mediaFeed(null).cursor)
+        assertEquals("/api/media-feed?limit=50", server.takeRequest().target)
+        val page = api.mediaFeed("41", 10)
+        assertEquals("/api/media-feed?limit=10&after=41", server.takeRequest().target)
+        assertEquals("/api/media/42", page.items.single().message.media?.url)
+        assertEquals(true, page.more)
+    }
+
+    @Test
     fun omitsEmptyOptionalFieldsAndEncodesPaths() = runBlocking {
         server.enqueue(json("""{"ok":false,"needTotp":true}"""))
         server.enqueue(json("""{"messages":[{"id":"m1","chatId":"1@c.us","type":"brand_new_type","media":{"status":"weird"}}],"nextBefore":null}"""))

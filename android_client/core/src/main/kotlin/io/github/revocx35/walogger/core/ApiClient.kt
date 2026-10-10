@@ -267,6 +267,10 @@ class ApiClient(baseClient: OkHttpClient, val baseUrl: HttpUrl) {
     suspend fun deleted(before: String? = null): DeletedFeedPage =
         get("/api/deleted?limit=50" + (before?.let { "&before=${enc(it)}" } ?: ""))
 
+    /** Media downloaded after [after] (a cursor from an earlier page); without one, only the current cursor. */
+    suspend fun mediaFeed(after: String?, limit: Int = 50): MediaFeedPage =
+        get("/api/media-feed?limit=$limit" + (after?.let { "&after=${enc(it)}" } ?: ""))
+
     suspend fun search(q: String, chatId: String? = null): SearchResponse =
         get("/api/search?q=${enc(q)}" + (chatId?.let { "&chatId=${enc(it)}" } ?: ""))
 

@@ -203,6 +203,14 @@ export interface MessageEdit { body: string | null; capturedAt: number }
 export interface DeletedFeedItem { chat: { id: string; name: string; kind: ChatKind }; message: Message }
 export interface DeletedFeedPage { items: DeletedFeedItem[]; nextBefore: string | null }
 
+/**
+ * `GET /api/media-feed?after=&limit=`: messages whose media finished downloading after `after`, oldest first.
+ * Without `after` (or with a cursor from before a data wipe) there are no items, only the current cursor.
+ * Pass `cursor` as the next `after`; `more` means another page is ready right away.
+ */
+export interface MediaFeedItem { chat: { id: string; name: string; kind: ChatKind }; message: Message }
+export interface MediaFeedPage { items: MediaFeedItem[]; cursor: string; more: boolean }
+
 export interface SearchHit { chat: { id: string; name: string; kind: ChatKind }; message: Message }
 export interface SearchResponse { hits: SearchHit[]; truncated: boolean }
 

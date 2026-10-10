@@ -614,6 +614,17 @@ export class Repo implements DataKeyStore {
       .all(limit) as MessageRow[];
   }
 
+  /** Messages whose media was downloaded after media id `after`, in download (media id) order. */
+  listDownloadedMediaAfter(after: number, limit: number): MessageRow[] {
+    return this.db
+      .prepare(`SELECT ${MSG_COLS} FROM messages WHERE media_id > ? AND media_status = 'downloaded' ORDER BY media_id LIMIT ?`)
+      .all(after, limit) as MessageRow[];
+  }
+
+  maxMessageMediaId(): number {
+    return (this.db.prepare('SELECT COALESCE(MAX(media_id), 0) AS m FROM messages').get() as { m: number }).m;
+  }
+
   /** Batch of messages with a body/meta for search scanning, newest first. */
   scanForSearch(chatId: string | null, before: Cursor | null, limit: number): MessageRow[] {
     const where: string[] = ['(body_enc IS NOT NULL OR meta_enc IS NOT NULL)'];

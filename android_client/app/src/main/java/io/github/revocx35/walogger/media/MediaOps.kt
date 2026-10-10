@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.core.content.FileProvider
+import io.github.revocx35.walogger.core.ApiClient
 import io.github.revocx35.walogger.core.Message
 import io.github.revocx35.walogger.core.MessageType
 import io.github.revocx35.walogger.core.await
@@ -53,17 +54,24 @@ object MediaOps {
 
     private fun safeName(name: String): String = name.substringAfterLast('/').substringAfterLast('\\').replace(Regex("[\\u0000-\\u001f\\u007f\"*:<>?|]"), "_").take(150)
 
-    private suspend fun download(session: ServerSession, msg: Message, out: OutputStream) {
-        val url = session.mediaUrl(msg.media?.url) ?: throw IOException("no media")
+    /** The server answered with an error status (e.g. 404 after a data wipe). */
+    class HttpStatusException(val code: Int) : IOException("HTTP $code")
+
+    private suspend fun download(session: ServerSession, msg: Message, out: OutputStream) = download(session.api, msg, out)
+
+    suspend fun download(api: ApiClient, msg: Message, out: OutputStream) {
+        val url = api.mediaUrl(msg.media?.url) ?: throw IOException("no media")
         val req = Request.Builder().url("$url?download=1").build()
-        val res = try {
-            session.api.http.newCall(req).await()
-        } catch (e: IOException) {
-            throw mapTransportError(e)
-        }
-        res.use {
-            if (!it.isSuccessful) throw IOException("HTTP ${it.code}")
-            withContext(Dispatchers.IO) { it.body.byteStream().use { input -> input.copyTo(out) } }
+        withContext(Dispatchers.IO) {
+            val res = try {
+                api.http.newCall(req).await()
+            } catch (e: IOException) {
+                throw mapTransportError(e)
+            }
+            res.use {
+                if (!it.isSuccessful) throw HttpStatusException(it.code)
+                it.body.byteStream().use { input -> input.copyTo(out) }
+            }
         }
     }
 

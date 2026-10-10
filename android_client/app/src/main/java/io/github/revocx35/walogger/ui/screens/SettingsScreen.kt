@@ -60,6 +60,7 @@ import io.github.revocx35.walogger.core.WaStatus
 import io.github.revocx35.walogger.core.userMessage
 import io.github.revocx35.walogger.data.AppGraph
 import io.github.revocx35.walogger.data.ServerTrust
+import io.github.revocx35.walogger.media.AutoSaver
 import io.github.revocx35.walogger.ui.LocalFormatter
 import io.github.revocx35.walogger.ui.components.Badge
 import io.github.revocx35.walogger.ui.components.BadgeTone
@@ -436,6 +437,7 @@ private fun AppSection(d: SettingsDeps) {
         if (!d.api.baseUrl.isHttps) MutedText("Unencrypted HTTP connection — only use it inside your own network.", style = WaType.small)
         WaButton("Change server", d.onChangeServer, style = BtnStyle.Ghost, icon = WaIcons.server)
         SwitchRow(secure, { graph?.prefs?.setSecureScreen(it) }, "Block screenshots and hide the app in the recent-apps preview")
+        if (graph != null) AutoSaveSettings(graph, d.api)
         Text("Trusted certificates", style = WaType.base.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Medium), color = c.text)
         if (certs.isEmpty()) MutedText("None — only certificates Android trusts are accepted.", style = WaType.small)
         for (cert in certs) {
@@ -463,4 +465,47 @@ private fun AppSection(d: SettingsDeps) {
         }
         MutedText("wa_logger for Android ${BuildConfig.VERSION_NAME}", style = WaType.small)
     }
+}
+
+/** "Save new photos to this phone" (media/AutoSave.kt). */
+@Composable
+private fun AutoSaveSettings(graph: AppGraph, api: ApiClient) {
+    val fmt = LocalFormatter.current
+    val st by graph.autoSave.state.collectAsState()
+    val scope = rememberCoroutineScope()
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    if (!AutoSaver.SUPPORTED) {
+        MutedText("Saving new photos to this phone automatically needs Android 10 or newer.", style = WaType.small)
+        return
+    }
+    SwitchRow(st.enabled, { on ->
+        if (busy) return@SwitchRow
+        busy = true
+        error = null
+        scope.launch {
+            try {
+                graph.autoSave.setEnabled(api, on)
+            } catch (e: Exception) {
+                error = e.userMessage()
+            } finally {
+                busy = false
+            }
+        }
+    }, "Save new photos to this phone automatically")
+    if (st.enabled) {
+        CheckRow(st.videos, { graph.autoSave.setVideos(it) }, "Also save videos and GIFs")
+        CheckRow(st.status, { graph.autoSave.setStatus(it) }, "Include status updates (stories)")
+        val last = if (st.lastRunAt > 0) " · last check ${fmt.dateTime(st.lastRunAt)}" else ""
+        MutedText("Saved so far: ${st.saved}$last", style = WaType.small)
+        ErrorNote(st.error)
+    }
+    ErrorNote(error)
+    MutedText(
+        "Photos go to Pictures/wa_logger, videos to Movies/wa_logger. Only media logged after you turn this on is saved. " +
+            "While the app is open it saves right away; in the background Android lets it check about every 15 minutes " +
+            "(later in battery saver). Saved copies are not encrypted: your gallery, other apps with photo access and cloud " +
+            "photo backup can see them.",
+        style = WaType.small,
+    )
 }

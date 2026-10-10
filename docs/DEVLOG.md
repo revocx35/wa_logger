@@ -157,3 +157,19 @@ The owner reported that images were stuck in "downloading". On the live instance
   in `ingest.test.ts`).
 - Final failures now log the in-page error class (`download_error:<name>`, no content), so the next WhatsApp
   change shows up in `docker compose logs app` and doesn't fail silently.
+
+## 2026-10-10 — Android 0.2.0: auto-save new photos to the phone
+
+The owner asked for incoming images to be saved to the phone automatically.
+
+- Server: `GET /api/media-feed?after=&limit=` lists messages whose media finished downloading after a cursor (the
+  media id, which grows in download order), oldest first. Without `after`, or with a cursor from before a data wipe,
+  it returns only the current cursor. Migration 3 adds a partial index on `messages.media_id`. API test included.
+- Android: Settings → App → "Save new photos to this phone automatically" (Android 10+, off by default) with
+  "Also save videos and GIFs" and "Include status updates". Stickers are never saved. Runs immediately while the app
+  is open (media `message_update` events and app start) and through a 15-minute WorkManager job in the background.
+  Files go through MediaStore into `Pictures/wa_logger` and `Movies/wa_logger`, so no storage permission is needed.
+  The settings text warns that the copies are not encrypted and are visible to the gallery and cloud photo backup.
+- Not verified on a device (no emulator here): the WorkManager schedule on Samsung's battery management and the
+  MediaStore writes. Unit tests cover the feed client, the selection policy and the cursor; the server endpoint has
+  an API test.

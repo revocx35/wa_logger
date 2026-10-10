@@ -246,6 +246,8 @@ data class MessagePage(val messages: List<Message> = emptyList(), val nextBefore
 @Serializable data class ChatRef(val id: String, val name: String = "", val kind: ChatKind = ChatKind.User)
 @Serializable data class DeletedFeedItem(val chat: ChatRef, val message: Message)
 @Serializable data class DeletedFeedPage(val items: List<DeletedFeedItem> = emptyList(), val nextBefore: String? = null)
+@Serializable data class MediaFeedItem(val chat: ChatRef, val message: Message)
+@Serializable data class MediaFeedPage(val items: List<MediaFeedItem> = emptyList(), val cursor: String = "0", val more: Boolean = false)
 @Serializable data class SearchHit(val chat: ChatRef, val message: Message)
 @Serializable data class SearchResponse(val hits: List<SearchHit> = emptyList(), val truncated: Boolean = false)
 

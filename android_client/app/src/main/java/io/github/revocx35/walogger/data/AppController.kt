@@ -52,7 +52,10 @@ class AppController(private val graph: AppGraph) {
             override fun onStart(owner: LifecycleOwner) {
                 foreground = true
                 syncEvents()
-                if (_session.value != null) refresh()
+                _session.value?.let { s ->
+                    refresh()
+                    graph.autoSave.kick(s.api)
+                }
             }
 
             override fun onStop(owner: LifecycleOwner) {
@@ -86,6 +89,7 @@ class AppController(private val graph: AppGraph) {
                     is ServerEvent.WaStateChanged -> _wa.value = ev.status
                     is ServerEvent.SyncProgressChanged -> _wa.value = _wa.value?.copy(sync = ev.sync)
                     is ServerEvent.SessionRevoked -> refresh()
+                    is ServerEvent.MessageUpdate -> if (ev.reason == "media") graph.autoSave.kick(s.api)
                     else -> Unit
                 }
             }

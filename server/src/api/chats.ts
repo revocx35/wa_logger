@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import type { DeletedFeedPage, MessageEdit, MessagePage, SearchHit, SearchResponse } from '../../../shared/api.js';
+import type { DeletedFeedPage, MediaFeedPage, MessageEdit, MessagePage, SearchHit, SearchResponse } from '../../../shared/api.js';
 import type { AppContext } from '../context.js';
 import { F, decodeCursor, encodeCursor, type MessageRow } from '../db/repo.js';
 import { Errors } from '../errors.js';
@@ -118,6 +118,29 @@ export function registerChatRoutes(app: FastifyInstance, ctx: AppContext): void 
     const res: DeletedFeedPage = {
       items: msgs.map((m) => ({ chat: p.chatRef(chats.get(m.chatId), m.chatId), message: m })),
       nextBefore: hasMore && last ? encodeCursor({ ts: last.deleted_at ?? 0, rowid: last.rowid }) : null,
+    };
+    return res;
+  });
+
+  // Lets clients (the Android app's "save to device") pick up media downloaded while they were offline.
+  app.get('/api/media-feed', async (req) => {
+    const q = z.object({ after: z.string().regex(/^\d{1,16}$/).optional(), limit: Limit }).parse(req.query);
+    const max = repo.maxMessageMediaId();
+    const after = q.after === undefined ? null : Number(q.after);
+    // No cursor yet, or one from before a data wipe: start from now.
+    if (after === null || after > max) {
+      const res: MediaFeedPage = { items: [], cursor: String(max), more: false };
+      return res;
+    }
+    const rows = repo.listDownloadedMediaAfter(after, q.limit + 1);
+    const more = rows.length > q.limit;
+    const page = more ? rows.slice(0, q.limit) : rows;
+    const p = presenter(req);
+    const chats = new Map(repo.getChatsByIds([...new Set(page.map((r) => r.chat_id))]).map((c) => [c.id, c] as const));
+    const res: MediaFeedPage = {
+      items: p.messages(page).map((m) => ({ chat: p.chatRef(chats.get(m.chatId), m.chatId), message: m })),
+      cursor: String(page.length ? page[page.length - 1]!.media_id : after),
+      more,
     };
     return res;
   });

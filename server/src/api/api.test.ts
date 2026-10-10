@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import WebSocket from 'ws';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { ChatSummary, DeletedFeedPage, MessagePage, SearchResponse } from '../../../shared/api.js';
+import type { ChatSummary, DeletedFeedPage, MediaFeedPage, MessagePage, SearchResponse } from '../../../shared/api.js';
 import { ORIGIN, PASSWORD, makeHarness, type Harness, type TestClient } from '../testutil/harness.js';
 import { Ingest, type WaApi } from '../wa/ingest.js';
 import { beginMediaFile, finishMediaFile } from '../wa/media.js';
@@ -109,6 +109,29 @@ describe('api', () => {
     expect(r.items).toHaveLength(1);
     expect(r.items[0]!.chat.name).toBe('Ali Veli');
     expect(r.items[0]!.message.text).toBe('message number 10');
+  });
+
+  it('serves newly downloaded media as a feed with a cursor', async () => {
+    const start = (await c.req('GET', '/api/media-feed')).body as MediaFeedPage;
+    expect(start).toEqual({ items: [], cursor: '0', more: false });
+    const ids = [`false_${CHAT}_M5`, `false_${OTHER}_O1`, `false_${CHAT}_M6`];
+    for (const id of ids) {
+      const mediaId = await seedMedia(h, Buffer.from('x'), 'image/jpeg', null);
+      h.ctx.repo.updateMessage(id, { type: 'image', media_id: mediaId, media_status: 'downloaded' });
+    }
+    let r = (await c.req('GET', `/api/media-feed?after=${start.cursor}&limit=2`)).body as MediaFeedPage;
+    expect(r.items.map((x) => x.message.id)).toEqual(ids.slice(0, 2));
+    expect(r.items[0]!.chat.name).toBe('Ali Veli');
+    expect(r.items[0]!.message.media?.url).toMatch(/^\/api\/media\/\d+$/);
+    expect(r.more).toBe(true);
+    r = (await c.req('GET', `/api/media-feed?after=${r.cursor}`)).body as MediaFeedPage;
+    expect(r.items.map((x) => x.message.id)).toEqual(ids.slice(2));
+    expect(r.more).toBe(false);
+    const end = r.cursor;
+    expect(((await c.req('GET', `/api/media-feed?after=${end}`)).body as MediaFeedPage)).toEqual({ items: [], cursor: end, more: false });
+    // A cursor from before a data wipe restarts at the current end instead of waiting forever.
+    expect(((await c.req('GET', '/api/media-feed?after=999999')).body as MediaFeedPage).cursor).toBe(end);
+    expect((await c.req('GET', '/api/media-feed?after=-1')).status).toBe(400);
   });
 
   it('searches decrypted content, optionally within a chat', async () => {

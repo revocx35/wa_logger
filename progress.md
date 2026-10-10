@@ -137,6 +137,7 @@ Update this file whenever a step is completed.
 - [x] CI `android` job (tests, lint, debug APK artifact); signed release build (key kept outside the repo)
 - [x] 0.1.1: network reads off the main thread (fixes messages not loading / crashes / ANR on a real phone), crash & ANR reports, R8 off
 - [x] Owner confirmed 0.1.1 works on the phone (Samsung, One UI 8.5, HTTP mode)
+- [x] 0.2.0: auto-save new photos (optionally videos/status) to the phone; server `GET /api/media-feed`
 - [ ] Emulator on a KVM-capable host to verify release builds, then re-enable R8
 
 ## Next ideas (not started)

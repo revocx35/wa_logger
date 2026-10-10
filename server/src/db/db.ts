@@ -160,6 +160,12 @@ const MIGRATIONS: { id: number; name: string; sql: string }[] = [
     // LID-addressed contacts ("…@lid") no longer carry the phone number in their id.
     sql: `ALTER TABLE contacts ADD COLUMN phone_enc BLOB;`,
   },
+  {
+    id: 3,
+    name: 'messages_media_id',
+    // GET /api/media-feed walks downloaded media in media id order.
+    sql: `CREATE INDEX messages_media_id ON messages (media_id) WHERE media_id IS NOT NULL;`,
+  },
 ];
 
 export function openDb(file: string): DB {

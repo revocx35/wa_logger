@@ -44,6 +44,8 @@ class AppGraph(val context: Context, val diagnostics: Diagnostics) {
         .addNetworkInterceptor { chain -> chain.proceed(chain.request().newBuilder().header("User-Agent", userAgent).build()) }
         .build()
 
+    val autoSave = io.github.revocx35.walogger.media.AutoSaver(context, prefs, scope, diagnostics)
+
     val controller = AppController(this)
 
     fun savedServer(): HttpUrl? = prefs.serverUrl?.let { parseServerUrl(it) }

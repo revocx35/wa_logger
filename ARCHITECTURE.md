@@ -348,6 +348,7 @@ AAD context `msgbody|<messageId>`, so an edit can move the old ciphertext into `
 | GET | /api/media/:mediaId | ✓ | decrypted stream, Range supported |
 | POST | /api/messages/:messageId/media/retry | ✓ | re-queue download |
 | GET | /api/deleted?before= | ✓ | feed of deleted messages across chats |
+| GET | /api/media-feed?after=&limit= | ✓ | `MediaFeedPage`: media downloaded after a cursor (media id), oldest first; no `after` = current cursor only (Android auto-save) |
 | GET | /api/search?q=&chatId= | ✓ | decrypt-and-scan search (bounded) |
 | GET | /api/events | ✓ | SSE: `wa_state`, `message`, `message_update`, `chat_update`, `sync_progress` |
 | GET/PUT | /api/settings | ✓ | `{logStatus, downloadHistoryMedia, mediaMaxMb, historyPerChat}` |
@@ -404,7 +405,7 @@ AAD context `msgbody|<messageId>`, so an edit can move the old ciphertext into `
 A native client for the same API (no WebView, no server changes needed). Kotlin 2.4, Jetpack Compose,
 AGP 9.4 (built-in Kotlin), Gradle 9.8 (wrapper with pinned checksum), minSdk 26, compile/target SDK 37.
 Package `io.github.revocx35.walogger` (debug builds get the `.debug` suffix and install side by side).
-Current release: 0.1.1 (versionCode 2), confirmed working by the owner on a Samsung, One UI 8.5 / Android 16,
+Current release: 0.2.0 (versionCode 3, adds auto-save). 0.1.1 (versionCode 2) was confirmed working by the owner on a Samsung, One UI 8.5 / Android 16,
 server in HTTP mode.
 
 ### Modules
@@ -444,6 +445,13 @@ server in HTTP mode.
   * `media/` — one shared ExoPlayer for voice notes, full-screen viewer (zoomable photos, streamed
     video/GIF via OkHttp data source with Range), save through the system file picker, "open with" through
     a FileProvider copy in the app cache (deleted at the next start).
+  * `media/AutoSave.kt` — opt-in "Save new photos to this phone" (Settings → App, Android 10+): walks
+    `GET /api/media-feed` from a cursor taken when it was switched on (only newly logged media) and writes photos
+    (optionally videos/GIFs, optionally status updates; never stickers) to `Pictures/wa_logger` /
+    `Movies/wa_logger` through MediaStore (no storage permission). Triggered by `message_update` media events and
+    app start while in the foreground, and by a 15-minute WorkManager job (network required) in the background.
+    The cursor is stored per server and advanced per item, so an interrupted run doesn't save duplicates. The copies
+    are unencrypted by design (the setting says so) and the run keeps the session cookie in use.
   * `ui/vnc/VncView` — double-buffered bitmap, tap = click, drag = wheel scroll (pan when zoomed or
     view-only), pinch = zoom, keyboard bar that sends typed text as keysyms (needed for "Log in with phone
     number" when WhatsApp is on the same phone).
@@ -460,6 +468,7 @@ server in HTTP mode.
   `scrollToItem` + `scrollBy` (no negative offsets).
 
 ### Security choices
+Auto-save is the only path that writes decrypted media outside the app on its own; it is off by default.
 `FLAG_SECURE` on by default (switch in Settings → App), `allowBackup=false` + data extraction rules excluding
 everything, no disk cache for media (Coil memory cache only, ExoPlayer without cache), user-installed CAs not
 trusted (network security config), cleartext allowed by the platform config but gated in the app (explicit
