@@ -144,6 +144,18 @@ Update this file whenever a step is completed.
 - [ ] Verify a minified (R8) release build on the emulator
 - [x] Web: select photos/videos in a chat → "Download ZIP" (server `GET /api/media-zip`, streaming ZIP writer `http/zip.ts`) to verify release builds, then re-enable R8
 
+## Phase 14 — Sending (2026-10-16)
+- [x] Server: send through WhatsApp Web's own send actions (`wa/walpage.ts`, injected at every document start) — text,
+      replies, media/files (raw upload → chunked into the page), voice notes, reactions, edit, delete for everyone,
+      read receipts, new chat by number; sent media stored from the upload; 300 sends/hour cap; audit entries
+- [x] API + tests (`api/send.test.ts`, `wa/walpage.test.ts` runs the injected source against fake WhatsApp modules)
+- [x] Web: composer (Enter/Shift+Enter, reply/edit bars, attach with caption, voice notes with WebM→Ogg remux),
+      message menu (react, reply, copy, edit, delete for everyone), New chat, read-receipts setting
+- [x] Browser end-to-end `scripts/dev/send-ui.mts` (17 steps, real MediaRecorder voice note decoded as Ogg/Opus)
+- [x] Android client: composer, message actions, new chat, voice notes
+- [ ] Owner: send a first real message / photo / voice note from the web UI and the Android client
+- Calls: not implemented (see docs/wwebjs-notes.md "Calls" for why the standalone mobile app can't either)
+
 ## Next ideas (not started)
 - Android: push notifications for deletions (needs a server-side push channel; SSE only runs in the foreground)
 - Retry expired history media via WhatsApp's phone re-upload ("media retry") instead of marking it unavailable

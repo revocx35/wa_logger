@@ -11,10 +11,11 @@ DevTools Protocol (via `whatsapp-web.js`) and records **every message, edit, rea
 the owner's account sends or receives, encrypted at rest. When someone deletes a message
 ("deleted for everyone"), the logged copy stays viewable and is flagged as deleted.
 
-The web UI is **read-only** (no sending). It looks like WhatsApp: chat list, chat view, media.
+The web UI looks like WhatsApp: chat list, chat view, media. Since 2026-10 it can also **send** as the linked account
+(text, replies, media, files, voice notes, reactions, edits, delete for everyone, new chats; §4 "Sending").
 The live Chromium screen can be opened from the menu ("WA Web") through an in-browser VNC client.
 
-Out of scope on purpose: sending messages, multiple WhatsApp accounts or tenants, and **view-once media**
+Out of scope on purpose: calls, multiple WhatsApp accounts or tenants, and **view-once media**
 (it is logged only as a placeholder and never downloaded).
 
 ## 2. User flow
@@ -130,6 +131,9 @@ server/src/
     media.ts          priority download queue (live > history), size cap, timeouts, retries, disk guard, encryption
     sync.ts           initial history import + periodic reconcile (catches missed/revoked msgs)
     avatars.ts        best-effort profile pictures (fetched inside the browser page, never by the app)
+    walpage.ts        code installed into WhatsApp Web as window.__wal: sending through WhatsApp Web's own send actions
+    walbridge.ts      WalPage: injects walpage.ts (now + at every document start, so self-reloads keep it), runs its ops
+    sender.ts         Sender: send API used by api/send.ts (chunked uploads into the page, hourly cap, stores sent media)
   testutil/           harness (in-process app + cookie-jar client), seed.ts (dev sample data) — not in the build
 shared/api.d.ts       API DTO types shared by server and web (type-only)
 ```
@@ -184,6 +188,29 @@ shared/api.d.ts       API DTO types shared by server and web (type-only)
   This catches events missed while the app was down.
 * Status updates (`status@broadcast`) are logged when setting `log_status=true` (default) and appear as a
   special "Status updates" chat.
+
+### Sending
+* `api/send.ts` → `ctx.wa.sender` (`wa/sender.ts`) → `WalPage.call(op)` → `window.__wal.call(op)` in the page
+  (`wa/walpage.ts`). The page code only calls WhatsApp Web's own actions, the ones its compose box and message menu
+  use: `WAWebSendTextMsgChatAction.sendTextMsgToChat(chat, text, {quotedMsg})`;
+  `WAWebMediaOpaqueData.createFromData(file, mime)` → `WAWebPrepRawMedia.prepRawMedia(opaque, {asDocument|isPtt|asGif,
+  precomputedFields})` → `MediaPrep.sendToChat({chat, options: {caption, quotedMsg}})` (WhatsApp uploads, then sends);
+  `WAWebSendReactionMsgAction.sendReactionToMsg(msg, emoji)`; `WAWebCmd.Cmd.sendRevokeMsgs(chat, {list, type:'message'},
+  {clearMedia:true})` after `WAWebMsgActionCapability.canSenderRevokeMsg`; `WAWebSendMessageEditAction.sendMessageEdit`
+  after `canEditText`; `WAWebUpdateUnreadChatAction.sendSeen({chat})`; `WAWebQueryExistsJob.queryPhoneExists('+…')`.
+  Results with `messageSendResult !== 'OK'` become `send_failed` errors.
+* walpage.ts is self-contained source text (`WAL_PAGE_SOURCE`) and runs without Node globals; `walpage.test.ts` runs
+  that exact string in a `vm` context against fake WhatsApp modules.
+* Files: `POST /api/uploads` (raw `application/octet-stream` body, the only non-JSON route; 64 MB, 4 pending, 10 min,
+  session-bound, memory only) → `POST /api/chats/:chatId/send-media {uploadId, kind}`. The sender pushes the file into
+  the page in 1 MiB base64 chunks. WhatsApp adds the message to the chat **before** the upload finishes, so ingest
+  logs it without a downloadable file; `Sender.storeSentMedia` then stores the uploaded bytes for that message id
+  (encrypted like any media), and the media queue drops its own download if a file appeared meanwhile.
+* Voice notes must be Ogg/Opus. Firefox records that; Chromium only records WebM/Opus, which `web/src/lib/ogg.ts`
+  remuxes to Ogg (same Opus packets). The page computes the duration and the 64-bar waveform before sending.
+* Sent messages come back through `message_create` and are logged like everything else. Sending a message (not a
+  reaction) marks the chat as read; opening a chat does so only with the `readReceipts` setting.
+* Limits: route rate limits plus 300 sends/hour (`Sender.charge`), audited as `message_sent` (type only).
 
 ## 5. Web UI — `web/`
 
@@ -352,8 +379,13 @@ AAD context `msgbody|<messageId>`, so an edit can move the old ciphertext into `
 | GET | /api/deleted?before= | ✓ | feed of deleted messages across chats |
 | GET | /api/media-feed?after=&limit= | ✓ | `MediaFeedPage`: media downloaded after a cursor (media id), oldest first; no `after` = current cursor only (Android auto-save) |
 | GET | /api/search?q=&chatId= | ✓ | decrypt-and-scan search (bounded) |
+| POST | /api/chats/:chatId/send | ✓ | `{text, quotedId?}` → `SendResult` |
+| POST | /api/uploads | ✓ | raw file (octet-stream, `X-Filename`, `X-File-Type`) → `{uploadId, size}`; DELETE /api/uploads/:id cancels |
+| POST | /api/chats/:chatId/send-media | ✓ | `{uploadId, kind: auto\|document\|voice\|gif, caption?, quotedId?}` |
+| POST | /api/messages/:messageId/react · revoke · edit | ✓ | `{emoji}` ('' removes) · – · `{text}` |
+| POST | /api/chats/:chatId/read · /api/chats/new | ✓ | send read receipts · `{phone}` → `{chatId}` |
 | GET | /api/events | ✓ | SSE: `wa_state`, `message`, `message_update`, `chat_update`, `sync_progress` |
-| GET/PUT | /api/settings | ✓ | `{logStatus, downloadHistoryMedia, mediaMaxMb, historyPerChat}` |
+| GET/PUT | /api/settings | ✓ | `{logStatus, downloadHistoryMedia, mediaMaxMb, historyPerChat, readReceipts}` |
 | GET | /api/audit | ✓ | audit log |
 | POST | /api/data/wipe | ✓ + password | delete all logged messages/media (keeps owner) |
 

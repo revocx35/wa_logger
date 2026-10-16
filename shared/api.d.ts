@@ -150,7 +150,14 @@ export interface QuotedSnapshot {
   text: string | null;
 }
 
-export interface Reaction { senderId: string; senderName: string | null; emoji: string; ts: number }
+export interface Reaction {
+  senderId: string;
+  senderName: string | null;
+  emoji: string;
+  ts: number;
+  /** The owner's own reaction (set by servers that support sending). */
+  fromMe?: boolean;
+}
 
 export interface LocationInfo { latitude: number; longitude: number; name?: string | null; address?: string | null; url?: string | null }
 export interface VcardInfo { displayName: string | null; vcard: string }
@@ -216,6 +223,30 @@ export interface MediaFeedPage { items: MediaFeedItem[]; cursor: string; more: b
 export interface SearchHit { chat: { id: string; name: string; kind: ChatKind }; message: Message }
 export interface SearchResponse { hits: SearchHit[]; truncated: boolean }
 
+/* ----------------------------------------------------------------- sending */
+
+/** `POST /api/chats/:chatId/send`. The sent message arrives like any other (SSE `message`). */
+export interface SendTextRequest { text: string; quotedId?: string | null }
+/** The id of the sent message when WhatsApp reported it (null otherwise; it still appears through SSE). */
+export interface SendResult { id: string | null }
+
+/**
+ * `POST /api/uploads` with the raw file as the body (`Content-Type: application/octet-stream`) and the file name in
+ * `X-Filename` (percent-encoded). Kept in memory for 10 minutes until it is sent with `POST /api/chats/:chatId/send-media`.
+ */
+export interface UploadResponse { uploadId: string; size: number }
+/** auto: photo/video/audio by type (other files as documents) · document: always a file · voice: voice note (Ogg/Opus) · gif: video as GIF */
+export type SendMediaKind = 'auto' | 'document' | 'voice' | 'gif';
+export interface SendMediaRequest { uploadId: string; kind: SendMediaKind; caption?: string | null; quotedId?: string | null }
+
+/** `POST /api/messages/:messageId/react`: an empty `emoji` removes the reaction. */
+export interface ReactRequest { emoji: string }
+/** `POST /api/messages/:messageId/edit` (own text messages, within WhatsApp's time limit). */
+export interface EditRequest { text: string }
+/** `POST /api/chats/new`: open (or create) the chat with a phone number on WhatsApp. */
+export interface NewChatRequest { phone: string }
+export interface NewChatResponse { chatId: string }
+
 /* ------------------------------------------------------------------ events */
 
 export type ServerEvent =
@@ -233,6 +264,8 @@ export interface Settings {
   downloadHistoryMedia: boolean;
   mediaMaxMb: number; // 1..2000
   historyPerChat: number; // 0..5000
+  /** Mark a chat as read on WhatsApp (blue ticks for the sender) when it is opened here. Default false. */
+  readReceipts: boolean;
 }
 
 export interface AuditEntry { id: number; ts: number; event: string; ip: string | null; detail: string | null }

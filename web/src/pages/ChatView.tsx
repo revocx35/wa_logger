@@ -3,8 +3,10 @@ import { useNavigate, useSearchParams } from 'react-router';
 import type { ChatSummary, Message, SearchHit } from '../../../shared/api';
 import { api, errorMessage } from '../api/client';
 import { useServerEvents } from '../api/events';
+import { Composer } from '../components/Composer';
 import { Icon } from '../components/Icon';
-import { MessageBubble, isSelectable } from '../components/MessageBubble';
+import { MessageBubble, isSelectable, type MessageActions } from '../components/MessageBubble';
+import { useAppState } from '../state/AppState';
 import { Avatar, ErrorNote, Spinner } from '../components/ui';
 import { dayKey, formatDayLabel, formatListTime } from '../lib/format';
 
@@ -46,6 +48,48 @@ export function ChatView({ chatId }: { chatId: string }) {
   const scrollTarget = useRef<string | null>(null);
 
   const isGroup = chat?.kind === 'group' || chat?.kind === 'status' || chat?.kind === 'broadcast';
+
+  // Sending as the linked account.
+  const { wa } = useAppState();
+  const [replyTo, setReplyTo] = useState<Message | null>(null);
+  const [editing, setEditing] = useState<Message | null>(null);
+  useEffect(() => {
+    setReplyTo(null);
+    setEditing(null);
+  }, [chatId]);
+  const canSend = chat?.kind === 'user' || chat?.kind === 'group';
+  const disabledReason =
+    wa?.state === 'ready' || wa?.state === 'syncing'
+      ? null
+      : 'WhatsApp is not connected right now, so messages can’t be sent.';
+  const actions = useMemo<MessageActions>(
+    () => ({
+      onReply: (m) => {
+        setEditing(null);
+        setReplyTo(m);
+      },
+      onEdit: (m) => {
+        setReplyTo(null);
+        setEditing(m);
+      },
+      onReact: (m, emoji) => void api.react(m.id, emoji).catch((e) => setError(errorMessage(e))),
+      onRevoke: (m) => void api.revoke(m.id).catch((e) => setError(errorMessage(e))),
+    }),
+    [],
+  );
+  // Read receipts only when the owner turned them on (Settings → Logging); off by default.
+  useEffect(() => {
+    let cancelled = false;
+    api.settings().then(
+      (s) => {
+        if (!cancelled && s.readReceipts) void api.markRead(chatId).catch(() => undefined);
+      },
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [chatId]);
 
   // Select photos/videos and download them as one ZIP (GET /api/media-zip, streamed by the server).
   const [selecting, setSelecting] = useState(false);
@@ -321,7 +365,16 @@ export function ChatView({ chatId }: { chatId: string }) {
               <span>{r.label}</span>
             </div>
           ) : (
-            <MessageBubble key={r.m.id} msg={r.m} isGroup={!!isGroup} showSender={r.showSender} highlighted={highlight === r.m.id} onJump={jump} selection={selectionProps.get(r.m.id)} />
+            <MessageBubble
+              key={r.m.id}
+              msg={r.m}
+              isGroup={!!isGroup}
+              showSender={r.showSender}
+              highlighted={highlight === r.m.id}
+              onJump={jump}
+              selection={selectionProps.get(r.m.id)}
+              actions={canSend ? actions : undefined}
+            />
           ),
         )}
         {nextAfter ? (
@@ -332,9 +385,23 @@ export function ChatView({ chatId }: { chatId: string }) {
           </div>
         ) : null}
       </div>
-      <footer className="chat-foot muted small">
-        <Icon name="lock" size={14} /> Read-only log · messages are stored encrypted on your server
-      </footer>
+      {canSend ? (
+        <Composer
+          chatId={chatId}
+          replyTo={replyTo}
+          editing={editing}
+          disabledReason={disabledReason}
+          onDone={() => {
+            setReplyTo(null);
+            setEditing(null);
+            stickToBottom.current = true;
+          }}
+        />
+      ) : (
+        <footer className="chat-foot muted small">
+          <Icon name="lock" size={14} /> {chat ? 'You can’t send to this chat from here' : 'Messages are stored encrypted on your server'}
+        </footer>
+      )}
     </section>
   );
 }

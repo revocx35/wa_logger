@@ -646,6 +646,7 @@ label.switch {
   height: 60px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   padding: 0 16px;
   background: var(--panel);
 }
@@ -1570,4 +1571,180 @@ label.switch {
 .msg-row.selected .select-check {
   background: var(--accent);
   border-color: var(--accent);
+}
+
+/* ---------------------------------------------------------------- composer */
+.composer {
+  flex: none;
+  background: var(--head);
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.compose-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+}
+.compose-row textarea {
+  flex: 1;
+  resize: none;
+  min-height: 40px;
+  max-height: 160px;
+  padding: 9px 12px;
+  border-radius: 20px;
+  line-height: 1.35;
+  font: inherit;
+}
+.compose-row .icon-btn.send {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+.compose-row .icon-btn.send:hover {
+  background: var(--accent-2);
+}
+.compose-row.recording {
+  align-items: center;
+  padding: 4px 0;
+}
+.rec-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--danger);
+  animation: rec-blink 1s steps(2, start) infinite;
+}
+@keyframes rec-blink {
+  to {
+    visibility: hidden;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rec-dot {
+    animation: none;
+  }
+}
+.rec-time {
+  font-variant-numeric: tabular-nums;
+  min-width: 3em;
+}
+.grow {
+  flex: 1;
+}
+.compose-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--panel);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius);
+  color: var(--text-2);
+  font-size: 0.875rem;
+}
+.compose-bar-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.compose-bar-text b {
+  color: var(--accent-2);
+  margin-right: 4px;
+}
+.compose-error {
+  font-size: 0.8125rem;
+  color: var(--danger);
+  padding: 0 6px;
+}
+.compose-error.muted {
+  color: var(--muted);
+}
+
+/* ------------------------------------------------------- message actions */
+.bubble {
+  position: relative;
+}
+.msg-actions {
+  position: absolute;
+  top: 0;
+  opacity: 0;
+  z-index: 2;
+}
+/* Beside the bubble, never over its text. */
+.msg-row.out .msg-actions {
+  right: calc(100% + 2px);
+}
+.msg-row.in .msg-actions {
+  left: calc(100% + 2px);
+}
+.msg-row:hover .msg-actions,
+.bubble:focus-within .msg-actions,
+.msg-actions.open {
+  opacity: 1;
+}
+@media (hover: none) {
+  .msg-actions {
+    opacity: 0.7;
+  }
+}
+.msg-actions > .icon-btn {
+  background: color-mix(in srgb, var(--panel) 85%, transparent);
+}
+.msg-actions .menu {
+  position: absolute;
+  top: 30px;
+  right: 0;
+  max-width: calc(100vw - 32px);
+  min-width: 200px;
+  background: var(--panel);
+  border-radius: var(--radius);
+  box-shadow: 0 2px 12px rgba(11, 20, 26, 0.25);
+  padding: 6px 0;
+  display: flex;
+  flex-direction: column;
+}
+.msg-row.in .msg-actions .menu {
+  right: auto;
+  left: 0;
+}
+.msg-actions .menu > button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px;
+  border: none;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.msg-actions .menu > button:hover {
+  background: var(--hover);
+}
+.msg-actions .menu > button.danger {
+  color: var(--danger);
+}
+.menu-reactions {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 8px 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.menu-reactions button {
+  border: none;
+  background: none;
+  font-size: 1.25rem;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.menu-reactions button:hover,
+.menu-reactions button.active {
+  background: var(--active);
 }

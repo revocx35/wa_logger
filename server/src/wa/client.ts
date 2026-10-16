@@ -8,7 +8,9 @@ import { Ingest, type WaApi } from './ingest.js';
 import { jid, phoneOf, type RawMsg } from './mapper.js';
 import { MediaQueue } from './media.js';
 import { chatInfo, contactInfo, fetchMessages, listChats, profilePicUrl } from './pageapi.js';
+import { Sender } from './sender.js';
 import { INITIAL_SYNC_KEY, Sync, type SyncApi } from './sync.js';
+import { WalPage } from './walbridge.js';
 
 const { Client, NoAuth } = wwebjs;
 type ClientT = InstanceType<typeof Client>;
@@ -64,6 +66,8 @@ export class WaService implements WaController {
   readonly media: MediaQueue;
   readonly ingest: Ingest;
   readonly sync: Sync;
+  readonly sender: Sender;
+  private wal: WalPage | null = null;
 
   constructor(private readonly ctx: AppContext) {
     this.media = new MediaQueue(ctx, () => this.page());
@@ -94,6 +98,12 @@ export class WaService implements WaController {
         return page ? fetchMessages(page, chatId, limit) : [];
       },
     };
+    // Sending only while linked and logging; the page code (walpage.ts) is attached in onReady().
+    this.sender = new Sender(
+      ctx,
+      () => (this.wal && this.page() && this.wal.page === this.page() ? this.wal : null),
+      (chatId) => this.ingest.ensureChat(chatId, true),
+    );
     this.sync = new Sync(ctx, this.ingest, syncApi, (p) => {
       this.syncInfo = p;
       ctx.events.emit({ type: 'sync_progress', sync: p });
@@ -245,6 +255,9 @@ export class WaService implements WaController {
     this.reconcileTimer = null;
     this.avatarTimer = null;
     this.watchdogTimer = null;
+    const wal = this.wal;
+    this.wal = null;
+    await wal?.detach();
     const c = this.client;
     this.client = null;
     if (c) {
@@ -448,6 +461,16 @@ export class WaService implements WaController {
       if (client.pupBrowser && client.pupPage) await focusWaTab(client.pupBrowser, client.pupPage);
     } catch (err) {
       this.ctx.log.warn({ err: (err as Error).message }, 'post-ready setup failed');
+    }
+    try {
+      if (client.pupPage && gen === this.generation) {
+        const wal = new WalPage(client.pupPage);
+        await wal.attach();
+        if (gen === this.generation) this.wal = wal;
+        else await wal.detach();
+      }
+    } catch (err) {
+      this.ctx.log.warn({ err: (err as Error).message }, 'installing the send code failed');
     }
     this.ctx.repo.audit('wa_ready', null);
     const firstSync = !this.ctx.repo.getState(INITIAL_SYNC_KEY);

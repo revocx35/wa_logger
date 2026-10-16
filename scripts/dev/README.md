@@ -23,6 +23,19 @@ sessions must be logged out live.
 cd server && npx tsx ../scripts/dev/live-updates.mts
 ```
 
+## send-ui.mts — sending in a real browser (17 steps)
+
+The real server and `Sender` with a fake WhatsApp page whose operations behave like WhatsApp Web's (sent messages
+come back through ingest). Covers text with line breaks, reply, reaction, edit, delete for everyone, a photo with a
+caption (stored from the upload), a voice note recorded by the browser's fake microphone (checked to decode as
+Ogg/Opus), a new chat by number and the phone layout. Start the test browser with
+`--use-fake-device-for-media-stream --use-fake-ui-for-media-stream` for the voice step.
+
+```bash
+(cd web && npm run build)
+cd server && npx tsx ../scripts/dev/send-ui.mts
+```
+
 ## e2e-ui.mjs — full UI walkthrough (61 steps)
 
 1. `scripts/smoke.sh --keep` (prints the project name, URL and env file), then seed sample data into its volume:

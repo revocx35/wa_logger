@@ -230,3 +230,20 @@ The owner asked for incoming images to be saved to the phone automatically.
   only downloads (and reconcile only runs) in "ready", and dropped the items it picked up meanwhile.
 - Fix: `resumeAfterReload` puts the state back to "ready", resumes the queue and re-queues pending media, either on
   the second `ready` or from the fallback after a reload. Both paths have tests that fail on the old code.
+
+## 2026-10-16 — Sending messages (web UI, API; Android client follows)
+
+The owner asked for a "full client": sending as well as logging.
+
+- Server: `wa/walpage.ts` is installed into WhatsApp Web (`Page.addScriptToEvaluateOnNewDocument` + once now, so the
+  self-reloads seen on 2026-10-15 keep it) and calls WhatsApp Web's own send functions (read from the module sources of
+  2.3000.1050642531 without an account). whatsapp-web.js' `sendMessage` was not used: it builds messages and uploads
+  by hand and breaks whenever WhatsApp changes the message shape.
+- Media we send is logged before WhatsApp's upload has finished (no `directPath`), so the queue could never download it;
+  the sender stores the uploaded bytes for that message id instead.
+- Voice notes: Chromium's MediaRecorder writes WebM only, WhatsApp needs Ogg/Opus → `web/src/lib/ogg.ts` remuxes. The
+  browser test records with Chromium's fake microphone and decodes the result with `decodeAudioData` (2.6 s, OK).
+- Not verified against a real account yet: the send functions were checked in WhatsApp Web's source and against fake
+  modules only. The first real send should be watched (`docker compose logs app`, Settings → Security log shows
+  `message_sent`).
+- Calls were asked for too. They are not part of this change.

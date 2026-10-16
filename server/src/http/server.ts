@@ -67,7 +67,7 @@ const CSP = [
 
 const PERMISSIONS_POLICY =
   'accelerometer=(), autoplay=(self), camera=(), display-capture=(), encrypted-media=(), fullscreen=(self), geolocation=(), ' +
-  'gyroscope=(), hid=(), magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(self), ' +
+  'gyroscope=(), hid=(), magnetometer=(), microphone=(self), midi=(), payment=(), picture-in-picture=(self), ' +
   'publickey-credentials-get=(), screen-wake-lock=(), serial=(), usb=(), xr-spatial-tracking=(), clipboard-read=(), clipboard-write=(self)';
 
 export function sendError(reply: FastifyReply, err: AppError): FastifyReply {

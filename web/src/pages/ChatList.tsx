@@ -4,7 +4,7 @@ import type { ChatSummary } from '../../../shared/api';
 import { api, errorMessage } from '../api/client';
 import { useServerEvents } from '../api/events';
 import { Icon } from '../components/Icon';
-import { Avatar, EmptyState, ErrorNote, Spinner } from '../components/ui';
+import { Avatar, EmptyState, ErrorNote, Modal, Spinner } from '../components/ui';
 import { formatListTime } from '../lib/format';
 import { stripWaFormatting } from '../lib/waText';
 
@@ -14,12 +14,48 @@ function norm(s: string) {
   return s.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase();
 }
 
+/** Start a chat with any number on WhatsApp (it is added to the log right away). */
+function NewChat({ onClose, onOpen }: { onClose: () => void; onOpen: (chatId: string) => void }) {
+  const [phone, setPhone] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const { chatId } = await api.newChat(phone);
+      onClose();
+      onOpen(chatId);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal title="New chat" onClose={onClose}>
+      <form className="form" onSubmit={submit}>
+        <label>
+          Phone number with country code
+          <input autoFocus inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+90 555 123 45 67" required />
+        </label>
+        <ErrorNote error={error} />
+        <button className="btn primary" disabled={busy || phone.replace(/\D/g, '').length < 6}>
+          {busy ? <Spinner size={16} /> : null} Open chat
+        </button>
+      </form>
+    </Modal>
+  );
+}
+
 export function ChatList({ activeId }: { activeId: string | null }) {
   const navigate = useNavigate();
   const [chats, setChats] = useState<ChatSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
+  const [newChat, setNewChat] = useState(false);
   const timer = useRef<number | undefined>(undefined);
 
   const load = useCallback(async () => {
@@ -67,7 +103,11 @@ export function ChatList({ activeId }: { activeId: string | null }) {
     <section className="chat-list" aria-label="Chats">
       <header className="pane-head">
         <h2>Chats</h2>
+        <button className="icon-btn" onClick={() => setNewChat(true)} aria-label="New chat" title="New chat with a phone number">
+          <Icon name="plus" />
+        </button>
       </header>
+      {newChat ? <NewChat onClose={() => setNewChat(false)} onOpen={(id) => navigate(`/chat/${encodeURIComponent(id)}`)} /> : null}
       <form className="search-box" onSubmit={searchMessages} role="search">
         <Icon name="search" size={18} />
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search chats · Enter searches messages" aria-label="Search" />

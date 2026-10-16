@@ -308,8 +308,9 @@ export class MediaQueue {
     try {
       const out = await downloadMessageMedia(this.ctx, page, id, this.ctx.mediaMaxBytes());
       if (out.status === 'ok') {
-        // The row may have been wiped while downloading.
-        if (!repo.getMessage(id)) {
+        // The row may have been wiped while downloading, or (own sent media) got its file from the upload meanwhile.
+        const now = repo.getMessage(id);
+        if (!now || now.media_id) {
           const m = repo.getMedia(out.mediaId);
           if (m) {
             repo.deleteMedia(m.id);

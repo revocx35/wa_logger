@@ -1,4 +1,4 @@
-import { memo, type KeyboardEvent, useEffect, useState } from 'react';
+import { memo, type KeyboardEvent, useEffect, useRef, useState } from 'react';
 import type { Message, MessageEdit, MessageType } from '../../../shared/api';
 import { api, errorMessage } from '../api/client';
 import { colorFor, dayKey, formatDateTime, formatDuration, formatTime } from '../lib/format';
@@ -105,6 +105,87 @@ function Special({ msg }: { msg: Message }) {
   return null;
 }
 
+const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+/** WhatsApp's windows for editing and deleting for everyone (it enforces them too). */
+const EDIT_WINDOW_MS = 15 * 60_000;
+const REVOKE_WINDOW_MS = 2 * 24 * 3600_000;
+
+/** What the owner can do with a message (sending through the linked account). */
+export interface MessageActions {
+  onReply: (m: Message) => void;
+  onEdit: (m: Message) => void;
+  onReact: (m: Message, emoji: string) => void;
+  onRevoke: (m: Message) => void;
+}
+
+function ActionMenu({ msg, actions }: { msg: Message; actions: MessageActions }) {
+  const [open, setOpen] = useState(false);
+  const [confirmRevoke, setConfirmRevoke] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
+    const onKey = (e: globalThis.KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+  useEffect(() => {
+    if (!open) setConfirmRevoke(false);
+  }, [open]);
+  const age = Date.now() - msg.ts;
+  const mine = msg.reactions.find((r) => r.fromMe)?.emoji;
+  const choose = (fn: () => void) => () => {
+    setOpen(false);
+    fn();
+  };
+  return (
+    <div className={open ? 'msg-actions open' : 'msg-actions'} ref={ref}>
+      <button className="icon-btn small" onClick={() => setOpen((v) => !v)} aria-label="Message actions" aria-haspopup="menu" aria-expanded={open}>
+        <Icon name="more" size={16} />
+      </button>
+      {open ? (
+        <div className="menu" role="menu">
+          <div className="menu-reactions">
+            {QUICK_REACTIONS.map((e) => (
+              <button key={e} role="menuitem" className={mine === e ? 'active' : ''} onClick={choose(() => actions.onReact(msg, mine === e ? '' : e))} aria-label={`React ${e}`}>
+                {e}
+              </button>
+            ))}
+          </div>
+          <button role="menuitem" onClick={choose(() => actions.onReply(msg))}>
+            <Icon name="reply" size={16} /> Reply
+          </button>
+          {msg.text ? (
+            <button role="menuitem" onClick={choose(() => void navigator.clipboard?.writeText(msg.text ?? ''))}>
+              <Icon name="file" size={16} /> Copy text
+            </button>
+          ) : null}
+          {msg.fromMe && msg.type === 'chat' && age < EDIT_WINDOW_MS ? (
+            <button role="menuitem" onClick={choose(() => actions.onEdit(msg))}>
+              <Icon name="edit" size={16} /> Edit
+            </button>
+          ) : null}
+          {msg.fromMe && age < REVOKE_WINDOW_MS ? (
+            confirmRevoke ? (
+              <button role="menuitem" className="danger" onClick={choose(() => actions.onRevoke(msg))}>
+                <Icon name="deleted" size={16} /> Yes, delete for everyone
+              </button>
+            ) : (
+              <button role="menuitem" className="danger" onClick={() => setConfirmRevoke(true)}>
+                <Icon name="deleted" size={16} /> Delete for everyone…
+              </button>
+            )
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export interface BubbleProps {
   msg: Message;
   isGroup: boolean;
@@ -113,6 +194,8 @@ export interface BubbleProps {
   onJump: (messageId: string) => void;
   /** Selection mode (select photos/videos to download together): set only while selecting. */
   selection?: { selected: boolean; onToggle: (messageId: string) => void };
+  /** Message actions (reply, react, edit, delete); not shown while selecting. */
+  actions?: MessageActions;
 }
 
 /** Photos, videos and GIFs that have been downloaded can be selected for "Download ZIP". */
@@ -120,7 +203,7 @@ export function isSelectable(msg: Message): boolean {
   return msg.media?.status === 'downloaded' && !!msg.media.url && (msg.type === 'image' || msg.type === 'video' || msg.type === 'gif');
 }
 
-function BubbleImpl({ msg, isGroup, showSender, highlighted, onJump, selection }: BubbleProps) {
+function BubbleImpl({ msg, isGroup, showSender, highlighted, onJump, selection, actions }: BubbleProps) {
   const [showEdits, setShowEdits] = useState(false);
 
   if (msg.type === 'system' || msg.type === 'call_log') {
@@ -170,6 +253,7 @@ function BubbleImpl({ msg, isGroup, showSender, highlighted, onJump, selection }
         </span>
       ) : null}
       <div className={classes}>
+        {actions && !selection && !deleted && !neverCaptured && msg.type !== 'ciphertext' ? <ActionMenu msg={msg} actions={actions} /> : null}
         {deleted ? (
           <div className="deleted-banner" title={`Deleted ${formatDateTime(msg.deletedAt!)}`}>
             <Icon name="ban" size={14} /> {msg.deletedBy === 'admin' ? 'Deleted by a group admin' : 'Deleted for everyone'} ·{' '}

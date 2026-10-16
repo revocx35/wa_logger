@@ -169,7 +169,8 @@ export class Presenter {
       const emoji = this.reader.tryText(...F.reaction(r.message_id, r.sender_id), r.emoji_enc);
       if (!emoji) continue;
       const list = byMsg.get(r.message_id) ?? [];
-      list.push({ senderId: r.sender_id, senderName: this.contactName(r.sender_id), emoji, ts: r.ts });
+      const fromMe = (!!this.meId && r.sender_id === this.meId) || this.contactCache.get(r.sender_id)?.is_me === 1;
+      list.push({ senderId: r.sender_id, senderName: fromMe ? 'You' : this.contactName(r.sender_id), emoji, ts: r.ts, fromMe });
       byMsg.set(r.message_id, list);
     }
 

@@ -4,7 +4,8 @@ Self-hosted, **encrypted WhatsApp message logger** with a WhatsApp-like web UI.
 
 wa_logger runs the real WhatsApp Web inside a sandboxed Chromium container on your own server, records every
 message, photo, video, voice note, document, edit and reaction your account sends or receives, and keeps it
-**even after the sender deletes it**. You read everything in a read-only, WhatsApp-style web interface. You can also
+**even after the sender deletes it**. You read everything in a WhatsApp-style web interface, and you can **send** from
+it too: text, replies, photos, videos, files, voice notes, reactions, edits and "delete for everyone". You can also
 open the live WhatsApp Web session from the menu (**WA Web**).
 
 <p>
@@ -23,6 +24,12 @@ _(Screenshots show generated demo data.)_
 - **Anti-delete:** messages deleted for everyone (or deleted by a group admin) stay readable and are flagged in red.
   A dedicated **Deleted** page lists every deletion.
 - **Edit history:** every earlier version of an edited message is kept.
+- **Send messages** as your account: text (Enter sends, Shift+Enter is a new line), replies, photos and videos with a
+  caption, any file up to 64 MB, voice notes (needs HTTPS for the microphone), reactions, editing your messages
+  (within WhatsApp's 15 minutes) and deleting them for everyone, and new chats by phone number (**+** above the chat
+  list). Sending goes through the linked WhatsApp Web session with WhatsApp Web's own send functions, and everything
+  you send is logged like any other message. Read receipts are off unless you turn them on (Settings → Logging);
+  replying in a chat marks it as read, as in WhatsApp.
 - **All message types** are logged except view-once media: text with WhatsApp formatting, photos, videos,
   GIFs, voice notes, audio, documents, stickers, locations, contact cards, polls, calls, group events, reactions,
   replies, forwards and status updates (optional).

@@ -7,13 +7,17 @@ import type {
   Message,
   MessageEdit,
   MessagePage,
+  NewChatResponse,
   RecoverResponse,
   RotateRecoveryKeyResponse,
   SearchResponse,
+  SendMediaKind,
+  SendResult,
   SessionInfo,
   Settings,
   SignupResponse,
   TotpSetupResponse,
+  UploadResponse,
   VncCredentials,
   WaStatus,
 } from '../../../shared/api';
@@ -74,6 +78,27 @@ async function request<T>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', url: string
 
 const enc = encodeURIComponent;
 
+/** Raw file upload (the only non-JSON request): the name goes in a header, never in the URL. */
+async function uploadFile(file: Blob, filename: string | null): Promise<UploadResponse> {
+  const headers: Record<string, string> = { Accept: 'application/json', 'Content-Type': 'application/octet-stream' };
+  if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+  if (file.type) headers['X-File-Type'] = file.type;
+  if (filename) headers['X-Filename'] = encodeURIComponent(filename);
+  let res: Response;
+  try {
+    res = await fetch('/api/uploads', { method: 'POST', headers, body: file, credentials: 'same-origin', cache: 'no-store', redirect: 'error' });
+  } catch {
+    throw new ApiError(0, 'network', 'Cannot reach the server. Check your connection.');
+  }
+  const data = (await res.json().catch(() => null)) as UploadResponse | { error?: { code?: string; message?: string } } | null;
+  if (!res.ok) {
+    const err = (data as { error?: { code?: string; message?: string } } | null)?.error;
+    if (res.status === 413) throw new ApiError(413, 'too_large', 'The file is too large (64 MB at most).');
+    throw new ApiError(res.status, err?.code ?? 'http_error', err?.message ?? `Upload failed (${res.status}).`);
+  }
+  return data as UploadResponse;
+}
+
 export const api = {
   state: () => request<AppState>('GET', '/api/state'),
 
@@ -114,6 +139,22 @@ export const api = {
   deleted: (before?: string | null) => request<DeletedFeedPage>('GET', `/api/deleted?limit=50${before ? `&before=${enc(before)}` : ''}`),
   search: (q: string, chatId?: string) =>
     request<SearchResponse>('GET', `/api/search?q=${enc(q)}${chatId ? `&chatId=${enc(chatId)}` : ''}`),
+
+  sendText: (chatId: string, text: string, quotedId?: string | null) =>
+    request<SendResult>('POST', `/api/chats/${enc(chatId)}/send`, { text, ...(quotedId ? { quotedId } : {}) }),
+  upload: (file: Blob, filename: string | null) => uploadFile(file, filename),
+  sendMedia: (chatId: string, uploadId: string, kind: SendMediaKind, caption?: string | null, quotedId?: string | null) =>
+    request<SendResult>('POST', `/api/chats/${enc(chatId)}/send-media`, {
+      uploadId,
+      kind,
+      ...(caption ? { caption } : {}),
+      ...(quotedId ? { quotedId } : {}),
+    }),
+  react: (messageId: string, emoji: string) => request<{ ok: true }>('POST', `/api/messages/${enc(messageId)}/react`, { emoji }),
+  revoke: (messageId: string) => request<{ ok: true }>('POST', `/api/messages/${enc(messageId)}/revoke`),
+  editMessage: (messageId: string, text: string) => request<{ ok: true }>('POST', `/api/messages/${enc(messageId)}/edit`, { text }),
+  markRead: (chatId: string) => request<{ ok: true }>('POST', `/api/chats/${enc(chatId)}/read`),
+  newChat: (phone: string) => request<NewChatResponse>('POST', '/api/chats/new', { phone }),
 
   settings: () => request<Settings>('GET', '/api/settings'),
   updateSettings: (patch: Partial<Settings>) => request<Settings>('PUT', '/api/settings', patch),

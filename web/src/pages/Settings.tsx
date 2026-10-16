@@ -315,6 +315,9 @@ function LoggingSection() {
       <label className="check">
         <input type="checkbox" checked={s.downloadHistoryMedia} onChange={(e) => save({ downloadHistoryMedia: e.target.checked })} /> Download media of imported history (not only new messages)
       </label>
+      <label className="check">
+        <input type="checkbox" checked={!!s.readReceipts} onChange={(e) => save({ readReceipts: e.target.checked })} /> Mark chats as read on WhatsApp when I open them here (senders see blue ticks)
+      </label>
       <div className="form narrow">
         <label>
           Maximum media size to download (MB)

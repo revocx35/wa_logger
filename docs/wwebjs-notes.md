@@ -81,6 +81,31 @@ These are facts about the library that the design relies on, checked against
   against a `mimetype` argument. Without one it assumes `application/octet-stream` and throws
   `InvalidMediaFileType` ("Unexpected mimetype … for media type image"), so pass `mimetype: msg.mimetype`.
 
+## Sending (wa/walpage.ts, checked on WhatsApp Web 2.3000.1050642531)
+- We don't use whatsapp-web.js `sendMessage`: it builds the message object itself and calls the uploader directly.
+  walpage.ts calls the functions WhatsApp Web's own UI calls, so WhatsApp keeps them working:
+  - text: `WAWebSendTextMsgChatAction.sendTextMsgToChat(chat, text, {quotedMsg})` → job result `{messageSendResult}`.
+    `WAWebSendMsgResultAction.SendMsgResult` is a mirrored enum: `"OK"`, `"ERROR_NETWORK"`, `"ERROR_EXPIRED"`,
+    `"ERROR_CANCELLED"`, `"ERROR_UPLOAD"`, `"ERROR_UNKNOWN"`, `"ERROR_RATE_LIMIT"`.
+  - media: `prepRawMedia(OpaqueData | Promise<OpaqueData>, {isPtt|asDocument|asGif|isAudio|asSticker, precomputedFields})`
+    returns a `WAWebMediaPrep`; `.sendToChat({chat, options: {caption, quotedMsg, isViewOnce, addEvenWhilePreparing}})`
+    → `{messageSendResult, msg}`. The PTT recorder passes `precomputedFields: {duration, waveform: Uint8Array(64)}`.
+  - The message is added to the chat (Msg `add`, so `message_create`) before the upload is done, without `directPath`.
+  - reply: `quotedMsg` must be the Msg model; check `WAWebMsgReply.canReplyMsg(msg)` first.
+  - reaction: `WAWebSendReactionMsgAction.sendReactionToMsg(msg, emoji)` (`''` removes).
+  - delete for everyone: `WAWebCmd.Cmd.sendRevokeMsgs(chat, {list:[msg], type:'message'}, {clearMedia:true})`;
+    allowed if `WAWebMsgActionCapability.canSenderRevokeMsg(msg)` (or `canAdminRevokeMsg`).
+  - edit: `WAWebSendMessageEditAction.sendMessageEdit(msg, text, {})`; allowed if `canEditText`/`canEditCaption`.
+  - read receipts: `WAWebUpdateUnreadChatAction.sendSeen({chat, threadId})`.
+  - number → id: `WAWebQueryExistsJob.queryPhoneExists('+<digits>')` → `{wid}` or null.
+- These modules are defined before login, so their source can be read without an account (the wa2sip repo's
+  `agent/probe.js --source <Module>` loads web.whatsapp.com logged out and prints a module).
+
+## Calls
+- WhatsApp Web has had calling since July 2026, but it needs `SharedArrayBuffer` (a cross-origin isolated page).
+  Android System WebView never isolates pages, so WhatsApp Web reports `missing_shared_array_buffer`
+  (`WAWebVoipGatingUtils.getUnsupportedBrowserReason()`) there; wa_logger mobile cannot place or take calls.
+
 ## Avatars
 - `client.getProfilePicUrl(id)` returns a signed `pps.whatsapp.net` URL. The app container has no internet, so we
   fetch it inside the page, falling back to CDP `Network.loadNetworkResource`, which is not subject to CORS.
