@@ -5,6 +5,8 @@ import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import okhttp3.OkHttpClient
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -48,6 +50,53 @@ class ApiClientTest {
         assertEquals("http://${server.hostName}:${server.port}", post.headers["Origin"])
         assertTrue(post.headers["Content-Type"]!!.startsWith("application/json"))
         assertEquals("{}", post.body?.utf8())
+    }
+
+    @Test
+    fun sendsMessagesAndUploadsRawFiles() = runBlocking {
+        api.csrfToken = "tok"
+        server.enqueue(json("""{"id":"true_1@c.us_X"}"""))
+        server.enqueue(json("""{"uploadId":"0123456789abcdef0123456789abcdef","size":3}"""))
+        server.enqueue(json("""{"id":null}"""))
+        server.enqueue(json("""{"ok":true}"""))
+        server.enqueue(json("""{"chatId":"905551234567@c.us"}"""))
+        assertEquals("true_1@c.us_X", api.sendText("1@c.us", "Merhaba\nikinci", "false_1@c.us_Q").id)
+        val text = server.takeRequest()
+        assertEquals("/api/chats/1%40c.us/send", text.target)
+        assertEquals("tok", text.headers["X-CSRF-Token"])
+        assertEquals("""{"text":"Merhaba\nikinci","quotedId":"false_1@c.us_Q"}""", text.body?.utf8())
+
+        val up = api.upload(byteArrayOf(1, 2, 3).toRequestBody("image/jpeg".toMediaType()), "tatil fotoğrafı.jpg")
+        assertEquals("0123456789abcdef0123456789abcdef", up.uploadId)
+        val raw = server.takeRequest()
+        assertEquals("/api/uploads", raw.target)
+        assertEquals("tok", raw.headers["X-CSRF-Token"])
+        assertEquals("image/jpeg", raw.headers["X-File-Type"])
+        assertEquals("tatil%20fotoğrafı.jpg".replace("ğ", "%C4%9F").replace("ı", "%C4%B1"), raw.headers["X-Filename"])
+        assertEquals(3, raw.body?.size?.toInt())
+        assertEquals(api.origin, raw.headers["Origin"])
+
+        api.sendMedia("1@c.us", up.uploadId, SendMediaKind.Voice, " ", null)
+        assertEquals("""{"uploadId":"0123456789abcdef0123456789abcdef","kind":"voice"}""", server.takeRequest().body?.utf8())
+        api.react("m 1", "")
+        val react = server.takeRequest()
+        assertEquals("/api/messages/m%201/react", react.target)
+        assertEquals("""{"emoji":""}""", react.body?.utf8())
+        assertEquals("905551234567@c.us", api.newChat("+90 555").chatId)
+    }
+
+    @Test
+    fun mapsUploadErrors() = runBlocking {
+        server.enqueue(json("", 413))
+        server.enqueue(json("""{"error":{"code":"conflict","message":"Too many files waiting to be sent."}}""", 409))
+        for (expected in listOf("too_large" to "The file is too large (64 MB at most).", "conflict" to "Too many files waiting to be sent.")) {
+            try {
+                api.upload(byteArrayOf(1).toRequestBody(null), null)
+                fail("expected an error")
+            } catch (e: ApiException) {
+                assertEquals(expected, e.code to e.message)
+            }
+        }
     }
 
     @Test

@@ -130,7 +130,17 @@ button (also under Settings → App → Crash reports). It contains only technic
 error types, app/Android version, phone model), never messages, names or passwords, and it is not sent
 anywhere by itself.
 
+## Sending (0.5.0)
+
+The chat has a message box like WhatsApp's: type and tap send, **attach** a photo, video or any file (up to 64 MB;
+the text becomes its caption, "As file" sends a photo uncompressed), or tap the **microphone** to record a voice
+message (Android 10+, asks for the microphone the first time). **Long-press** a message for reactions, Reply, Copy
+text, Edit (your own, within 15 minutes), Delete for everyone and, for photos/videos, Select (save several to the
+gallery, as before). **+** above the chat list starts a chat with any number. Messages go out through your server's
+WhatsApp Web session and appear in the log like everything else. Read receipts are sent only if you turn them on in
+Settings → Logging.
+
 ## Not included (yet)
 
 - Push notifications (the server only offers a foreground event stream, and sessions expire after 8 h idle).
-- Sending messages — wa_logger is a read-only log by design.
+- Calls.

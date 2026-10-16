@@ -27,6 +27,8 @@ interface MessageActions {
     fun openDocument(msg: Message) {}
     suspend fun retryMedia(messageId: String) {}
     suspend fun edits(messageId: String): List<MessageEdit> = emptyList()
+    /** Long-press: the message menu (reply, react, copy, edit, delete, select). */
+    fun longPress(msg: Message) {}
 }
 
 object NoMessageActions : MessageActions

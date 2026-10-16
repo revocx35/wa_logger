@@ -85,6 +85,19 @@ private class FakeDeleted(override val items: List<DeletedFeedItem>?) : DeletedS
     override fun load(more: Boolean) = Unit
 }
 
+/** Records what the UI asked to send (nothing is sent in screenshot tests). */
+class FakeSender : io.github.revocx35.walogger.ui.MessageSender {
+    val calls = mutableListOf<String>()
+    override suspend fun sendText(chatId: String, text: String, quotedId: String?) { calls += "text:$text:$quotedId" }
+    override suspend fun sendFile(chatId: String, file: io.github.revocx35.walogger.ui.OutgoingFile, kind: io.github.revocx35.walogger.core.SendMediaKind, caption: String?, quotedId: String?) { calls += "file:$kind" }
+    override suspend fun react(messageId: String, emoji: String) { calls += "react:$emoji" }
+    override suspend fun revoke(messageId: String) { calls += "revoke" }
+    override suspend fun edit(messageId: String, text: String) { calls += "edit:$text" }
+    override suspend fun markRead(chatId: String) { calls += "read" }
+    override suspend fun newChat(phone: String): String = "905551234567@c.us"
+    override suspend fun readReceipts(): Boolean = false
+}
+
 private val noAuth = AuthActions({ _, _, _ -> }, { _, _, _ -> false }, { _, _, _ -> })
 
 /**
@@ -135,6 +148,19 @@ class ScreenshotTest {
     @Test
     fun phoneChatDark() = shot("phone_chat_ali_dark", dark = true) {
         ChatPane(FakeChat(aliSummary, SampleData.aliChat), {}, false, NoMessageActions, Modifier.fillMaxSize())
+    }
+
+    @Test
+    fun phoneChatComposer() = shot("phone_chat_composer") {
+        CompositionLocalProvider(io.github.revocx35.walogger.ui.LocalSender provides FakeSender()) {
+            ChatPane(FakeChat(aliSummary, SampleData.aliChat), {}, false, NoMessageActions, Modifier.fillMaxSize())
+        }
+    }
+
+    @Test
+    fun phoneMessageMenu() = shot("phone_message_menu") {
+        val msg = SampleData.aliChat.last { it.fromMe && it.text != null }.copy(ts = System.currentTimeMillis())
+        io.github.revocx35.walogger.ui.components.MessageMenu(msg, true, {}, {}, {}, {}, null, {})
     }
 
     @Test

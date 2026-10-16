@@ -101,7 +101,8 @@ class FakeWa extends NullWa {
 }
 
 const h = await makeHarness({ COOKIE_SECURE: 'false', PUBLIC_ORIGIN: '', TRUST_PROXY: '0', WEB_DIR }, { wa: (ctx) => new FakeWa(ctx) as WaController });
-await h.app.listen({ port: PORT, host: '127.0.0.1' });
+// SERVE=1: only run the server (e.g. for the Android emulator at http://10.0.2.2:18093) and log the page ops.
+await h.app.listen({ port: PORT, host: process.env.SERVE ? '0.0.0.0' : '127.0.0.1' });
 ingest = new Ingest(
   h.ctx,
   {
@@ -120,6 +121,12 @@ h.ctx.repo.setState('onboarding_complete', '1');
 h.ctx.repo.setState('wa_me', ME);
 await ingest.ensureContact(ME, null, true);
 await ingest.message({ id: key(false, 'IN1'), type: 'chat', body: 'Selam, nasılsın?', t: now() - 60, from: CHAT, ack: 1 }, 'live');
+
+if (process.env.SERVE) {
+  console.log(`serving on :${PORT}, owner / ${PASSWORD}`);
+  setInterval(() => ops.length && console.log(`ops: ${ops.splice(0).join(',')}`), 1000);
+  await new Promise(() => undefined);
+}
 
 const results: string[] = [];
 const problems: string[] = [];

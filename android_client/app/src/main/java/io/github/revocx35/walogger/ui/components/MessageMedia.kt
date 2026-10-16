@@ -82,16 +82,17 @@ fun mediaLabel(msg: Message): String = when (msg.type) {
     else -> msg.media?.filename ?: "Document"
 }
 
-/** Open on tap; long-press starts selecting (chat multi-select), and while selecting a tap toggles instead. */
+/** Open on tap; long-press opens the message menu (which can start selecting), and while selecting it toggles instead. */
 @Composable
 private fun Modifier.mediaClick(msg: Message, label: String, role: Role, open: () -> Unit): Modifier {
     val selection = LocalSelection.current
+    val actions = LocalMessageActions.current
     return combinedClickable(
         role = role,
         onClickLabel = label,
         onClick = { if (selection?.active == true) selection.toggle(msg) else open() },
-        onLongClickLabel = if (selection != null && MessageSelection.selectable(msg)) "Select" else null,
-        onLongClick = if (selection != null && MessageSelection.selectable(msg)) ({ selection.toggle(msg) }) else null,
+        onLongClickLabel = "Message options",
+        onLongClick = { if (selection?.active == true && MessageSelection.selectable(msg)) selection.toggle(msg) else actions.longPress(msg) },
     )
 }
 

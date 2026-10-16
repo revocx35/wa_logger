@@ -13,6 +13,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import java.io.IOException
@@ -273,6 +274,56 @@ class ApiClient(baseClient: OkHttpClient, val baseUrl: HttpUrl) {
 
     suspend fun search(q: String, chatId: String? = null): SearchResponse =
         get("/api/search?q=${enc(q)}" + (chatId?.let { "&chatId=${enc(it)}" } ?: ""))
+
+    /* -------------------------------------------------------------- sending */
+
+    suspend fun sendText(chatId: String, text: String, quotedId: String?): SendResult =
+        send("POST", "/api/chats/${enc(chatId)}/send", SendTextRequest(text, quotedId))
+
+    /**
+     * Uploads a file for [sendMedia] as a raw body (the only non-JSON request). The name goes in a header,
+     * never in the URL. [body] is streamed (e.g. from a content URI) and should report its length.
+     */
+    suspend fun upload(body: RequestBody, filename: String?): UploadResponse {
+        val builder = Request.Builder().url(url("/api/uploads")).header("Accept", "application/json").post(body)
+        csrfToken?.let { builder.header("X-CSRF-Token", it) }
+        body.contentType()?.let { builder.header("X-File-Type", "${it.type}/${it.subtype}") }
+        filename?.let { builder.header("X-Filename", enc(it)) }
+        return withContext(Dispatchers.IO) {
+            val response = try {
+                http.newCall(builder.build()).await()
+            } catch (e: IOException) {
+                throw mapTransportError(e)
+            }
+            response.use { res ->
+                val text = try {
+                    res.body.string()
+                } catch (e: IOException) {
+                    throw mapTransportError(e)
+                }
+                if (!res.isSuccessful) {
+                    if (res.code == 413) throw ApiException(413, "too_large", "The file is too large (64 MB at most).")
+                    val err = runCatching { WaJson.decodeFromString(ApiErrorBody.serializer(), text).error }.getOrNull()
+                    if (res.code == 401 && err?.code == "unauthorized") onUnauthorized?.invoke()
+                    throw ApiException(res.code, err?.code ?: "http_error", err?.message?.takeIf { it.isNotBlank() } ?: "Upload failed (${res.code}).", err?.retryAfter)
+                }
+                try {
+                    WaJson.decodeFromString(UploadResponse.serializer(), text)
+                } catch (e: Exception) {
+                    throw ApiException(res.code, ApiException.NOT_WA_LOGGER, "Unexpected response from the server.", cause = e)
+                }
+            }
+        }
+    }
+
+    suspend fun sendMedia(chatId: String, uploadId: String, kind: SendMediaKind, caption: String?, quotedId: String?): SendResult =
+        send("POST", "/api/chats/${enc(chatId)}/send-media", SendMediaRequest(uploadId, kind, caption?.takeIf { it.isNotBlank() }, quotedId))
+
+    suspend fun react(messageId: String, emoji: String): OkResponse = send("POST", "/api/messages/${enc(messageId)}/react", ReactRequest(emoji))
+    suspend fun revoke(messageId: String): OkResponse = post("/api/messages/${enc(messageId)}/revoke")
+    suspend fun editMessage(messageId: String, text: String): OkResponse = send("POST", "/api/messages/${enc(messageId)}/edit", EditRequest(text))
+    suspend fun markRead(chatId: String): OkResponse = post("/api/chats/${enc(chatId)}/read")
+    suspend fun newChat(phone: String): NewChatResponse = send("POST", "/api/chats/new", NewChatRequest(phone))
 
     suspend fun settings(): Settings = get("/api/settings")
     suspend fun updateSettings(patch: SettingsPatch): Settings = send("PUT", "/api/settings", patch)

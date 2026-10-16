@@ -333,6 +333,7 @@ private fun LoggingSection(d: SettingsDeps) {
         fun save(p: SettingsPatch) = op.run("Saved.") { s = d.api.updateSettings(p) }
         CheckRow(cur.logStatus, { save(SettingsPatch(logStatus = it)) }, "Log status updates (stories) of your contacts")
         CheckRow(cur.downloadHistoryMedia, { save(SettingsPatch(downloadHistoryMedia = it)) }, "Download media of imported history (not only new messages)")
+        CheckRow(cur.readReceipts, { save(SettingsPatch(readReceipts = it)) }, "Mark chats as read on WhatsApp when I open them here (senders see blue ticks)")
         Column(Modifier.widthIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             NumberSetting("Maximum media size to download (MB)", cur.mediaMaxMb, 1..2000) { save(SettingsPatch(mediaMaxMb = it)) }
             NumberSetting("Messages to import per chat on first link", cur.historyPerChat, 0..5000) { save(SettingsPatch(historyPerChat = it)) }

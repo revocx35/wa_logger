@@ -519,7 +519,11 @@ Auto-save is the only path that writes decrypted media outside the app on its ow
 everything, no disk cache for media (Coil memory cache only, ExoPlayer without cache), user-installed CAs not
 trusted (network security config), cleartext allowed by the platform config but gated in the app (explicit
 confirmation for HTTP to a non-private address), only `http(s)` links are tappable, copied message text is
-marked sensitive.
+marked sensitive. Sending (0.5.0): `ui/Sending.kt` `MessageSender` (implemented by `data/ServerSender.kt` over the send
+API; wa_logger mobile implements the same interface locally), `ui/components/Composer.kt` (composer, long-press
+`MessageMenu`, `NewChatDialog`), `media/VoiceRecorder.kt` (MediaRecorder Ogg/Opus, Android 10+, `RECORD_AUDIO` asked on
+first use; the recording stays in the private cache and is deleted after sending). Files are streamed from their
+content URI (`RequestBody`), never loaded whole into memory.
 
 ### Build, test, release
 * Tests: `:core:test` (unit tests incl. the UI-thread rule, ZRLE/RFB/DES, MockWebServer client tests),

@@ -190,7 +190,7 @@ data class QuotedSnapshot(
     val text: String? = null,
 )
 
-@Serializable data class Reaction(val senderId: String, val senderName: String? = null, val emoji: String, val ts: Long = 0)
+@Serializable data class Reaction(val senderId: String, val senderName: String? = null, val emoji: String, val ts: Long = 0, val fromMe: Boolean = false)
 
 @Serializable
 data class LocationInfo(
@@ -284,6 +284,7 @@ data class Settings(
     val downloadHistoryMedia: Boolean = true,
     val mediaMaxMb: Int = 100,
     val historyPerChat: Int = 200,
+    val readReceipts: Boolean = false,
 )
 
 @Serializable
@@ -292,7 +293,29 @@ data class SettingsPatch(
     val downloadHistoryMedia: Boolean? = null,
     val mediaMaxMb: Int? = null,
     val historyPerChat: Int? = null,
+    val readReceipts: Boolean? = null,
 )
+
+/* ----------------------------------------------------------------- sending */
+
+@Serializable data class SendTextRequest(val text: String, val quotedId: String? = null)
+@Serializable data class SendResult(val id: String? = null)
+@Serializable data class UploadResponse(val uploadId: String, val size: Long = 0)
+
+/** auto: photo/video/audio by type · document: as a file · voice: voice note (Ogg/Opus) · gif: video as GIF */
+@Serializable
+enum class SendMediaKind {
+    @SerialName("auto") Auto,
+    @SerialName("document") Document,
+    @SerialName("voice") Voice,
+    @SerialName("gif") Gif,
+}
+
+@Serializable data class SendMediaRequest(val uploadId: String, val kind: SendMediaKind, val caption: String? = null, val quotedId: String? = null)
+@Serializable data class ReactRequest(val emoji: String)
+@Serializable data class EditRequest(val text: String)
+@Serializable data class NewChatRequest(val phone: String)
+@Serializable data class NewChatResponse(val chatId: String)
 
 @Serializable data class AuditEntry(val id: Long, val ts: Long = 0, val event: String = "", val ip: String? = null, val detail: String? = null)
 @Serializable data class WipeRequest(val password: String, val totp: String? = null)

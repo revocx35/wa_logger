@@ -43,6 +43,9 @@ object WaIcons {
     val poll: ImageVector by lazy { icon("poll", "M4 4h2v16H4V4zm5 6h2v10H9V10zm5-4h2v14h-2V6zm5 8h2v6h-2v-6z") }
     val menu: ImageVector by lazy { icon("menu", "M3 6h18v2H3V6zm0 5h18v2H3v-2zm0 5h18v2H3v-2z") }
     val shield: ImageVector by lazy { icon("shield", "M12 2 4 5v6c0 5 3.4 9.7 8 11 4.6-1.3 8-6 8-11V5l-8-3zm-1 13.6-3.6-3.6L8.8 10.6l2.2 2.2 4.2-4.2 1.4 1.4-5.6 5.6z") }
+    val send: ImageVector by lazy { icon("send", "M2 21 23 12 2 3v7l15 2-15 2v7z") }
+    val attach: ImageVector by lazy { icon("attach", "M16.5 6.5v10a4.5 4.5 0 0 1-9 0V5a3 3 0 0 1 6 0v10.5a1.5 1.5 0 0 1-3 0V6.5H9v9a3 3 0 0 0 6 0V5a4.5 4.5 0 0 0-9 0v11.5a6 6 0 0 0 12 0v-10h-1.5z") }
+    val plus: ImageVector by lazy { icon("plus", "M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5z") }
     val play: ImageVector by lazy { icon("play", "M8 5v14l11-7z") }
     val pause: ImageVector by lazy { icon("pause", "M6 19h4V5H6v14zm8-14v14h4V5h-4z") }
     val keyboard: ImageVector by lazy { icon("keyboard", "M20 5H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-9 3h2v2h-2V8zm0 3h2v2h-2v-2zM8 8h2v2H8V8zm0 3h2v2H8v-2zm-1 2H5v-2h2v2zm0-3H5V8h2v2zm9 7H8v-2h8v2zm0-4h-2v-2h2v2zm0-3h-2V8h2v2zm3 3h-2v-2h2v2zm0-3h-2V8h2v2z") }

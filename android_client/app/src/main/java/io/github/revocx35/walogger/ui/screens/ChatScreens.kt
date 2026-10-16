@@ -32,6 +32,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import io.github.revocx35.walogger.core.userMessage
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.withFrameNanos
@@ -60,7 +65,12 @@ import io.github.revocx35.walogger.ui.LocalMessageActions
 import io.github.revocx35.walogger.ui.LocalSelection
 import io.github.revocx35.walogger.ui.MessageSelection
 import io.github.revocx35.walogger.ui.MessageActions
+import io.github.revocx35.walogger.ui.LocalSender
 import io.github.revocx35.walogger.ui.components.Avatar
+import io.github.revocx35.walogger.ui.components.Composer
+import io.github.revocx35.walogger.ui.components.MessageMenu
+import io.github.revocx35.walogger.ui.components.NewChatDialog
+import io.github.revocx35.walogger.ui.components.selectableForMenu
 import io.github.revocx35.walogger.ui.components.Badge
 import io.github.revocx35.walogger.ui.components.BadgeTone
 import io.github.revocx35.walogger.ui.components.BtnStyle
@@ -96,9 +106,13 @@ fun ChatListPane(
     val c = Wa.colors
     val fmt = LocalFormatter.current
     Column(modifier.background(c.panel)) {
-        Box(Modifier.fillMaxWidth().statusBarsPadding().height(60.dp).padding(horizontal = 16.dp), contentAlignment = Alignment.CenterStart) {
-            Text("Chats", style = WaType.paneTitle, color = c.text)
+        val sender = LocalSender.current
+        var newChat by remember { mutableStateOf(false) }
+        Row(Modifier.fillMaxWidth().statusBarsPadding().height(60.dp).padding(start = 16.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Chats", style = WaType.paneTitle, color = c.text, modifier = Modifier.weight(1f))
+            if (sender != null) IconBtn(WaIcons.plus, "New chat", { newChat = true })
         }
+        if (newChat && sender != null) NewChatDialog(sender, onOpen, { newChat = false })
         SearchBox(
             state.query,
             { state.query = it },
@@ -208,6 +222,8 @@ fun ChatPane(
     baseActions: MessageActions,
     modifier: Modifier = Modifier,
     selection: MessageSelection = remember(state.chatId) { MessageSelection() },
+    /** Why sending is not possible right now (e.g. WhatsApp disconnected); null = can send. */
+    sendDisabledReason: String? = null,
 ) {
     val c = Wa.colors
     val fmt = LocalFormatter.current
@@ -215,9 +231,34 @@ fun ChatPane(
     val isGroup = chat?.kind == ChatKind.Group || chat?.kind == ChatKind.Status || chat?.kind == ChatKind.Broadcast
     val title = chat?.name ?: "…"
     val listState = rememberLazyListState()
+    // Sending as the linked account (null in screenshot tests).
+    val sender = LocalSender.current
+    val canSend = sender != null && (chat?.kind == ChatKind.User || chat?.kind == ChatKind.Group)
+    var menuFor by remember(state.chatId) { mutableStateOf<Message?>(null) }
+    var replyTo by remember(state.chatId) { mutableStateOf<Message?>(null) }
+    var editing by remember(state.chatId) { mutableStateOf<Message?>(null) }
+    val scope = rememberCoroutineScope()
+    fun act(block: suspend () -> Unit) {
+        scope.launch {
+            try {
+                block()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                state.error = e.userMessage()
+            }
+        }
+    }
+    LaunchedEffect(state.chatId, sender) {
+        // Read receipts only when the owner turned them on (off by default).
+        if (sender != null && sender.readReceipts()) runCatching { sender.markRead(state.chatId) }
+    }
     val actions = remember(baseActions, state) {
         object : MessageActions by baseActions {
             override fun jump(messageId: String) = state.jump(messageId)
+            override fun longPress(msg: Message) {
+                menuFor = msg
+            }
         }
     }
 
@@ -394,14 +435,46 @@ fun ChatPane(
                     }
                 }
             }
-            Row(
-                Modifier.fillMaxWidth().background(c.head).navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                WaIcon(WaIcons.lock, 14.dp, c.muted)
-                MutedText("Read-only log · messages are stored encrypted on your server", style = WaType.small, maxLines = 2)
+            if (canSend && sender != null) {
+                Composer(
+                    chatId = state.chatId,
+                    sender = sender,
+                    replyTo = replyTo,
+                    editing = editing,
+                    disabledReason = sendDisabledReason,
+                    onDone = {
+                        replyTo = null
+                        editing = null
+                    },
+                )
+            } else {
+                Row(
+                    Modifier.fillMaxWidth().background(c.head).navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    WaIcon(WaIcons.lock, 14.dp, c.muted)
+                    MutedText(if (sender != null && chat != null) "You can’t send to this chat from here" else "Messages are stored encrypted on your server", style = WaType.small, maxLines = 2)
+                }
             }
+        }
+        menuFor?.let { m ->
+            MessageMenu(
+                msg = m,
+                canSend = canSend && sendDisabledReason == null && m.deletedAt == null && m.type != MessageType.Revoked && m.type != MessageType.Ciphertext,
+                onReply = {
+                    editing = null
+                    replyTo = m
+                },
+                onEdit = {
+                    replyTo = null
+                    editing = m
+                },
+                onReact = { e -> act { sender?.react(m.id, e) } },
+                onRevoke = { act { sender?.revoke(m.id) } },
+                onSelect = if (selectableForMenu(m)) ({ selection.toggle(m) }) else null,
+                onClose = { menuFor = null },
+            )
         }
     }
 }

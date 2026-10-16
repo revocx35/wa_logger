@@ -63,6 +63,7 @@ import io.github.revocx35.walogger.core.MessageEdit
 import io.github.revocx35.walogger.core.WaState
 import io.github.revocx35.walogger.core.WaStatus
 import io.github.revocx35.walogger.data.AppGraph
+import io.github.revocx35.walogger.data.ServerSender
 import io.github.revocx35.walogger.data.ServerSession
 import io.github.revocx35.walogger.media.MediaOps
 import io.github.revocx35.walogger.media.MediaViewer
@@ -186,6 +187,8 @@ fun MainShell(graph: AppGraph, session: ServerSession, state: AppState, wa: WaSt
     val chatList: ChatListViewModel = viewModel(key = "chats:${session.id}") { ChatListViewModel(session) }
     val chatListState = rememberLazyListState()
     val needsAttention = wa?.state == WaState.Disconnected || wa?.state == WaState.Qr
+    val sender = remember(session) { ServerSender(context.applicationContext, session.api) }
+    val sendBlocked = if (wa?.state == WaState.Ready || wa?.state == WaState.Syncing) null else "WhatsApp is not connected right now, so messages can’t be sent."
 
     fun openChat(id: String, focus: String? = null, replace: Boolean = false) {
         nav.navigate(ChatRoute(id, focus)) {
@@ -213,7 +216,7 @@ fun MainShell(graph: AppGraph, session: ServerSession, state: AppState, wa: WaSt
                 }
             }
             Box(Modifier.weight(1f).fillMaxWidth().then(if (needsAttention) Modifier.consumeWindowInsets(WindowInsets.statusBars) else Modifier)) {
-                CompositionLocalProviderActions(actions) {
+                CompositionLocalProviderActions(actions, sender) {
                     NavHost(nav, startDestination = ChatsRoute, modifier = Modifier.fillMaxSize()) {
                         composable<ChatsRoute> {
                             if (wide) {
@@ -233,10 +236,10 @@ fun MainShell(graph: AppGraph, session: ServerSession, state: AppState, wa: WaSt
                                 Row(Modifier.fillMaxSize()) {
                                     ChatListPane(chatList, r.chatId, { openChat(it, replace = true) }, { nav.navigate(SearchRoute(it)) }, Modifier.widthIn(min = 300.dp, max = 440.dp).fillMaxWidth(0.3f).fillMaxHeight(), chatListState)
                                     Box(Modifier.width(1.dp).fillMaxHeight().background(c.border))
-                                    ChatPane(vm, null, true, actions, Modifier.weight(1f).fillMaxHeight())
+                                    ChatPane(vm, null, true, actions, Modifier.weight(1f).fillMaxHeight(), sendDisabledReason = sendBlocked)
                                 }
                             } else {
-                                ChatPane(vm, { nav.popBackStack() }, false, actions, Modifier.fillMaxSize())
+                                ChatPane(vm, { nav.popBackStack() }, false, actions, Modifier.fillMaxSize(), sendDisabledReason = sendBlocked)
                             }
                         }
                         composable<DeletedRoute> {
@@ -322,5 +325,5 @@ fun BottomRail(active: Tab?, onTab: (Tab?) -> Unit) {
 }
 
 @Composable
-private fun CompositionLocalProviderActions(actions: MessageActions, content: @Composable () -> Unit) =
-    androidx.compose.runtime.CompositionLocalProvider(LocalMessageActions provides actions, content = content)
+private fun CompositionLocalProviderActions(actions: MessageActions, sender: MessageSender, content: @Composable () -> Unit) =
+    androidx.compose.runtime.CompositionLocalProvider(LocalMessageActions provides actions, LocalSender provides sender, content = content)
