@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -288,20 +289,27 @@ fun ChatPane(
         return last >= listState.layoutInfo.totalItemsCount - 3
     }
 
+    // Whether the owner last left the list at the newest message (updated by scrolling).
+    var wasAtBottom by remember(state.chatId) { mutableStateOf(true) }
     LaunchedEffect(state) {
         state.scroll.collect { s ->
             when (s) {
                 ChatScroll.Bottom -> {
+                    wasAtBottom = true
                     val r = withTimeoutOrNull(5000) { snapshotFlow { currentRows }.first { it.isNotEmpty() } } ?: return@collect
                     withFrameNanos { }
                     listState.scrollToItem(r.size)
                 }
                 ChatScroll.Appended -> {
-                    val follow = nearBottom()
+                    val follow = wasAtBottom || nearBottom()
                     withFrameNanos { }
-                    if (follow) listState.animateScrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
+                    if (follow) {
+                        wasAtBottom = true
+                        listState.animateScrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
+                    }
                 }
                 is ChatScroll.To -> {
+                    wasAtBottom = false
                     val r = withTimeoutOrNull(5000) { snapshotFlow { currentRows }.first { indexIn(it, s.messageId) >= 0 } } ?: return@collect
                     withFrameNanos { }
                     val i = indexIn(r, s.messageId)
@@ -317,6 +325,23 @@ fun ChatPane(
                 }
             }
         }
+    }
+    // Stay at the newest message when the keyboard opens or closes (it resizes the list), like WhatsApp:
+    // remember whether the owner last left the list at the bottom, and keep it there.
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.isScrollInProgress to listState.canScrollForward }.collect { (scrolling, forward) -> if (scrolling) wasAtBottom = !forward }
+    }
+    // Content at the end grew (a photo finished loading, a reaction was added): stay at the newest message.
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.canScrollForward }.collect { forward ->
+            if (forward && wasAtBottom && !listState.isScrollInProgress && listState.layoutInfo.totalItemsCount > 0) {
+                listState.scrollToItem(listState.layoutInfo.totalItemsCount - 1)
+            }
+        }
+    }
+    val imeBottom = androidx.compose.foundation.layout.WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current)
+    LaunchedEffect(imeBottom) {
+        if (wasAtBottom && listState.layoutInfo.totalItemsCount > 0) listState.scrollToItem(listState.layoutInfo.totalItemsCount - 1)
     }
     LaunchedEffect(listState, state) {
         snapshotFlow { listState.firstVisibleItemIndex }.distinctUntilChanged().filter { it < 5 }.collect { if (!state.loading) state.loadOlder() }
@@ -445,6 +470,9 @@ fun ChatPane(
                     onDone = {
                         replyTo = null
                         editing = null
+                        // Show what was just sent (it arrives through the live updates and is followed from there).
+                        wasAtBottom = true
+                        scope.launch { if (listState.layoutInfo.totalItemsCount > 0) listState.animateScrollToItem(listState.layoutInfo.totalItemsCount - 1) }
                     },
                 )
             } else {
