@@ -322,7 +322,12 @@ export class WaService implements WaController {
       this.armReadyFallback(client, gen);
     });
     client.on('auth_failure', () => live() && this.setState('disconnected', 'Authentication failed — relink from the WA Web page'));
-    client.on('ready', () => live() && void this.onReady(gen));
+    client.on('ready', () => {
+      if (!live()) return;
+      // A second "ready" in the same connection = WhatsApp Web reloaded itself (e.g. after auto-updating).
+      if (this.readyGen === gen) this.resumeAfterReload(gen);
+      else void this.onReady(gen);
+    });
     client.on('disconnected', (reason: unknown) => {
       if (!live()) return;
       this.media.pause();
@@ -368,7 +373,7 @@ export class WaService implements WaController {
     if (this.readyFallbackTimer) clearTimeout(this.readyFallbackTimer);
     this.readyFallbackTimer = setTimeout(() => {
       this.readyFallbackTimer = null;
-      if (gen !== this.generation || this.readyGen === gen || this.state !== 'authenticating') return;
+      if (gen !== this.generation || this.state !== 'authenticating') return;
       void (async () => {
         const page = client.pupPage;
         if (!page || page.isClosed()) return;
@@ -383,9 +388,10 @@ export class WaService implements WaController {
             }
           })
           .catch(() => false);
-        if (!healthy || gen !== this.generation || this.readyGen === gen) return;
-        this.ctx.log.warn('whatsapp-web.js did not emit "ready"; completing its setup (fallback)');
-        this.ctx.repo.audit('wa_ready_fallback', null);
+        if (!healthy || gen !== this.generation || this.state !== 'authenticating') return;
+        const reload = this.readyGen === gen;
+        this.ctx.log.warn({ reload }, 'whatsapp-web.js did not emit "ready"; completing its setup (fallback)');
+        this.ctx.repo.audit('wa_ready_fallback', reload ? 'reload' : null);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const lib = client as any;
         try {
@@ -393,10 +399,27 @@ export class WaService implements WaController {
         } catch (err) {
           this.ctx.log.warn({ err: (err as Error).message }, 'fallback event wiring failed');
         }
-        if (gen === this.generation && this.readyGen !== gen) await this.onReady(gen);
+        if (gen !== this.generation) return;
+        if (reload) this.resumeAfterReload(gen);
+        else if (this.readyGen !== gen) await this.onReady(gen);
       })();
     }, READY_FALLBACK_MS);
     this.readyFallbackTimer.unref();
+  }
+
+  /**
+   * WhatsApp Web reloaded inside the same tab (it does when it updates itself): whatsapp-web.js re-emits
+   * "authenticated" and later "ready", but the timers and sync from the first onReady() still exist. Only the state
+   * has to go back to ready, otherwise media downloads and reconcile (which wait for "ready") stay stopped forever
+   * (2026-10-15 incident). Items the queue dropped meanwhile are re-queued.
+   */
+  private resumeAfterReload(gen: number): void {
+    if (gen !== this.generation || this.readyGen !== gen || this.state !== 'authenticating') return;
+    this.ctx.log.info('WhatsApp Web reloaded; resuming');
+    this.ctx.repo.audit('wa_ready', 'reload');
+    this.setState('ready');
+    this.media.resume();
+    this.media.restorePending();
   }
 
   private async onReady(gen: number): Promise<void> {

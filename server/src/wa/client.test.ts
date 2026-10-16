@@ -69,6 +69,51 @@ describe('WaService event wiring', () => {
     expect(svc.status().detail).toMatch(/unlinked/);
   });
 
+  it('comes back to ready and resumes media after WhatsApp Web reloads itself', async () => {
+    const onReady = vi.spyOn(priv(), 'onReady');
+    const restore = vi.spyOn(svc.media, 'restorePending');
+    fake.emit('authenticated');
+    fake.emit('ready');
+    await flush();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(svc.status().state).toBe('ready');
+    expect(onReady).toHaveBeenCalledTimes(1);
+    restore.mockClear();
+
+    // WhatsApp Web updates itself and reloads the tab: the library re-emits authenticated, then ready.
+    fake.emit('loading_screen', 100);
+    fake.emit('authenticated');
+    expect(svc.status().state).toBe('authenticating');
+    fake.emit('ready');
+    expect(svc.status().state).toBe('ready');
+    expect(onReady).toHaveBeenCalledTimes(1); // the timers/sync from the first ready are reused
+    expect(restore).toHaveBeenCalledTimes(1); // media dropped while not ready is queued again
+  });
+
+  it('also resumes after a reload when the library never re-emits ready (60 s fallback)', async () => {
+    fake.emit('authenticated');
+    fake.emit('ready');
+    await flush();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(svc.status().state).toBe('ready');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const f = fake as any;
+    f.pupPage = { isClosed: () => false, evaluate: async () => true };
+    f.attachEventListeners = vi.fn(async () => undefined);
+    const restore = vi.spyOn(svc.media, 'restorePending');
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      fake.emit('authenticated');
+      expect(svc.status().state).toBe('authenticating');
+      await vi.advanceTimersByTimeAsync(61_000);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(f.attachEventListeners).toHaveBeenCalledTimes(1);
+    expect(svc.status().state).toBe('ready');
+    expect(restore).toHaveBeenCalledTimes(1);
+  });
+
   it('logs message_create, then keeps it through message_revoke_everyone (before undefined)', async () => {
     fake.emit('message_create', { _data: { id: rid('M1'), type: 'chat', body: 'secret', t: 1_700_000_001, from: CHAT } });
     fake.emit('message_revoke_everyone', { _data: { id: rid('M1'), type: 'revoked', subtype: 'sender', t: 1_700_000_001, from: CHAT } }, undefined);

@@ -84,3 +84,9 @@ These are facts about the library that the design relies on, checked against
 ## Avatars
 - `client.getProfilePicUrl(id)` returns a signed `pps.whatsapp.net` URL. The app container has no internet, so we
   fetch it inside the page, falling back to CDP `Network.loadNetworkResource`, which is not subject to CORS.
+
+## In-tab reloads
+- WhatsApp Web reloads its tab by itself when it updates (seen 2026-10-15, to 2.3000.1050452318). whatsapp-web.js
+  re-injects itself and re-emits `authenticated` and normally `ready` again, in the same client/connection.
+  Message events keep working afterwards. WaService treats a second `ready` (or a healthy page 60 s after the
+  re-emitted `authenticated`) as "back to ready" (`resumeAfterReload`).

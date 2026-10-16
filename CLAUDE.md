@@ -61,4 +61,7 @@ Read these first, every session:
   "trust everything" setting would let clients pick their IP. Details in ARCHITECTURE.md §3 (HTTP mode).
 - whatsapp-web.js may never emit `ready` (a stalled binding exposure). WaService completes the setup itself after
   60 s (`armReadyFallback`). Don't close tabs before ready.
+- WhatsApp Web reloads its own tab when it updates: the library re-emits `authenticated` (→ state "authenticating")
+  and later `ready` in the same connection. `resumeAfterReload` must bring the state back to "ready": media
+  downloads and reconcile only run in "ready" (2026-10-15: stuck for a day, messages still logged, no media).
 - A fresh WhatsApp link keeps syncing history for minutes, which is why the catch-up history passes exist (WaService).

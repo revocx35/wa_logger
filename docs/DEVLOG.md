@@ -219,3 +219,14 @@ The owner asked for incoming images to be saved to the phone automatically.
 - Verified in headless Chromium against `scripts/dev/autosave-server.mts` (which now also serves `web/dist`): log in,
   select two photos (no lightbox opened), download. The file passed `unzip -t` and its content was byte-identical
   to the source photo. Esc, Select all, the phone-width layout, and no browser errors.
+
+## 2026-10-16 — media stuck "downloading" again (WhatsApp Web reloaded itself)
+
+- Symptom: photos and videos stayed "downloading" from 2026-10-15 10:00. 7 items were pending with 0 attempts:
+  the queue never even tried them. Messages themselves were still logged.
+- Cause: at 10:24 WhatsApp Web reloaded its tab (an auto-update to 2.3000.1050452318). whatsapp-web.js re-emitted
+  `authenticated`, so the state went to "authenticating". Its next `ready` was ignored, because `onReady` only runs
+  once per connection, and the 60 s fallback had the same guard. The state stayed "authenticating". The media queue
+  only downloads (and reconcile only runs) in "ready", and dropped the items it picked up meanwhile.
+- Fix: `resumeAfterReload` puts the state back to "ready", resumes the queue and re-queues pending media, either on
+  the second `ready` or from the fallback after a reload. Both paths have tests that fail on the old code.
