@@ -40,6 +40,8 @@ const raw = (over: Partial<RawCall>): RawCall => ({
   logResult: null,
   everConnected: false,
   userEnded: false,
+  selfVideo: false,
+  peerVideo: false,
   removed: false,
   ...over,
 });
@@ -48,6 +50,8 @@ const raw = (over: Partial<RawCall>): RawCall => ({
 class FakeBridge {
   ops: { op: string; args: any }[] = [];
   audio: Buffer[] = [];
+  video: Buffer[] = [];
+  videoOn = false;
   on = false;
   fail: PageOpError | null = null;
   constructor(private readonly svc: () => CallService) {}
@@ -55,6 +59,7 @@ class FakeBridge {
     this.ops.push({ op, args });
     if (this.fail) throw this.fail;
     if (op === 'setBridge') this.on = args.on;
+    if (op === 'setVideoBridge') this.videoOn = args.on;
     if (op === 'reject') this.svc().onCall(raw({ id: args.callId, state: 0, removed: true, logResult: 3, userEnded: true }));
     if (op === 'hangup') this.svc().onCall(raw({ id: args.callId, state: 13, everConnected: true, userEnded: true }));
     return true;
@@ -63,8 +68,12 @@ class FakeBridge {
     this.ops.push({ op, args });
     if (this.fail) throw this.fail;
     if (op === 'start') return raw({ id: 'OUT1', state: 1, outgoing: true, peer: args.chatId, peerAlt: null });
-    if (op === 'accept') this.svc().onCall(raw({ id: args.callId, state: 4 }));
+    if (op === 'accept') this.svc().onCall(raw({ id: args.callId, state: 4, isVideo: !!args.video }));
+    if (op === 'setVideo') return raw({ id: args.callId, state: 6, everConnected: true, selfVideo: args.on });
     return true;
+  }
+  videoIn(frame: Buffer): void {
+    this.video.push(frame);
   }
   audioIn(pcm: Buffer): void {
     this.audio.push(pcm);
@@ -223,7 +232,7 @@ describe('calls API', () => {
     const r = await c.req('POST', `/api/chats/${CHAT}/call`, {});
     expect(r.status).toBe(200);
     expect(r.body).toMatchObject({ id: 'OUT1', direction: 'outgoing', state: 'calling', chatId: CHAT, name: 'Ali Veli' });
-    expect(wa.bridge!.ops[0]).toEqual({ op: 'start', args: { chatId: CHAT } });
+    expect(wa.bridge!.ops[0]).toEqual({ op: 'start', args: { chatId: CHAT, video: false } });
     expect((await c.req('POST', `/api/chats/${CHAT}/call`, {})).status).toBe(409); // one call at a time
 
     // Audio flows while it rings (WhatsApp plays its own ringback through the page).
@@ -242,7 +251,8 @@ describe('calls API', () => {
   it('validates calls and reports what WhatsApp says', async () => {
     expect((await c.req('POST', `/api/chats/${GROUP}/call`, {})).status).toBe(409);
     expect((await c.req('POST', '/api/chats/905550000000@c.us/call', {})).status).toBe(404);
-    expect((await c.req('POST', `/api/chats/${CHAT}/call`, { video: true })).status).toBe(400);
+    expect((await c.req('POST', `/api/chats/${CHAT}/call`, { video: 'yes' })).status).toBe(400);
+    expect((await c.req('POST', `/api/chats/${CHAT}/call`, { video: true, extra: 1 })).status).toBe(400);
     expect((await c.req('POST', '/api/calls/bad%20id/accept', {})).status).toBe(400);
     expect((await c.req('POST', '/api/calls/NOPE/accept', {})).status).toBe(404);
     wa.bridge!.fail = new PageOpError('unsupported', 'WhatsApp Web can’t call from this account or browser (calling_disabled).');
@@ -270,6 +280,89 @@ describe('calls API', () => {
     for (let i = 0; i < 20; i++) third.ws.send(Buffer.alloc(6400));
     expect(await third.closedP).toBe(1008); // far faster than real time
     expect(wa.calls.current()!.audio).toBe(false);
+  });
+
+  /** A video frame with the 12-byte header. */
+  const vframe = (codec: number, key: boolean, data = [0, 0, 0, 1, 0x65]) => {
+    const b = Buffer.alloc(12 + data.length);
+    b[0] = codec;
+    b[1] = key ? 1 : 0;
+    b.writeUInt16LE(640, 4);
+    b.writeUInt16LE(480, 6);
+    Buffer.from(data).copy(b, 12);
+    return b;
+  };
+
+  function video(url: string) {
+    return new Promise<{ ws: WebSocket; hello?: any; frames: Buffer[]; texts: any[]; closedP: Promise<number>; closed?: number }>((resolve) => {
+      const ws = new WebSocket(url.replace('/audio', '/video'), { headers: { origin: ORIGIN, cookie: c.cookie } });
+      const frames: Buffer[] = [];
+      const texts: any[] = [];
+      let closeResolve: (n: number) => void = () => undefined;
+      const closedP = new Promise<number>((r) => (closeResolve = r));
+      ws.on('message', (d: Buffer, isBinary: boolean) => {
+        if (isBinary) frames.push(d);
+        else {
+          const m = JSON.parse(d.toString());
+          if (m.type === 'hello') resolve({ ws, hello: m, frames, texts, closedP });
+          else texts.push(m);
+        }
+      });
+      ws.on('close', (code) => {
+        closeResolve(code);
+        resolve({ ws, closed: code, frames, texts, closedP });
+      });
+      ws.on('error', () => undefined);
+    });
+  }
+
+  it('places and answers video calls and switches the camera', async () => {
+    const r = await c.req('POST', `/api/chats/${CHAT}/call`, { video: true });
+    expect(r.status).toBe(200);
+    expect(wa.bridge!.ops[0]).toEqual({ op: 'start', args: { chatId: CHAT, video: true } });
+    await c.req('POST', '/api/calls/OUT1/hangup', {});
+    wa.calls.onCall(raw({ id: 'V1', isVideo: true, peerVideo: true }));
+    expect(callEvents().at(-1)).toMatchObject({ id: 'V1', video: true, peerVideo: true, selfVideo: false });
+    expect((await c.req('POST', '/api/calls/V1/video', { on: true })).status).toBe(409); // still ringing
+    expect((await c.req('POST', '/api/calls/V1/accept', { video: true })).status).toBe(200);
+    expect(wa.bridge!.ops.at(-1)).toEqual({ op: 'accept', args: { callId: 'V1', video: true } });
+    wa.calls.onCall(raw({ id: 'V1', state: 6, isVideo: true, peerVideo: true, selfVideo: true }));
+    const off = await c.req('POST', '/api/calls/V1/video', { on: false });
+    expect(off.status).toBe(200);
+    expect(off.body).toMatchObject({ selfVideo: false, peerVideo: false, video: true });
+    expect((await c.req('POST', '/api/calls/V1/video', {})).status).toBe(400);
+  });
+
+  it('carries video both ways over its own WebSocket', async () => {
+    const url = await listen();
+    expect((await video(url)).closed).toBe(4004); // no call
+    wa.calls.onCall(raw({ isVideo: true }));
+    await c.req('POST', '/api/calls/C1/accept', { video: true });
+    wa.calls.onCall(raw({ state: 6, everConnected: true, isVideo: true, peerVideo: true, selfVideo: true }));
+    const v = await video(url);
+    expect(v.hello).toEqual({ type: 'hello', callId: 'C1', codecs: ['h264', 'vp8'] });
+    await tick();
+    expect(wa.bridge!.videoOn).toBe(true);
+    expect(v.texts).toEqual([{ type: 'keyframe' }]); // the client's encoder starts with a key frame
+    expect(wa.bridge!.ops.some((o) => o.op === 'keyframe')).toBe(true); // and the other side is asked for one
+    expect(wa.calls.current()!.videoClient).toBe(true);
+
+    v.ws.send(vframe(2, true));
+    wa.calls.onPageVideo(vframe(1, true));
+    await tick();
+    expect(wa.bridge!.video).toEqual([vframe(2, true)]);
+    expect(v.frames).toEqual([vframe(1, true)]);
+    wa.calls.onPageNeedsKey();
+    await tick();
+    expect(v.texts).toEqual([{ type: 'keyframe' }, { type: 'keyframe' }]);
+
+    v.ws.send(Buffer.from([3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])); // unknown codec
+    expect(await v.closedP).toBe(1007);
+    const v2 = await video(url);
+    expect(v2.hello).toBeDefined();
+    wa.calls.onCall(raw({ state: 0, removed: true, everConnected: true }));
+    expect(await v2.closedP).toBe(1000);
+    expect(wa.bridge!.videoOn).toBe(false);
   });
 
   it('ends a call when WhatsApp goes away', async () => {

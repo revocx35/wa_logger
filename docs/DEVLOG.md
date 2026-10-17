@@ -291,3 +291,17 @@ model, and explicitly not in wa_logger mobile (Android WebView can't run WhatsAp
   0:05"), decline. connectedDebugAndroidTest still passes.
 - Not verified: sound quality and echo on a real phone, and a real WhatsApp call.
 
+
+## 2026-10-17 — Video calls (web UI)
+
+- Read WhatsApp Web's video code logged out (2.3000.1050712378). The wasm stack hands every frame to
+  `videoRendererRegistry.onVideoFrameWasmToJs(...)`; with WebCodecs available (H.264 encode+decode, which the container's
+  Chromium has) the peer's frames arrive there still H.264-compressed. That is the tap: frames are passed through
+  without transcoding. The camera side reuses what WhatsApp's own test driver does: a canvas capture stream.
+- Transport: a separate `WS /api/calls/video` (so the audio socket and the Android 0.6.0 client are unchanged), one
+  frame per message with a 12-byte header. Browsers encode VP8 (H.264 where they can't), WhatsApp's side stays H.264.
+- Found by the tests: `Permissions-Policy` had `camera=()`, which blocks `getUserMedia({video})` even on our own page
+  (now `camera=(self)`); a `<video>` in a hidden tab never started playing, and WhatsApp moves video calls into a popout
+  window that hides its tab, so the Chromium container now runs without background throttling.
+- Verified: vm/API tests, `call-video.mts` in the real image (H.264 out decodes red, VP8 in shows blue and rotated),
+  `call-ui.mts` 39 steps with Chromium's fake camera. Not verified: a real video call (same as audio).

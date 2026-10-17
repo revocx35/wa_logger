@@ -101,7 +101,7 @@ These are facts about the library that the design relies on, checked against
 - These modules are defined before login, so their source can be read without an account (the wa2sip repo's
   `agent/probe.js --source <Module>` loads web.whatsapp.com logged out and prints a module).
 
-## Calls (wa/callpage.ts, checked on WhatsApp Web 2.3000.1050707140)
+## Calls (wa/callpage.ts, checked on WhatsApp Web 2.3000.1050707140; video on 2.3000.1050712378)
 - WhatsApp Web has had calling since July 2026, but it needs `SharedArrayBuffer` (a cross-origin isolated page).
   Android System WebView never isolates pages, so WhatsApp Web reports `missing_shared_array_buffer`
   (`WAWebVoipGatingUtils.getUnsupportedBrowserReason()`) there; wa_logger mobile cannot place or take calls.
@@ -143,6 +143,22 @@ These are facts about the library that the design relies on, checked against
   while the tab is hidden (e.g. behind a popout window): callbridge.ts gives up after 3 s and uses `page.evaluate`
   (puppeteer's evaluate counts as a user gesture). Chromium without `--autoplay-policy=no-user-gesture-required` keeps
   the AudioContexts of a never-clicked popout window suspended.
+- **Video** (checked on 2.3000.1050712378):
+  - The wasm stack hands every decoded-or-encoded frame to
+    `WAWebVoipVideoRendererRegistry.videoRendererRegistry.onVideoFrameWasmToJs(source, frameBuffer, width, height,
+    orientation, format, timestamp, isKeyFrame)`; `source` is a `WAWebVoipVideoRenderSource` (`isSelf()`,
+    `isScreenShare()`, `wid`). `WAWebVoipMediaEnums.WAWebVoipVideoFormat`: `NV12 0, I420 1, RGB24 2, RGBA 3, H264 100`;
+    `Orientation`: `Unknown 0, Normal 1, Rotate90 2, Rotate180 3, Rotate270 4` (the raster renderer rotates by
+    `π·(o−1)/2`, clockwise on a canvas).
+  - Renderer choice (`$2`): `WEBCODECS_H264` when `VideoDecoder` *and* `VideoEncoder` support `avc1.42001f` in Annex B
+    (it test-encodes a frame), else WebGPU, WebGL, raster. With WebCodecs the peer's frames arrive as H.264 Annex B with
+    SPS/PPS in band (its decoder config has no `description`).
+  - Camera: `WAWebVoipVideoCameraCapture` → `voipAcquireMediaStream({type:'camera'})` → `getUserMedia({video})`; WhatsApp's
+    own test driver (`WAWebVoipVirtualVideoCaptureDriver`) feeds it from `canvas.captureStream(30)`, which is what the
+    virtual camera does too. A camera health check plays the stream in a hidden `<video>` and waits for frames.
+  - Camera button (`useWAWebVoipCallHandlers`): in a voice call with our video inactive → `stack.requestVideoUpgrade()`,
+    else `stack.setCallVideoMute(mute)`; both return 0 on success. `stack.requestKeyFrame(wid, isScreenShare)`.
+    CallModel: `selfVideoState`, `peerVideoState`, judged by `WAWebVoipVideoStateUtils.isVideoStateInactiveForCallMode`.
 - Re-reading the sources after a WhatsApp update: the wa2sip image's `agent/probe.js --grep Voip` / `--source <Module>`
   (logged out; the VoIP modules are defined before login), then adapt callpage.ts and callpage.test.ts.
 

@@ -34,20 +34,34 @@ export interface CallAudioClient {
   close(code: number, reason: string): void;
 }
 
+/** The client end of the call video (the `/api/calls/video` WebSocket). */
+export interface CallVideoClient extends CallAudioClient {
+  /** Asks the client's encoder for a key frame. */
+  requestKeyFrame(): void;
+}
+
 /** Voice calls as the linked account (throws AppError: unavailable when WhatsApp is not connected). */
 export interface WaCalls {
   /** WhatsApp is connected and the call code is installed in its tab. */
   available(): boolean;
   /** The call going on (or just ended), null when there is none. */
   current(): CallInfo | null;
-  start(chatId: string): Promise<CallInfo>;
-  accept(callId: string): Promise<CallInfo>;
+  start(chatId: string, video?: boolean): Promise<CallInfo>;
+  accept(callId: string, video?: boolean): Promise<CallInfo>;
+  /** Camera on/off during a call. */
+  setVideo(callId: string, on: boolean): Promise<CallInfo>;
   reject(callId: string): Promise<void>;
   hangup(callId: string): Promise<void>;
   /** Becomes the call's audio client (replacing another); returns the detach function, null when there is no call. */
   attachAudio(client: CallAudioClient): (() => void) | null;
   /** The owner's voice: 16 kHz mono s16le. Ignored unless [client] is the attached one and audio is flowing. */
   audioIn(client: CallAudioClient, pcm: Buffer): void;
+  /** Becomes the call's video client (replacing another); returns the detach function, null when there is no call. */
+  attachVideo(client: CallVideoClient): (() => void) | null;
+  /** A frame of the owner's camera (12-byte header + H.264 Annex B or VP8). */
+  videoIn(client: CallVideoClient, frame: Buffer): void;
+  /** The client needs a key frame of the other side's video. */
+  requestPeerKeyFrame(client: CallVideoClient): void;
 }
 
 /** Control surface of the WhatsApp integration, used by the HTTP layer. */
@@ -125,6 +139,10 @@ export class NullWa implements WaController {
     hangup: notConnected,
     attachAudio: () => null,
     audioIn: () => undefined,
+    setVideo: notConnected,
+    attachVideo: () => null,
+    videoIn: () => undefined,
+    requestPeerKeyFrame: () => undefined,
   };
   status(): WaStatus {
     return { state: 'idle', mediaQueue: 0, since: this.since, sync: null };

@@ -66,7 +66,7 @@ const CSP = [
 ].join('; ');
 
 const PERMISSIONS_POLICY =
-  'accelerometer=(), autoplay=(self), camera=(), display-capture=(), encrypted-media=(), fullscreen=(self), geolocation=(), ' +
+  'accelerometer=(), autoplay=(self), camera=(self), display-capture=(), encrypted-media=(), fullscreen=(self), geolocation=(), ' +
   'gyroscope=(), hid=(), magnetometer=(), microphone=(self), midi=(), payment=(), picture-in-picture=(self), ' +
   'publickey-credentials-get=(), screen-wake-lock=(), serial=(), usb=(), xr-spatial-tracking=(), clipboard-read=(), clipboard-write=(self)';
 

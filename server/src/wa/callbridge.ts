@@ -17,6 +17,9 @@ export interface RawCall {
   logResult: number | null;
   everConnected: boolean;
   userEnded: boolean;
+  /** We send video / the other side sends video. */
+  selfVideo: boolean;
+  peerVideo: boolean;
   removed: boolean;
 }
 
@@ -25,6 +28,17 @@ const CALL_ID = /^[\w.:-]{1,128}$/;
 /** Audio queued for the page beyond this is dropped (it would only add delay): 0.5 s of 16 kHz s16le. */
 const MAX_QUEUE_BYTES = 16_000;
 const PUMP_MS = 40;
+/** Size of the video frame header (callpage.ts sendVideo/videoIn, ARCHITECTURE §4 "Video"). */
+export const VIDEO_HEADER = 12;
+/** Largest video frame accepted from the page or a client. */
+export const VIDEO_MAX_FRAME = 512 * 1024;
+/** Video frames waiting for the page; beyond this the queue is dropped and the next key frame awaited. */
+const MAX_VIDEO_QUEUE = 20;
+
+/** A valid video frame: known codec, header, size. */
+export function validVideoFrame(b: Buffer): boolean {
+  return b.length > VIDEO_HEADER && b.length <= VIDEO_MAX_FRAME && (b[0] === 1 || b[0] === 2) && b[3] === 0;
+}
 
 const jidOrNull = (v: unknown): string | null => (typeof v === 'string' && JID.test(v) ? v : null);
 
@@ -53,6 +67,8 @@ export function parseRawCall(payload: string): RawCall | null {
     logResult,
     everConnected: o.everConnected === true,
     userEnded: o.userEnded === true,
+    selfVideo: o.selfVideo === true,
+    peerVideo: o.peerVideo === true,
     removed: o.removed === true,
   };
 }
@@ -71,7 +87,7 @@ export class CallBridge {
 
   constructor(
     readonly page: Page,
-    private readonly handlers: { event(call: RawCall): void; audio(pcm: Buffer): void },
+    private readonly handlers: { event(call: RawCall): void; audio(pcm: Buffer): void; video?(frame: Buffer): void; needKey?(): void },
   ) {}
 
   async attach(): Promise<void> {
@@ -81,6 +97,10 @@ export class CallBridge {
       if (e.name === '__walCallEvent') {
         const call = parseRawCall(e.payload);
         if (call) this.handlers.event(call);
+      } else if (e.name === '__walCallVideo') {
+        if (typeof e.payload !== 'string' || e.payload.length > VIDEO_MAX_FRAME * 1.4) return;
+        const frame = Buffer.from(e.payload, 'base64');
+        if (validVideoFrame(frame)) this.handlers.video?.(frame);
       } else if (e.name === '__walCallAudio') {
         if (typeof e.payload !== 'string' || e.payload.length > 16_384) return;
         const pcm = Buffer.from(e.payload, 'base64');
@@ -92,6 +112,7 @@ export class CallBridge {
     await cdp.send('Runtime.enable');
     await cdp.send('Runtime.addBinding', { name: '__walCallEvent' });
     await cdp.send('Runtime.addBinding', { name: '__walCallAudio' });
+    await cdp.send('Runtime.addBinding', { name: '__walCallVideo' });
     await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: WAL_CALL_SOURCE });
     await this.page.evaluate(WAL_CALL_SOURCE);
     this.timer = setInterval(() => void this.pump(), PUMP_MS);
@@ -103,6 +124,7 @@ export class CallBridge {
     this.timer = null;
     this.queue = [];
     this.queued = 0;
+    this.vqueue = [];
     const cdp = this.cdp;
     this.cdp = null;
     await cdp?.detach().catch(() => undefined);
@@ -172,6 +194,43 @@ export class CallBridge {
     this.queue.push(pcm);
     this.queued += pcm.length;
     while (this.queued > MAX_QUEUE_BYTES && this.queue.length > 1) this.queued -= this.queue.shift()!.length;
+  }
+
+  /** One frame of the owner's camera (header + data) for the page's virtual camera. */
+  videoIn(frame: Buffer): void {
+    if (this.vwaitKey) {
+      if ((frame[1]! & 1) === 0) return;
+      this.vwaitKey = false;
+    }
+    if (this.vqueue.length >= MAX_VIDEO_QUEUE) {
+      // The page can't keep up: drop what waits and restart at the next key frame.
+      this.vqueue = [];
+      this.vwaitKey = true;
+      this.handlers.needKey?.();
+      if ((frame[1]! & 1) === 0) return;
+      this.vwaitKey = false;
+    }
+    this.vqueue.push(frame);
+    void this.pumpVideo();
+  }
+
+  private vqueue: Buffer[] = [];
+  private vwaitKey = false;
+  private vpumping = false;
+
+  private async pumpVideo(): Promise<void> {
+    if (this.vpumping) return;
+    this.vpumping = true;
+    try {
+      for (let f = this.vqueue.shift(); f && this.cdp; f = this.vqueue.shift()) {
+        const r = (await this.cdp
+          .send('Runtime.evaluate', { expression: `window.__walcall?window.__walcall.videoIn(${JSON.stringify(f.toString('base64'))}):0`, returnByValue: true })
+          .catch(() => null)) as { result?: { value?: unknown } } | null;
+        if (r?.result?.value === -1) this.handlers.needKey?.();
+      }
+    } finally {
+      this.vpumping = false;
+    }
   }
 
   private async pump(): Promise<void> {

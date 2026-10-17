@@ -107,7 +107,7 @@ async function browserChecks() {
         calls.unsupportedReason = 'error';
       }
       calls.modules = {};
-      for (const n of ['WAWebCallCollection', 'WAWebVoipStartCall', 'WAWebVoipStackInterface', 'WAWebVoipAcquireMediaStream', 'WAWebVoipSignalingEnums', 'WAWebVoipWaCallEnums', 'WAWebCallRingtone']) {
+      for (const n of ['WAWebCallCollection', 'WAWebVoipStartCall', 'WAWebVoipStackInterface', 'WAWebVoipAcquireMediaStream', 'WAWebVoipSignalingEnums', 'WAWebVoipWaCallEnums', 'WAWebCallRingtone', 'WAWebVoipVideoRendererRegistry', 'WAWebVoipVideoStateUtils', 'WAWebVoipMediaEnums']) {
         calls.modules[n] = !!R(n);
       }
       calls.walcallInstalled = typeof w.__walcall === 'object';

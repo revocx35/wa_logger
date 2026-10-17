@@ -1,5 +1,5 @@
 import type { CallEndReason, CallInfo, CallState } from '../../../shared/api.js';
-import type { AppContext, CallAudioClient, WaCalls } from '../context.js';
+import type { AppContext, CallAudioClient, CallVideoClient, WaCalls } from '../context.js';
 import { AppError, Errors } from '../errors.js';
 import { parseRawCall, type CallBridge, type RawCall } from './callbridge.js';
 import { toAppError } from './sender.js';
@@ -85,6 +85,9 @@ export class CallService implements WaCalls {
   private currentId: string | null = null;
   private audio: CallAudioClient | null = null;
   private bridgeOn = false;
+  private videoClient: CallVideoClient | null = null;
+  private videoOn = false;
+  private lastPeerKeyRequest = 0;
   private readonly started: number[] = [];
 
   constructor(
@@ -98,7 +101,11 @@ export class CallService implements WaCalls {
 
   current(): CallInfo | null {
     const c = this.currentId ? this.calls.get(this.currentId) : undefined;
-    return c ? { ...c.info, audio: !!this.audio } : null;
+    return c ? this.view(c.info) : null;
+  }
+
+  private view(info: CallInfo): CallInfo {
+    return { ...info, audio: !!this.audio, videoClient: !!this.videoClient };
   }
 
   private page(): CallBridge {
@@ -125,6 +132,8 @@ export class CallService implements WaCalls {
           direction: c.outgoing ? 'outgoing' : 'incoming',
           state: mapped,
           video: c.isVideo,
+          selfVideo: c.selfVideo,
+          peerVideo: c.peerVideo,
           group: c.isGroup,
           chatId: this.chatFor(c),
           startedAt: now,
@@ -132,6 +141,7 @@ export class CallService implements WaCalls {
           endedAt: null,
           endReason: null,
           audio: false,
+          videoClient: false,
         },
       };
       this.calls.set(c.id, rec);
@@ -145,8 +155,12 @@ export class CallService implements WaCalls {
     let next: CallState = mapped === 'elsewhere' ? 'ended' : mapped;
     // WhatsApp briefly reports the setup states again after connecting; don't go back.
     if (info.connectedAt && next !== 'ended' && next !== 'active') next = 'active';
-    if (next === info.state && !created) return;
+    const videoChanged = info.video !== (info.video || c.isVideo) || info.selfVideo !== c.selfVideo || info.peerVideo !== c.peerVideo;
+    if (next === info.state && !created && !videoChanged) return;
     if (!info.chatId) info.chatId = this.chatFor(c);
+    info.video = info.video || c.isVideo; // an audio call upgraded to video stays a video call
+    info.selfVideo = next === 'ended' ? false : c.selfVideo;
+    info.peerVideo = next === 'ended' ? false : c.peerVideo;
     info.state = next;
     if (next === 'active' && !info.connectedAt) info.connectedAt = Date.now();
     if (next === 'ended') {
@@ -193,7 +207,7 @@ export class CallService implements WaCalls {
   }
 
   private emit(info: CallInfo): void {
-    this.ctx.events.emit({ type: 'call', call: { ...info, audio: !!this.audio } });
+    this.ctx.events.emit({ type: 'call', call: this.view(info) });
   }
 
   /* ----------------------------------------------------------------------------------------- audio */
@@ -212,11 +226,28 @@ export class CallService implements WaCalls {
       this.audio = null;
       a.close(c ? 1000 : 4004, c ? 'Call ended' : 'No call');
     }
-    const want = this.wantBridge();
-    if (want === this.bridgeOn) return;
-    this.bridgeOn = want;
+    if (this.videoClient && (!c || c.state === 'ended')) {
+      const v = this.videoClient;
+      this.videoClient = null;
+      v.close(c ? 1000 : 4004, c ? 'Call ended' : 'No call');
+    }
     const b = this.bridge();
-    if (b) void b.call('setBridge', { on: want }, 10_000).catch((e) => this.ctx.log.warn({ err: (e as Error).message }, 'call audio switch failed'));
+    const want = this.wantBridge();
+    if (want !== this.bridgeOn) {
+      this.bridgeOn = want;
+      if (b) void b.call('setBridge', { on: want }, 10_000).catch((e) => this.ctx.log.warn({ err: (e as Error).message }, 'call audio switch failed'));
+    }
+    // Video flows on the same terms, with a video client attached.
+    const wantVideo = !!(c && this.videoClient && (c.state === 'active' || c.state === 'connecting' || (c.direction === 'outgoing' && (c.state === 'calling' || c.state === 'ringing'))));
+    if (wantVideo !== this.videoOn) {
+      this.videoOn = wantVideo;
+      if (b) {
+        void b
+          .call('setVideoBridge', { on: wantVideo }, 10_000)
+          .then(() => wantVideo && this.requestPeerKeyFrame())
+          .catch((e) => this.ctx.log.warn({ err: (e as Error).message }, 'call video switch failed'));
+      }
+    }
   }
 
   /** The other side's voice from the page. */
@@ -241,6 +272,52 @@ export class CallService implements WaCalls {
     };
   }
 
+  /* ----------------------------------------------------------------------------------------- video */
+
+  /** The other side's video from the page (header + H.264/VP8 frame). */
+  onPageVideo(frame: Buffer): void {
+    if (this.videoOn) this.videoClient?.send(frame);
+  }
+
+  /** The page's virtual camera needs a key frame from the owner's camera (decoder (re)started or fell behind). */
+  onPageNeedsKey(): void {
+    this.videoClient?.requestKeyFrame();
+  }
+
+  attachVideo(client: CallVideoClient): (() => void) | null {
+    const c = this.current();
+    if (!c || c.state === 'ended') return null;
+    const prev = this.videoClient;
+    this.videoClient = client;
+    prev?.close(4000, 'Replaced by another connection');
+    this.emit(this.calls.get(c.id)!.info);
+    this.syncBridge();
+    if (this.videoOn) this.requestPeerKeyFrame();
+    client.requestKeyFrame();
+    return () => {
+      if (this.videoClient !== client) return;
+      this.videoClient = null;
+      const cur = this.current();
+      if (cur && cur.state !== 'ended') this.emit(this.calls.get(cur.id)!.info);
+      this.syncBridge();
+    };
+  }
+
+  /** The owner's camera from the client (header + H.264/VP8 frame). */
+  videoIn(client: CallVideoClient, frame: Buffer): void {
+    if (this.videoClient !== client || !this.videoOn) return;
+    this.bridge()?.videoIn(frame);
+  }
+
+  /** The client lost the picture (or just started): ask the other side for a key frame, at most once a second. */
+  requestPeerKeyFrame(client?: CallVideoClient): void {
+    if (client && client !== this.videoClient) return;
+    const now = Date.now();
+    if (now - this.lastPeerKeyRequest < 1000) return;
+    this.lastPeerKeyRequest = now;
+    void this.bridge()?.call('keyframe', {}, 10_000).catch(() => undefined);
+  }
+
   /** The owner's voice from the client (16 kHz s16le). */
   audioIn(client: CallAudioClient, pcm: Buffer): void {
     if (this.audio !== client || !this.bridgeOn) return;
@@ -256,24 +333,24 @@ export class CallService implements WaCalls {
     this.started.push(now);
   }
 
-  async start(chatId: string): Promise<CallInfo> {
+  async start(chatId: string, video = false): Promise<CallInfo> {
     const live = this.current();
     if (live && live.state !== 'ended') throw Errors.conflict('There is already a call. End it first.');
     const page = this.page();
     this.charge();
     let raw: unknown;
     try {
-      raw = await page.gesture('start', { chatId }, 45_000);
+      raw = await page.gesture('start', { chatId, video }, 45_000);
     } catch (e) {
       throw callError(e);
     }
-    this.ctx.repo.audit('call_started', null);
+    this.ctx.repo.audit('call_started', null, video ? 'video' : null);
     // From the page: validated like the binding events.
     const parsed = raw && typeof raw === 'object' ? parseRawCall(JSON.stringify(raw)) : null;
     if (parsed) this.onCall({ ...parsed, outgoing: true, removed: false });
     const info = parsed ? this.calls.get(parsed.id)?.info : undefined;
     if (!info) throw Errors.unavailable('WhatsApp did not start the call.');
-    return { ...info, audio: !!this.audio };
+    return this.view(info);
   }
 
   private known(callId: string): CallInfo {
@@ -282,16 +359,31 @@ export class CallService implements WaCalls {
     return c;
   }
 
-  async accept(callId: string): Promise<CallInfo> {
+  async accept(callId: string, video = false): Promise<CallInfo> {
     const c = this.known(callId);
     if (c.direction !== 'incoming' || c.state !== 'incoming') throw Errors.conflict('This call is not ringing.');
     try {
-      await this.page().gesture('accept', { callId }, 45_000);
+      await this.page().gesture('accept', { callId, video }, 45_000);
     } catch (e) {
       throw callError(e);
     }
-    this.ctx.repo.audit('call_accepted', null);
-    return { ...c, audio: !!this.audio };
+    this.ctx.repo.audit('call_accepted', null, video ? 'video' : null);
+    return this.view(c);
+  }
+
+  /** Camera on/off (on in a voice call asks the other side to switch to video, like WhatsApp's camera button). */
+  async setVideo(callId: string, on: boolean): Promise<CallInfo> {
+    const c = this.known(callId);
+    if (c.state === 'incoming') throw Errors.conflict('Answer the call first.');
+    let raw: unknown;
+    try {
+      raw = await this.page().gesture('setVideo', { callId, on }, 30_000);
+    } catch (e) {
+      throw callError(e);
+    }
+    const parsed = raw && typeof raw === 'object' ? parseRawCall(JSON.stringify(raw)) : null;
+    if (parsed) this.onCall(parsed);
+    return this.view(this.calls.get(callId)?.info ?? c);
   }
 
   async reject(callId: string): Promise<void> {

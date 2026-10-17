@@ -171,6 +171,17 @@ Update this file whenever a step is completed.
       service while a call goes on); tested on the emulator against `call-ui.mts` (`SERVE=1`)
 - wa_logger mobile can't (Android WebView isn't cross-origin isolated)
 
+## Phase 16 — Video calls (2026-10-17)
+- [x] Page: virtual camera (canvas capture tracks fed by WebCodecs-decoded frames), tap of WhatsApp's renderer
+      registry (`onVideoFrameWasmToJs`: H.264 passed through, raw frames VP8-encoded), video start/answer, camera
+      on/off like WhatsApp's button, key-frame requests; snapshot `selfVideo`/`peerVideo`
+- [x] Server: `WS /api/calls/video` (12-byte frame header), `POST /api/calls/:id/video`, `{video}` on start/accept;
+      `Permissions-Policy: camera=(self)`; Chromium no-background-throttling flags (video calls pop out)
+- [x] Web: video call screen, video-call button, Answer with video, camera toggle, minimize
+- [x] Tests: vm + API tests; `scripts/dev/call-video.mts` (real image, real H.264/VP8, 9 checks); `call-ui.mts` (39 checks)
+- [ ] Owner: a first real video call
+- [ ] Android client video
+
 ## Next ideas (not started)
 - Android: push notifications for deletions (needs a server-side push channel; SSE only runs in the foreground)
 - Retry expired history media via WhatsApp's phone re-upload ("media retry") instead of marking it unavailable

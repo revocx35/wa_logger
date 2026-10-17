@@ -36,7 +36,7 @@ Ogg/Opus), a new chat by number and the phone layout. Start the test browser wit
 cd server && npx tsx ../scripts/dev/send-ui.mts
 ```
 
-## call-ui.mts — calls in a real browser (24 steps)
+## call-ui.mts — calls in a real browser (39 steps)
 
 The real server, `CallService` and audio WebSocket with a fake WhatsApp tab whose call models change state like
 WhatsApp Web's and whose "other side" speaks a 440 Hz tone. Covers an outgoing call (calling → ringing → connected,
@@ -52,6 +52,16 @@ cd server && npx tsx ../scripts/dev/call-ui.mts
 `SERVE=1` only runs the server on `0.0.0.0:18094` (the Android emulator reaches it at `http://10.0.2.2:18094`, user
 `owner`) and prints the call state, the audio bridge and the received microphone bytes every second. Commands on stdin:
 `incoming` (a call rings), `hangup` (the other side ends it), e.g. through a FIFO: `tail -f fifo | SERVE=1 npx tsx …`.
+
+## call-video.mts — call video inside the real Chromium image (9 checks)
+
+The other side's H.264 (real WebCodecs output) handed to a fake renderer registry the way WhatsApp's wasm stack does,
+out through the real `CallBridge`, decoded again in a second page (must be red); and the owner's VP8 with a rotation
+into WhatsApp's `getUserMedia` camera (must be blue, rotated). Same container as below.
+
+```bash
+cd server && npx tsx ../scripts/dev/call-video.mts
+```
 
 ## call-audio.mts — call audio inside the real Chromium image (12 checks)
 

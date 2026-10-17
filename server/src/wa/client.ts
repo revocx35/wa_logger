@@ -488,6 +488,8 @@ export class WaService implements WaController {
         const bridge = new CallBridge(client.pupPage, {
           event: (c) => gen === this.generation && this.calls.onCall(c),
           audio: (pcm) => gen === this.generation && this.calls.onPageAudio(pcm),
+          video: (frame) => gen === this.generation && this.calls.onPageVideo(frame),
+          needKey: () => gen === this.generation && this.calls.onPageNeedsKey(),
         });
         await bridge.attach();
         if (gen === this.generation) this.callBridge = bridge;

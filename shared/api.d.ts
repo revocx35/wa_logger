@@ -257,13 +257,20 @@ export type CallState = 'incoming' | 'calling' | 'ringing' | 'connecting' | 'act
 /** completed: was connected and ended normally · elsewhere: answered or declined on another device */
 export type CallEndReason = 'completed' | 'declined' | 'busy' | 'missed' | 'unavailable' | 'canceled' | 'elsewhere' | 'failed';
 
-/** A WhatsApp voice call of the linked account (one at a time). Audio goes through `WS /api/calls/audio`. */
+/**
+ * A WhatsApp call of the linked account (one at a time). Audio goes through `WS /api/calls/audio`, video through
+ * `WS /api/calls/video`.
+ */
 export interface CallInfo {
   id: string;
   direction: 'incoming' | 'outgoing';
   state: CallState;
-  /** WhatsApp video call: handled as a voice call here (no camera). */
+  /** Started or answered as a video call (or switched to video later). */
   video: boolean;
+  /** We send video (our camera is on in WhatsApp). */
+  selfVideo: boolean;
+  /** The other side sends video. */
+  peerVideo: boolean;
   group: boolean;
   /** The chat to show: the other person's (as logged here), or the group's. null when unknown. */
   chatId: string | null;
@@ -276,7 +283,15 @@ export interface CallInfo {
   endReason: CallEndReason | null;
   /** A browser or app is connected to the call audio. */
   audio: boolean;
+  /** A browser or app is connected to the call video. */
+  videoClient: boolean;
 }
+
+/** `POST /api/chats/:chatId/call` (`video`: a video call) and `POST /api/calls/:callId/accept` (`video`: answer with the camera). */
+export interface StartCallRequest { video?: boolean }
+export interface AcceptCallRequest { video?: boolean }
+/** `POST /api/calls/:callId/video`: camera on/off. In a voice call, on asks the other side to switch to video. */
+export interface CallVideoRequest { on: boolean }
 
 /** `GET /api/calls/current`. `available`: WhatsApp is connected and calling is set up in its tab. */
 export interface CurrentCall { call: CallInfo | null; available: boolean }
@@ -289,6 +304,17 @@ export interface CurrentCall { call: CallInfo | null; available: boolean }
  * play silence when nothing arrives.
  */
 export interface CallAudioHello { type: 'hello'; sampleRate: 16000; channels: 1; format: 's16le'; callId: string }
+
+/**
+ * `WS /api/calls/video` (same rules as the audio socket: one connection, replaced with 4000, closed with the call).
+ * **Binary** messages both ways are one encoded frame each: a 12-byte little-endian header
+ * `codec u8 (1 = H.264 Annex B, 2 = VP8) · flags u8 (bit 0: key frame) · rotation u8 (quarter turns clockwise to show
+ * it upright) · 0 u8 · width u16 · height u16 · timestamp u32 (ms)`, then the frame (≤ 512 KiB). Each side picks its
+ * own codec. Text messages: the server sends `CallVideoHello` first and `{type:'keyframe'}` when the client's encoder
+ * must send a key frame; the client sends `{type:'keyframe'}` when it needs one of the other side's video.
+ */
+export interface CallVideoHello { type: 'hello'; callId: string; codecs: ('h264' | 'vp8')[] }
+export interface CallVideoControl { type: 'keyframe' }
 
 /* ------------------------------------------------------------------ events */
 

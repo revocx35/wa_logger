@@ -159,8 +159,9 @@ export const api = {
   newChat: (phone: string) => request<NewChatResponse>('POST', '/api/chats/new', { phone }),
 
   currentCall: () => request<CurrentCall>('GET', '/api/calls/current'),
-  startCall: (chatId: string) => request<CallInfo>('POST', `/api/chats/${enc(chatId)}/call`),
-  acceptCall: (callId: string) => request<CallInfo>('POST', `/api/calls/${enc(callId)}/accept`),
+  startCall: (chatId: string, video = false) => request<CallInfo>('POST', `/api/chats/${enc(chatId)}/call`, video ? { video } : {}),
+  acceptCall: (callId: string, video = false) => request<CallInfo>('POST', `/api/calls/${enc(callId)}/accept`, video ? { video } : {}),
+  setCallVideo: (callId: string, on: boolean) => request<CallInfo>('POST', `/api/calls/${enc(callId)}/video`, { on }),
   rejectCall: (callId: string) => request<{ ok: true }>('POST', `/api/calls/${enc(callId)}/reject`),
   hangupCall: (callId: string) => request<{ ok: true }>('POST', `/api/calls/${enc(callId)}/hangup`),
 

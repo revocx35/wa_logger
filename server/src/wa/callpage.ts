@@ -12,6 +12,9 @@
  *    feeds with the owner's voice, `audioIn`) and *taps* every Web Audio node that is connected to an output, so the
  *    other side's voice goes out through the binding `__walCallAudio`. Audio crosses only while `setBridge(true)`.
  *    Format both ways: 16 kHz mono signed 16-bit little-endian PCM, base64.
+ *  - video: a virtual camera (a canvas the app paints with the owner's decoded video) for getUserMedia, and the other
+ *    side's frames taken where WhatsApp Web hands them to its renderer (H.264 as received; raw frames VP8-encoded here),
+ *    out through the binding `__walCallVideo`. Video crosses only while `setVideoBridge(true)`.
  *
  * The app injects WAL_CALL_SOURCE at document start of every page load (the audio hooks must be in place before
  * WhatsApp Web creates its audio graph) and once into the page already open. installWalCalls() must stay
@@ -26,6 +29,8 @@ export function installWalCalls(): string {
   const RATE = 16000;
   const MIC_ID = 'wa-logger-mic';
   const MIC_LABEL = 'wa_logger (your browser)';
+  const CAM_ID = 'wa-logger-camera';
+  const CAM_LABEL = 'wa_logger camera (your device)';
 
   const R = (name: string): any => {
     try {
@@ -199,6 +204,217 @@ export function installWalCalls(): string {
     return sp;
   }
 
+  /* ------------------------------------------------------------------------------------------- video */
+
+  // A video frame, both directions: codec (1 = H.264 Annex B, 2 = VP8), flags (bit 0: key frame), rotation (quarter
+  // turns clockwise to show it upright), 0, u16 width, u16 height, u32 timestamp (ms), then the encoded frame (LE).
+  const VH = 12;
+  let videoBridging = false;
+  let videoInFrames = 0;
+  let videoOutFrames = 0;
+
+  // Virtual camera: the owner's video is decoded here and drawn on a canvas; WhatsApp Web's getUserMedia gets capture
+  // tracks of it. Frames are pushed (captureStream(0) + requestFrame), and repeated so the camera never looks stalled.
+  let cam: { canvas: any; g: any; tracks: any[]; decoder: any; codec: number; needKey: boolean; last: number } | null = null;
+  function camGraph(): { canvas: any; g: any; tracks: any[]; decoder: any; codec: number; needKey: boolean; last: number } {
+    if (!cam) {
+      const canvas = W.document.createElement('canvas');
+      canvas.width = 640;
+      canvas.height = 480;
+      const g = canvas.getContext('2d');
+      g.fillStyle = '#000';
+      g.fillRect(0, 0, 640, 480);
+      const c = { canvas, g, tracks: [] as any[], decoder: null, codec: 0, needKey: true, last: 0 };
+      cam = c;
+      T.every(() => {
+        c.tracks = c.tracks.filter((t: any) => t.readyState === 'live');
+        if (c.tracks.length && Date.now() - c.last > 90) pushCamFrame(c);
+      }, 100);
+    }
+    return cam;
+  }
+  function pushCamFrame(c: { tracks: any[] }): void {
+    for (const t of c.tracks) {
+      try {
+        t.requestFrame();
+      } catch {
+        /* ended */
+      }
+    }
+  }
+  function camStream(win: any, withAudio: boolean): any {
+    const c = camGraph();
+    const track = c.canvas.captureStream(0).getVideoTracks()[0];
+    try {
+      Object.defineProperty(track, 'label', { value: CAM_LABEL });
+      const settings = track.getSettings.bind(track);
+      track.getSettings = () => Object.assign({}, settings(), { deviceId: CAM_ID, groupId: CAM_ID, width: c.canvas.width, height: c.canvas.height, frameRate: 30 });
+    } catch {
+      /* cosmetic */
+    }
+    c.tracks.push(track);
+    pushCamFrame({ tracks: [track] });
+    const tracks = [track];
+    if (withAudio) tracks.unshift(micStream(win).getAudioTracks()[0]);
+    return new (win.MediaStream || W.MediaStream)(tracks);
+  }
+  function drawCam(c: { canvas: any; g: any; tracks: any[]; last: number }, frame: any, rot: number): void {
+    try {
+      const w = frame.displayWidth;
+      const h = frame.displayHeight;
+      const cw = rot % 2 ? h : w;
+      const ch = rot % 2 ? w : h;
+      if (c.canvas.width !== cw || c.canvas.height !== ch) {
+        c.canvas.width = cw;
+        c.canvas.height = ch;
+      }
+      c.g.save();
+      c.g.translate(cw / 2, ch / 2);
+      c.g.rotate((Math.PI / 2) * rot);
+      c.g.drawImage(frame, -w / 2, -h / 2, w, h);
+      c.g.restore();
+      c.last = Date.now();
+      pushCamFrame(c);
+    } finally {
+      frame.close();
+    }
+  }
+  /** The owner's camera (one frame, header + data, base64) → the virtual camera. 1 decoded, 0 dropped, -1 needs a key frame. */
+  function videoIn(b64: string): number {
+    if (!videoBridging || typeof b64 !== 'string' || !b64) return 0;
+    const bytes = b64ToBytes(b64);
+    if (bytes.length <= VH) return 0;
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const codec = bytes[0]!;
+    const key = (bytes[1]! & 1) === 1;
+    const rot = bytes[2]! & 3;
+    const ts = dv.getUint32(8, true);
+    if (codec !== 1 && codec !== 2) return 0;
+    const c = camGraph();
+    if (!c.decoder || c.codec !== codec || c.decoder.state === 'closed') {
+      try {
+        if (c.decoder && c.decoder.state !== 'closed') c.decoder.close();
+      } catch {
+        /* closed */
+      }
+      const dec = new W.VideoDecoder({
+        output: (f: any) => drawCam(c, f, (dec as any).__rot || 0),
+        error: () => {
+          c.decoder = null;
+          c.needKey = true;
+        },
+      });
+      dec.configure({ codec: codec === 1 ? 'avc1.42001f' : 'vp8', optimizeForLatency: true });
+      c.decoder = dec;
+      c.codec = codec;
+      c.needKey = true;
+    }
+    if (c.needKey && !key) return -1;
+    c.needKey = false;
+    c.decoder.__rot = rot;
+    // A decoder that falls behind is reset: the next key frame restarts it.
+    if (c.decoder.decodeQueueSize > 10) {
+      c.decoder.reset();
+      c.decoder.configure({ codec: codec === 1 ? 'avc1.42001f' : 'vp8', optimizeForLatency: true });
+      c.needKey = true;
+      return -1;
+    }
+    c.decoder.decode(new W.EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: ts * 1000, data: bytes.subarray(VH) }));
+    videoInFrames++;
+    return 1;
+  }
+
+  function sendVideo(codec: number, key: boolean, rot: number, w: number, h: number, tsMs: number, data: Uint8Array): void {
+    const out = new Uint8Array(VH + data.length);
+    const dv = new DataView(out.buffer);
+    out[0] = codec;
+    out[1] = key ? 1 : 0;
+    out[2] = rot & 3;
+    dv.setUint16(4, w & 0xffff, true);
+    dv.setUint16(6, h & 0xffff, true);
+    dv.setUint32(8, Math.floor(tsMs) >>> 0, true);
+    out.set(data, VH);
+    videoOutFrames++;
+    emit('__walCallVideo', bytesToB64(out));
+  }
+
+  // Raw frames (only if WhatsApp Web doesn't use its WebCodecs H.264 renderer) are encoded here as VP8, 15 fps.
+  let rawEnc: any = null;
+  let rawKey = true;
+  let rawLast = 0;
+  function encodeRaw(u8: Uint8Array, w: number, h: number, fmt: string, rot: number, tsMs: number): void {
+    const now = Date.now();
+    if (now - rawLast < 66) return;
+    rawLast = now;
+    if (!rawEnc || rawEnc.state === 'closed' || rawEnc.__w !== w || rawEnc.__h !== h) {
+      try {
+        if (rawEnc && rawEnc.state !== 'closed') rawEnc.close();
+      } catch {
+        /* closed */
+      }
+      const enc = new W.VideoEncoder({
+        output: (chunk: any) => {
+          const d = new Uint8Array(chunk.byteLength);
+          chunk.copyTo(d);
+          sendVideo(2, chunk.type === 'key', enc.__rot || 0, w, h, chunk.timestamp / 1000, d);
+        },
+        error: () => {
+          rawEnc = null;
+        },
+      });
+      enc.configure({ codec: 'vp8', width: w, height: h, bitrate: 800_000, framerate: 15, latencyMode: 'realtime' });
+      enc.__w = w;
+      enc.__h = h;
+      rawEnc = enc;
+      rawKey = true;
+    }
+    if (rawEnc.encodeQueueSize > 2) return;
+    rawEnc.__rot = rot;
+    const frame = new W.VideoFrame(u8, { format: fmt, codedWidth: w, codedHeight: h, timestamp: Math.floor(tsMs * 1000) });
+    try {
+      rawEnc.encode(frame, { keyFrame: rawKey });
+      rawKey = false;
+    } finally {
+      frame.close();
+    }
+  }
+
+  /** WhatsApp Web hands every video frame (peer and self preview) to its renderer registry; the peer's go out too. */
+  function peerFrame(src: any, buf: any, w: number, h: number, orientation: any, format: any, ts: any, key: any): void {
+    if (!src || (src.isSelf && src.isSelf()) || (src.isScreenShare && src.isScreenShare())) return;
+    const E = R('WAWebVoipMediaEnums');
+    const VF = (E && E.WAWebVoipVideoFormat) || { NV12: 0, I420: 1, RGBA: 3, H264: 100 };
+    const OR = (E && E.Orientation) || { Normal: 1, Rotate90: 2, Rotate180: 3, Rotate270: 4 };
+    const o = Number(orientation);
+    const rot = o === Number(OR.Rotate90) ? 1 : o === Number(OR.Rotate180) ? 2 : o === Number(OR.Rotate270) ? 3 : 0;
+    const u8: Uint8Array =
+      buf instanceof Uint8Array ? buf : ArrayBuffer.isView(buf) ? new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength) : new Uint8Array(buf);
+    const f = Number(format);
+    const t = typeof ts === 'number' ? ts : Date.now();
+    if (f === Number(VF.H264)) sendVideo(1, !!key, rot, w, h, t, u8);
+    else if (f === Number(VF.I420)) encodeRaw(u8, w, h, 'I420', rot, t);
+    else if (f === Number(VF.NV12)) encodeRaw(u8, w, h, 'NV12', rot, t);
+    else if (f === Number(VF.RGBA)) encodeRaw(u8, w, h, 'RGBA', rot, t);
+  }
+
+  let registryHooked: any = null;
+  function hookRegistry(): void {
+    const mod = R('WAWebVoipVideoRendererRegistry');
+    const reg = mod && mod.videoRendererRegistry;
+    if (!reg || reg === registryHooked || typeof reg.onVideoFrameWasmToJs !== 'function') return;
+    const orig = reg.onVideoFrameWasmToJs;
+    reg.onVideoFrameWasmToJs = function (this: any, ...a: any[]) {
+      try {
+        // before the original: the buffer may be reused once WhatsApp's renderer has it
+        if (videoBridging) peerFrame(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]);
+      } catch {
+        /* never break WhatsApp's own rendering */
+      }
+      return orig.apply(this, a);
+    };
+    registryHooked = reg;
+  }
+
   /**
    * Installs the virtual microphone and the speaker tap into a window: this one, and any window WhatsApp Web opens
    * (it can move a call into a popout window, whose getUserMedia and Web Audio are that window's own).
@@ -208,13 +424,12 @@ export function installWalCalls(): string {
     if (md && md.getUserMedia && !md.__walHooked) {
       const getUserMedia = md.getUserMedia.bind(md);
       md.getUserMedia = function (c: any) {
-        // Audio-only requests (calls, voice notes) get the virtual microphone; anything with video is left alone.
-        if (c && c.audio && !c.video) {
-          try {
-            return Promise.resolve(micStream(win));
-          } catch (e) {
-            return Promise.reject(e);
-          }
+        // Audio requests (calls, voice notes) get the virtual microphone, video requests the virtual camera.
+        try {
+          if (c && c.video) return Promise.resolve(camStream(win, !!c.audio));
+          if (c && c.audio) return Promise.resolve(micStream(win));
+        } catch (e) {
+          return Promise.reject(e);
         }
         return getUserMedia(c);
       };
@@ -228,6 +443,14 @@ export function installWalCalls(): string {
         toJSON: { value: () => ({ deviceId: MIC_ID, groupId: MIC_ID, kind: 'audioinput', label: MIC_LABEL }) },
         getCapabilities: { value: () => ({ deviceId: MIC_ID, groupId: MIC_ID, channelCount: { min: 1, max: 1 }, sampleRate: { min: RATE, max: 48000 } }) },
       });
+      const camera = Object.create(proto, {
+        deviceId: { value: CAM_ID, enumerable: true },
+        groupId: { value: CAM_ID, enumerable: true },
+        kind: { value: 'videoinput', enumerable: true },
+        label: { value: CAM_LABEL, enumerable: true },
+        toJSON: { value: () => ({ deviceId: CAM_ID, groupId: CAM_ID, kind: 'videoinput', label: CAM_LABEL }) },
+        getCapabilities: { value: () => ({ deviceId: CAM_ID, groupId: CAM_ID, width: { min: 1, max: 1920 }, height: { min: 1, max: 1920 }, frameRate: { min: 1, max: 30 } }) },
+      });
       md.enumerateDevices = async () => {
         let list: any[] = [];
         try {
@@ -235,19 +458,19 @@ export function installWalCalls(): string {
         } catch {
           /* none */
         }
-        return [device].concat(list.filter((d) => d && d.kind !== 'audioinput'));
+        return [device, camera].concat(list.filter((d) => d && d.kind !== 'audioinput' && d.kind !== 'videoinput'));
       };
       md.__walHooked = true;
     }
 
-    // The browser itself has no microphone permission (managed policy). WhatsApp Web only ever gets the virtual one.
+    // The browser itself has no microphone or camera permission (managed policy). WhatsApp Web only gets the virtual ones.
     const perms = win.navigator && win.navigator.permissions;
     if (perms && perms.query && !perms.__walHooked) {
       const query = perms.query.bind(perms);
       perms.query = function (d: any) {
-        if (d && d.name === 'microphone') {
+        if (d && (d.name === 'microphone' || d.name === 'camera')) {
           const status: any = typeof win.EventTarget === 'function' ? new win.EventTarget() : {};
-          status.name = 'microphone';
+          status.name = d.name;
           status.state = 'granted';
           status.onchange = null;
           return Promise.resolve(status);
@@ -321,6 +544,15 @@ export function installWalCalls(): string {
     return bridging;
   }
 
+  function setVideoBridge(a: { on: boolean }): boolean {
+    videoBridging = !!(a && a.on);
+    if (videoBridging) {
+      hookRegistry();
+      camGraph().needKey = true;
+    }
+    return videoBridging;
+  }
+
   /* ------------------------------------------------------------------------------------ call monitor */
 
   function peerOf(m: any): { jid: string | null; alt: string | null; group: string | null } {
@@ -333,6 +565,18 @@ export function installWalCalls(): string {
       /* no mapping */
     }
     return { jid, alt, group: widStr(m.groupJid) };
+  }
+
+  /** Whether a side sends video (WAWebVoipVideoStateUtils, as WhatsApp's own call UI decides it). */
+  function videoOn(state: any): boolean {
+    if (state == null) return false;
+    try {
+      const VS = R('WAWebVoipVideoStateUtils');
+      if (VS && VS.isVideoStateInactiveForCallMode) return !VS.isVideoStateInactiveForCallMode(state);
+    } catch {
+      /* unknown */
+    }
+    return false;
   }
 
   function snap(m: any): any {
@@ -357,11 +601,13 @@ export function installWalCalls(): string {
       logResult: typeof m.callLogResult === 'number' ? m.callLogResult : null,
       everConnected: !!m.wasEverConnected,
       userEnded: !!m.userEndedCall,
+      selfVideo: videoOn(m.selfVideoState),
+      peerVideo: videoOn(m.peerVideoState),
       removed: false,
     };
   }
 
-  const seen = new Map<string, { model: any; state: number | null }>();
+  const seen = new Map<string, { model: any; state: string }>();
   function tick(): void {
     const CC = D('WAWebCallCollection');
     if (!CC) return;
@@ -374,9 +620,9 @@ export function installWalCalls(): string {
     if (CC.activeCall) models.add(CC.activeCall);
     for (const m of models) {
       if (!m || !m.id) continue;
-      let st: number | null = null;
+      let st = '';
       try {
-        st = m.getState();
+        st = m.getState() + '/' + videoOn(m.selfVideoState) + '/' + videoOn(m.peerVideoState) + '/' + !!m.isVideo;
       } catch {
         /* ignore */
       }
@@ -440,7 +686,7 @@ export function installWalCalls(): string {
     return null;
   }
 
-  async function start(a: { chatId: string }): Promise<any> {
+  async function start(a: { chatId: string; video?: boolean }): Promise<any> {
     const CC = D('WAWebCallCollection');
     if (CC && CC.activeCall) throw fail('busy', 'WhatsApp is already in a call.');
     const why = supported();
@@ -454,7 +700,7 @@ export function installWalCalls(): string {
     let startError: any = null;
     let doneAt = 0;
     // Resolves once WhatsApp has set the call up (or gave up); the call model appears before that.
-    Promise.resolve(SC.startWAWebVoipCall(wid, false, fromUi, 0, null, { entryTrust: 'user_gesture' })).then(
+    Promise.resolve(SC.startWAWebVoipCall(wid, !!a.video, fromUi, 0, null, { entryTrust: 'user_gesture' })).then(
       () => {
         doneAt = Date.now();
       },
@@ -477,7 +723,7 @@ export function installWalCalls(): string {
     throw fail('timeout', 'WhatsApp did not start the call in time.');
   }
 
-  async function accept(a: { callId: string }): Promise<any> {
+  async function accept(a: { callId: string; video?: boolean }): Promise<any> {
     const call = activeCall(a.callId);
     try {
       R('WAWebCallRingtone').stopCallRingtone();
@@ -486,11 +732,11 @@ export function installWalCalls(): string {
     }
     const AMS = R('WAWebVoipAcquireMediaStream');
     if (AMS && AMS.checkVoipDevicePermissions) {
-      const ok = await AMS.checkVoipDevicePermissions(false, call);
-      if (ok === false) throw fail('failed', 'WhatsApp Web refused the microphone.');
+      const ok = await AMS.checkVoipDevicePermissions(!!a.video, call);
+      if (ok === false) throw fail('failed', 'WhatsApp Web refused the microphone or camera.');
     }
     const s = await stack();
-    await s.acceptCall(true, false); // audio only
+    await s.acceptCall(true, !!a.video);
     tick();
     return snap(call);
   }
@@ -510,6 +756,38 @@ export function installWalCalls(): string {
     const self = (SE && SE.EndCallReason && SE.EndCallReason.Self) || 2;
     const s = await stack();
     await s.endCall(self, true);
+    return true;
+  }
+
+  /** Camera on/off, like WhatsApp Web's camera button: an audio call asks the other side to switch to video. */
+  async function setVideo(a: { callId: string; on: boolean }): Promise<any> {
+    const call = activeCall(a.callId);
+    const s = await stack();
+    if (a.on) {
+      const AMS = R('WAWebVoipAcquireMediaStream');
+      if (AMS && AMS.checkVoipDevicePermissions) {
+        const ok = await AMS.checkVoipDevicePermissions(true, call);
+        if (ok === false) throw fail('failed', 'WhatsApp Web refused the camera.');
+      }
+    }
+    let status: any;
+    if (a.on && !call.isVideo && !videoOn(call.selfVideoState) && typeof s.requestVideoUpgrade === 'function') status = await s.requestVideoUpgrade();
+    else if (typeof s.setCallVideoMute === 'function') status = await s.setCallVideoMute(!a.on);
+    else throw fail('unsupported', 'This WhatsApp Web version can’t switch the camera.');
+    if (status != null && status !== 0) throw fail('failed', 'WhatsApp could not switch the camera.');
+    tick();
+    return snap(call);
+  }
+
+  /** Asks the other side for a key frame (a new viewer can only start decoding there). */
+  async function keyframe(): Promise<boolean> {
+    rawKey = true;
+    const CC = D('WAWebCallCollection');
+    const call = CC && CC.activeCall;
+    if (!call || !call.peerJid) return false;
+    const s = await stack();
+    if (typeof s.requestKeyFrame !== 'function') return false;
+    await s.requestKeyFrame(call.peerJid, false);
     return true;
   }
 
@@ -534,10 +812,11 @@ export function installWalCalls(): string {
       modules: mods,
       activeCall: CC && CC.activeCall ? { state: snap(CC.activeCall).state } : null,
       audio: { bridging, mic: mic ? mic.ctx.state : null, micFrames, outFrames },
+      video: { bridging: videoBridging, registry: !!registryHooked, cameraTracks: cam ? cam.tracks.length : 0, videoInFrames, videoOutFrames },
     };
   }
 
-  const api: Record<string, (a: any) => any> = { start, accept, reject, hangup, diag, setBridge };
+  const api: Record<string, (a: any) => any> = { start, accept, reject, hangup, diag, setBridge, setVideoBridge, setVideo, keyframe };
 
   async function call(op: string, args: any): Promise<any> {
     const fn = Object.prototype.hasOwnProperty.call(api, op) ? api[op] : null;
@@ -594,7 +873,7 @@ export function installWalCalls(): string {
     return r || null;
   }
 
-  Object.defineProperty(W, '__walcall', { value: { v: 1, call, audioIn, arm, runArmed, result, tick } });
+  Object.defineProperty(W, '__walcall', { value: { v: 1, call, audioIn, videoIn, arm, runArmed, result, tick } });
   return 'installed';
 }
 

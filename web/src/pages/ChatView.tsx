@@ -321,7 +321,12 @@ export function ChatView({ chatId }: { chatId: string }) {
                 : ''}
             </div>
           </div>
-          {chat?.kind === 'user' && !chat.removed ? <CallButton chatId={chatId} name={title} /> : null}
+          {chat?.kind === 'user' && !chat.removed ? (
+            <>
+              <CallButton chatId={chatId} name={title} video />
+              <CallButton chatId={chatId} name={title} />
+            </>
+          ) : null}
           <button className="icon-btn" onClick={() => setSelecting(true)} aria-label="Select photos and videos to download" title="Select photos and videos to download">
             <Icon name="download" />
           </button>

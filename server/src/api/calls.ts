@@ -1,9 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import type { CallAudioHello, CallInfo, CurrentCall } from '../../../shared/api.js';
-import type { AppContext, CallAudioClient } from '../context.js';
+import type { CallAudioHello, CallInfo, CallVideoHello, CurrentCall } from '../../../shared/api.js';
+import type { AppContext, CallAudioClient, CallVideoClient } from '../context.js';
 import { Errors } from '../errors.js';
 import { getReader, requireSession } from '../http/server.js';
+import { validVideoFrame, VIDEO_MAX_FRAME } from '../wa/callbridge.js';
 import { chatKind } from '../wa/mapper.js';
 import { Presenter } from './view.js';
 
@@ -17,6 +18,9 @@ const MAX_BYTES_PER_SEC = 96_000;
 /** Audio queued towards a slow client beyond this is dropped (it would only add delay). */
 const HIGH_WATER = 64 * 1024;
 const REVALIDATE_MS = 30_000;
+/** Video from a client: a few Mbit/s is plenty for a phone camera; 2 MB/s is a hard cap. */
+const MAX_VIDEO_BYTES_PER_SEC = 2 * 1024 * 1024;
+const VIDEO_HIGH_WATER = 2 * 1024 * 1024;
 
 /**
  * Voice calls. The POST routes need a session, the CSRF token and a same-origin Origin (global hooks in
@@ -43,15 +47,22 @@ export function registerCallRoutes(app: FastifyInstance, ctx: AppContext): void 
 
   app.post('/api/chats/:chatId/call', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req) => {
     const { chatId } = ChatIdParam.parse(req.params);
-    z.object({}).strict().parse(req.body ?? {});
+    const { video } = z.object({ video: z.boolean().optional() }).strict().parse(req.body ?? {});
     if (!ctx.repo.getChat(chatId)) throw Errors.notFound('Chat');
     if (chatKind(chatId) !== 'user') throw Errors.conflict('Only one-to-one chats can be called from here.');
-    return withName(req, await ctx.wa.calls.start(chatId));
+    return withName(req, await ctx.wa.calls.start(chatId, !!video));
   });
 
   app.post('/api/calls/:callId/accept', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req) => {
     const { callId } = CallIdParam.parse(req.params);
-    return withName(req, await ctx.wa.calls.accept(callId));
+    const { video } = z.object({ video: z.boolean().optional() }).strict().parse(req.body ?? {});
+    return withName(req, await ctx.wa.calls.accept(callId, !!video));
+  });
+
+  app.post('/api/calls/:callId/video', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req) => {
+    const { callId } = CallIdParam.parse(req.params);
+    const { on } = z.object({ on: z.boolean() }).strict().parse(req.body);
+    return withName(req, await ctx.wa.calls.setVideo(callId, on));
   });
 
   app.post('/api/calls/:callId/reject', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req) => {
@@ -134,6 +145,85 @@ export function registerCallRoutes(app: FastifyInstance, ctx: AppContext): void 
     const hello: CallAudioHello = { type: 'hello', sampleRate: 16000, channels: 1, format: 's16le', callId: call.id };
     socket.send(JSON.stringify(hello));
     detach = ctx.wa.calls.attachAudio(client);
+    if (!detach) close(4004, 'No call');
+  });
+
+  app.get('/api/calls/video', { websocket: true, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, (socket, req) => {
+    const session = requireSession(req);
+    let closed = false;
+    let detach: (() => void) | null = null;
+    const client: CallVideoClient = {
+      send: (frame) => {
+        // A slow client loses frames rather than building up delay; its decoder asks for a key frame then.
+        if (closed || socket.readyState !== socket.OPEN || socket.bufferedAmount > VIDEO_HIGH_WATER) return;
+        socket.send(frame, { binary: true });
+      },
+      requestKeyFrame: () => {
+        if (!closed && socket.readyState === socket.OPEN) socket.send(JSON.stringify({ type: 'keyframe' }));
+      },
+      close: (code, reason) => close(code, reason),
+    };
+    const close = (code = 1000, reason = '') => {
+      if (closed) return;
+      closed = true;
+      clearInterval(revalidate);
+      unsubscribe();
+      const d = detach;
+      detach = null;
+      d?.();
+      try {
+        socket.close(code, reason);
+      } catch {
+        /* ignore */
+      }
+    };
+    const check = () => {
+      const row = ctx.repo.getSession(session.idHash);
+      const t = Date.now();
+      if (!row || row.expires_at <= t || row.last_seen_at + ctx.config.sessionIdleMs <= t) close(4001, 'Session ended');
+    };
+    const revalidate = setInterval(check, REVALIDATE_MS);
+    const unsubscribe = ctx.events.subscribe((ev) => {
+      if (ev.type === 'session_revoked') check();
+    });
+
+    let windowStart = Date.now();
+    let windowBytes = 0;
+    socket.on('message', (data: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
+      if (closed) return;
+      const buf = Array.isArray(data) ? Buffer.concat(data) : Buffer.isBuffer(data) ? data : Buffer.from(data);
+      if (!isBinary) {
+        // The only control message: the client needs a key frame of the other side's video.
+        if (buf.length < 64 && buf.toString('utf8').includes('"keyframe"')) ctx.wa.calls.requestPeerKeyFrame(client);
+        return;
+      }
+      if (buf.length > VIDEO_MAX_FRAME || !validVideoFrame(buf)) {
+        close(1007, 'Bad video frame');
+        return;
+      }
+      const now = Date.now();
+      if (now - windowStart >= 1000) {
+        windowStart = now;
+        windowBytes = 0;
+      }
+      windowBytes += buf.length;
+      if (windowBytes > MAX_VIDEO_BYTES_PER_SEC) {
+        close(1008, 'Too much video');
+        return;
+      }
+      ctx.wa.calls.videoIn(client, buf);
+    });
+    socket.on('close', () => close());
+    socket.on('error', () => close(1011));
+
+    const call = ctx.wa.calls.current();
+    if (!call || call.state === 'ended') {
+      close(4004, 'No call');
+      return;
+    }
+    const hello: CallVideoHello = { type: 'hello', callId: call.id, codecs: ['h264', 'vp8'] };
+    socket.send(JSON.stringify(hello));
+    detach = ctx.wa.calls.attachVideo(client);
     if (!detach) close(4004, 'No call');
   });
 }

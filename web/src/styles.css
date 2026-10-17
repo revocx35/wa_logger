@@ -1845,3 +1845,78 @@ label.switch {
 .call-note.warn {
   color: var(--danger);
 }
+
+/* video calls */
+.call-stage {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  background: #0b141a;
+  color: #e9edef;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.call-remote {
+  max-width: 100%;
+  max-height: 100%;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.call-remote.hidden {
+  display: none;
+}
+.call-stage-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.call-stage .muted {
+  color: #aebac1;
+}
+.call-stage-top {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 16px;
+  background: linear-gradient(rgba(0, 0, 0, 0.55), transparent);
+}
+.call-stage-bottom {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 16px 24px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.6));
+}
+.call-stage .call-btn.mute {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+.call-stage .call-btn.mute.on {
+  background: #fff;
+  color: #111b21;
+}
+.call-preview {
+  position: absolute;
+  right: 16px;
+  bottom: 110px;
+  width: min(28vw, 200px);
+  max-height: 36vh;
+  border-radius: 10px;
+  object-fit: cover;
+  transform: scaleX(-1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  background: #000;
+}

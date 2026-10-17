@@ -22,7 +22,8 @@ Read these first, every session:
 - Calls go through `server/src/wa/callpage.ts` (WhatsApp Web's own calling; injected source text, self-contained like
   walpage.ts, tested in a bare `vm` by `callpage.test.ts`). Its audio hooks (virtual microphone, speaker tap) must stay
   installed at document start. Never record, store or log call audio, and never send audio when `setBridge` is off.
-  Re-check the audio path in the real Chromium image with `scripts/dev/call-audio.mts` after touching it.
+  Re-check the audio/video paths in the real Chromium image with `scripts/dev/call-audio.mts` / `call-video.mts` after
+  touching it. Never record or store call video either.
 - DB migrations are append-only (`server/src/db/db.ts`). Encrypted columns are AAD-bound to their row id, so ids
   can't be changed after the fact.
 - Commits end with the Co-Authored-By trailer. CI must stay green: it publishes the GHCR images on `main`.

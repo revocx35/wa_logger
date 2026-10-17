@@ -13,10 +13,10 @@ the owner's account sends or receives, encrypted at rest. When someone deletes a
 
 The web UI looks like WhatsApp: chat list, chat view, media. Since 2026-10 it can also **send** as the linked account
 (text, replies, media, files, voice notes, reactions, edits, delete for everyone, new chats; §4 "Sending") and make and
-take **voice calls** from the browser (§4 "Calls").
+take **voice and video calls** from the browser (§4 "Calls", "Video").
 The live Chromium screen can be opened from the menu ("WA Web") through an in-browser VNC client.
 
-Out of scope on purpose: video (calls are voice only), call recording, multiple WhatsApp accounts or tenants, and
+Out of scope on purpose: call recording, starting group calls, screen sharing, multiple WhatsApp accounts or tenants, and
 **view-once media** (it is logged only as a placeholder and never downloaded).
 
 ## 2. User flow
@@ -98,7 +98,9 @@ Out of scope on purpose: video (calls are voice only), call recording, multiple 
   --no-default-browser-check --password-store=basic --disable-features=Translate,MediaRouter
   --noerrdialogs --hide-crash-restore-bubble --autoplay-policy=no-user-gesture-required --window-position=0,0
   --window-size=W,H about:blank` (the autoplay flag lets WhatsApp Web's call audio run without a human click, also in
-  a call popout window; there are no sound devices, the audio only goes to the app, §4 "Calls"),
+  a call popout window; there are no sound devices, the audio only goes to the app, §4 "Calls"), plus
+  `--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows`
+  (video calls move into a popout window, which hides the WhatsApp tab; hidden tabs would throttle the call code),
   `x11vnc -display :99 -rfbport 5900 -rfbauth … -forever -shared`, and
   `socat TCP-LISTEN:9223,fork,reuseaddr TCP:127.0.0.1:9222`. Crashed children are restarted.
 * socat and x11vnc listen only on the container's address in the network shared with the app (`BACKEND_PEER`): the
@@ -270,6 +272,38 @@ speakers ◄─ AudioWorklet ◄──────── WS ◄─────�
 * Clients: the web UI and the Android client (§12 "Calls", same WebSocket and PCM format). wa_logger mobile can't have
   them (Android WebView pages are never cross-origin isolated, see docs/wwebjs-notes.md).
 
+### Video
+Same idea as the audio: the call (and WhatsApp's video codec work) stays in the Chromium tab; frames travel.
+```
+owner's camera → VideoEncoder (VP8, or H.264) ─► WS /api/calls/video ─► CallBridge ─► __walcall.videoIn (per frame)
+   → VideoDecoder in the page → canvas (rotated upright) → captureStream(0)+requestFrame → WhatsApp's getUserMedia camera
+other side: WhatsApp's wasm stack → videoRendererRegistry.onVideoFrameWasmToJs(source, frame, w, h, orientation, format,
+   ts, key) → (H.264 Annex B as received; raw I420/NV12/RGBA VP8-encoded in the page) → binding __walCallVideo → WS
+   → VideoDecoder in the owner's browser → canvas
+```
+* Frames carry a 12-byte header (codec 1 = H.264 Annex B / 2 = VP8, key flag, rotation in quarter turns clockwise,
+  width, height, timestamp; `shared/api.d.ts`). Each side encodes what it can: the browser prefers VP8, the page
+  passes WhatsApp's H.264 through. The container's Chromium has WebCodecs H.264 encode and decode, so WhatsApp Web uses
+  its `WEBCODECS_H264` renderer and the other side's frames reach us still compressed.
+* The renderer tap wraps `require('WAWebVoipVideoRendererRegistry').videoRendererRegistry.onVideoFrameWasmToJs` (the
+  peer's frames only: not the self preview, not screen share) and calls the original afterwards, so WhatsApp's own
+  rendering is unchanged. Orientation `Normal 1 … Rotate270 4` becomes the header's rotation `o − 1`.
+* The virtual camera is a 2D canvas (640×480 until the first frame) whose capture tracks WhatsApp Web gets for any
+  `getUserMedia` request with video (with the virtual microphone when audio is asked too); `enumerateDevices` lists
+  it and `permissions.query({name:'camera'})` says granted. Frames are pushed on decode and repeated every 100 ms so
+  WhatsApp's camera health check never sees a stalled camera.
+* Key frames: a client that connects (or loses the picture) asks for one; the server calls the stack's
+  `requestKeyFrame(peerJid, false)` (≤ 1/s). The page asks the client for one (`{type:'keyframe'}`) when its decoder
+  (re)starts or falls behind; the server does too when more than 20 frames queue up for the page (it then drops
+  until the next key frame).
+* Camera on/off (`POST /api/calls/:id/video`) does what WhatsApp's camera button does: in a voice call
+  `requestVideoUpgrade()`, otherwise `setCallVideoMute(!on)`. Start/answer with video: `startWAWebVoipCall(wid, true…)`,
+  `acceptCall(true, true)`. The call snapshot carries `selfVideo`/`peerVideo` (`WAWebVoipVideoStateUtils`).
+* Limits: 512 KiB per frame, 2 MB/s per client (else 1008), towards a slow client frames are dropped above 2 MB
+  buffered (its decoder asks for a key frame). One video client at a time (4000 replaces), closed with the call.
+* Not verified with a real call: whether WhatsApp's `onVideoFrameWasmToJs` is called when no call UI canvas is
+  registered, and the sign of the rotation for phone peers. `call-video.mts` checks everything else in the real image.
+
 ## 5. Web UI — `web/`
 
 React 19 + Vite + TypeScript SPA, built into `server` static assets. No CDN, no external fonts, and no inline
@@ -296,6 +330,12 @@ a reload). The phone button in one-to-one chat headers starts a call. `CallAudio
 start audio only after a gesture): `getUserMedia` with echo cancellation/noise suppression/AGC, an AudioWorklet (plain JS
 module emitted by Vite as a hashed same-origin asset, so `script-src 'self'` covers it) that resamples between the
 context rate and 16 kHz, and the WebSocket. Calls need a secure context (HTTPS or localhost) for the microphone.
+Video (`lib/callVideo.ts`): the chat header has a video-call button; incoming video calls offer "Answer with video".
+While the call has video, a full-screen stage shows the other side (canvas, rotated upright), our camera preview
+(mirrored), camera on/off, mute, hang up and minimize (back to the panel with "Show video"). `CallVideo` grabs the
+camera at up to 640 px / 24 fps, draws it through a canvas into `VideoFrame`s, encodes VP8 (H.264 where VP8 encoding is
+missing) at 800 kbit/s with a key frame every 3 s or on request, and decodes the other side's H.264/VP8 with
+`VideoDecoder`. Needs WebCodecs (current Chrome, Edge, Safari, Firefox).
 
 ## 6. Security model
 
@@ -358,7 +398,9 @@ session), and WhatsApp's own terms of service (unofficial client; ban risk is th
   and only ever forwarded to the attached client as binary audio; nothing from the page is rendered as HTML.
 * The browser's microphone is opened only after a click on Call / Answer / Join audio and is released when the call
   ends. The Chromium container still has no microphone permission or device: WhatsApp Web only gets the virtual one.
-* No call audio is stored or logged; logs carry direction, reason and duration only.
+* No call audio or video is stored or logged; logs carry direction, reason and duration only.
+* The camera is opened only after a click on Video call / Answer with video / camera on, and closed when it is
+  switched off or the call ends. `Permissions-Policy` allows camera and microphone for our origin only.
 
 ### Encryption at rest (envelope, public-key)
 The logger writes while the owner is logged out, but must not be able to read old data without the owner.
@@ -387,7 +429,7 @@ The logger writes while the owner is logged out, but must not be able to read ol
 * CSP: `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:;
   connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`.
 * HSTS (when secure), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Permissions-Policy`
-  (all powerful features disabled), `Cross-Origin-Opener-Policy: same-origin`,
+  (powerful features disabled; microphone and camera only for our own origin: voice notes and calls), `Cross-Origin-Opener-Policy: same-origin`,
   `Cross-Origin-Resource-Policy: same-origin`, `Cache-Control: no-store` on `/api/*`.
 * Media responses: a fixed allowlist of inline-safe MIME types (raster images excluding SVG, audio/*, video/*).
   Everything else is served as `application/octet-stream` with `Content-Disposition: attachment` and a
@@ -463,9 +505,11 @@ AAD context `msgbody|<messageId>`, so an edit can move the old ciphertext into `
 | POST | /api/messages/:messageId/react · revoke · edit | ✓ | `{emoji}` ('' removes) · – · `{text}` |
 | POST | /api/chats/:chatId/read · /api/chats/new | ✓ | send read receipts · `{phone}` → `{chatId}` |
 | GET | /api/calls/current | ✓ | `CurrentCall` (`{call, available}`; the call with the decrypted name) |
-| POST | /api/chats/:chatId/call | ✓ | `{}` → `CallInfo` (voice call to a one-to-one chat; 409 while another call is going on) |
-| POST | /api/calls/:callId/accept · reject · hangup | ✓ | answer (voice) / decline / end |
+| POST | /api/chats/:chatId/call | ✓ | `{video?}` → `CallInfo` (call a one-to-one chat; 409 while another call is going on) |
+| POST | /api/calls/:callId/accept · reject · hangup | ✓ | answer (`{video?}`) / decline / end |
 | WS | /api/calls/audio | ✓ | call audio both ways: binary 16 kHz mono s16le frames (`CallAudioHello` first) |
+| POST | /api/calls/:callId/video | ✓ | `{on}`: camera on/off (in a voice call: ask to switch to video) |
+| WS | /api/calls/video | ✓ | call video both ways: header + H.264/VP8 frame per message (`CallVideoHello` first, `{type:'keyframe'}`) |
 | GET | /api/events | ✓ | SSE: `wa_state`, `message`, `message_update`, `chat_update`, `sync_progress`, `call` |
 | GET/PUT | /api/settings | ✓ | `{logStatus, downloadHistoryMedia, mediaMaxMb, historyPerChat, readReceipts}` |
 | GET | /api/audit | ✓ | audit log |
@@ -497,7 +541,9 @@ AAD context `msgbody|<messageId>`, so an edit can move the old ciphertext into `
 * Calls: `wa/callpage.test.ts` runs the injected source in a `vm` against fake WhatsApp modules and fake Web Audio,
   `api/calls.test.ts` covers the routes, the audio WebSocket and the call state machine. `scripts/dev/call-audio.mts`
   checks the audio path inside the real Chromium image (tab and popout, both output routes) and `scripts/dev/call-ui.mts`
-  drives the call UI in a real browser with a fake microphone.
+  drives the call UI in a real browser with a fake microphone. Video: `callpage.test.ts` fakes WebCodecs and the
+  renderer registry, `scripts/dev/call-video.mts` sends real H.264/VP8 both ways through the real image and checks
+  colours and rotation, and `call-ui.mts` covers the video screen with Chromium's fake camera.
 * `scripts/dev/` has a full-UI browser walkthrough (61 steps) and a live-update (SSE) test. `scripts/wa-diagnose.js`
   checks a *running* instance against WhatsApp Web changes (see §11).
 

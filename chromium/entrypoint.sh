@@ -87,6 +87,8 @@ start_chromium() {
   [[ "${CHROMIUM_DEBUG:-0}" == "1" ]] && out=/dev/stderr
   # --autoplay-policy: calls (server/src/wa/callpage.ts) need WhatsApp Web's audio running without a human click,
   # also in a call popout window nobody clicks into. There are no speakers here; the audio only goes to the app.
+  # The background flags: WhatsApp Web moves video calls into a popout window, which hides the WhatsApp tab; hidden
+  # tabs get throttled timers and deferred media, which would stall the call code and the virtual camera.
   chromium \
     --user-data-dir="$PROFILE_DIR" \
     --remote-debugging-port="$CDP_INTERNAL_PORT" \
@@ -102,6 +104,9 @@ start_chromium() {
     --lang=en-US \
     --force-device-scale-factor=1 \
     --autoplay-policy=no-user-gesture-required \
+    --disable-background-timer-throttling \
+    --disable-renderer-backgrounding \
+    --disable-backgrounding-occluded-windows \
     --window-position=0,0 \
     --window-size="${WIDTH},${HEIGHT}" \
     "${extra[@]}" \

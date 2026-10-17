@@ -6,7 +6,7 @@ wa_logger runs the real WhatsApp Web inside a sandboxed Chromium container on yo
 message, photo, video, voice note, document, edit and reaction your account sends or receives, and keeps it
 **even after the sender deletes it**. You read everything in a WhatsApp-style web interface, and you can **send** from
 it too: text, replies, photos, videos, files, voice notes, reactions, edits and "delete for everyone". You can also
-make and take **voice calls** from the browser, and open the live WhatsApp Web session from the menu (**WA Web**).
+make and take **voice and video calls** from the browser, and open the live WhatsApp Web session from the menu (**WA Web**).
 
 <p>
   <img src="docs/screenshots/chat.png" width="49%" alt="Chat view with a deleted message still visible" />
@@ -30,11 +30,12 @@ _(Screenshots show generated demo data.)_
   list). Sending goes through the linked WhatsApp Web session with WhatsApp Web's own send functions, and everything
   you send is logged like any other message. Read receipts are off unless you turn them on (Settings → Logging);
   replying in a chat marks it as read, as in WhatsApp.
-- **Voice calls** from the browser: the phone button in a one-to-one chat calls the contact, and incoming calls ring
-  in every open wa_logger tab (Answer / Decline, mute, hang up). The call runs in the linked WhatsApp Web session, with
-  WhatsApp Web's own calling; your browser's microphone and speakers are bridged to it over the authenticated
-  connection. Needs HTTPS (browsers only allow the microphone there). Calls are **not recorded**. Video calls can be
-  answered as voice calls; group calls can be answered but not started.
+- **Voice and video calls** from the browser: the phone and camera buttons in a one-to-one chat call the contact, and
+  incoming calls ring in every open wa_logger tab (Answer / Answer with video / Decline, mute, camera on/off, hang up).
+  Video calls get a full-screen view with your camera in the corner. The call runs in the linked WhatsApp Web session, with
+  WhatsApp Web's own calling; your browser's microphone, speakers and camera are bridged to it over the authenticated
+  connection. Needs HTTPS (browsers only allow the microphone and camera there); video needs a browser with WebCodecs
+  (current Chrome, Edge, Safari or Firefox). Calls are **not recorded**. Group calls can be answered but not started.
 - **All message types** are logged except view-once media: text with WhatsApp formatting, photos, videos,
   GIFs, voice notes, audio, documents, stickers, locations, contact cards, polls, calls, group events, reactions,
   replies, forwards and status updates (optional).
@@ -350,7 +351,7 @@ In a chat, deleted messages have a **red frame** and the time they were deleted.
   retried later while WhatsApp still has it.
 - View-once media is never logged.
 - If the phone unlinks the device, a banner appears. Relink from **WA Web**.
-- Calls: one at a time, voice only, while a wa_logger tab is open (there are no push notifications). Your phone rings
+- Calls: one at a time, while a wa_logger tab is open (there are no push notifications). Your phone rings
   too; answering there ends the call here ("Answered on another device"). Calls are never recorded; WhatsApp's own
   call log entries appear in the chat as usual.
 

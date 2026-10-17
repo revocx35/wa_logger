@@ -23,7 +23,7 @@ const WEB_DIR = new URL('../../web/dist', import.meta.url).pathname;
 const ops: string[] = [];
 const raw = (over: Partial<RawCall>): RawCall => ({
   id: 'C1', state: 3, outgoing: false, isVideo: false, isGroup: false, peer: CHAT, peerAlt: null, group: null,
-  peerBusy: false, failedReason: null, logResult: null, everConnected: false, userEnded: false, removed: false, ...over,
+  peerBusy: false, failedReason: null, logResult: null, everConnected: false, userEnded: false, selfVideo: false, peerVideo: false, removed: false, ...over,
 });
 
 /** The WhatsApp tab, simulated: call models change state like WhatsApp Web's, the other side speaks a tone. */
@@ -42,10 +42,21 @@ setInterval(() => {
   }
   calls.onPageAudio(b);
 }, 40);
+// Video: the other side "sends" pre-encoded VP8 frames (made in the test browser) while the video bridge is on.
+let videoOn = false;
+let peerFrames: Buffer[] = [];
+let peerIdx = 0;
+const ownerFrames: Buffer[] = [];
+setInterval(() => {
+  if (!videoOn || !peerFrames.length) return;
+  calls.onPageVideo(peerFrames[peerIdx++ % peerFrames.length]!);
+}, 66);
 const fakeBridge = {
   async call(op: string, a: any) {
     ops.push(op);
     if (op === 'setBridge') bridging = a.on;
+    if (op === 'setVideoBridge') videoOn = a.on;
+    if (op === 'keyframe') peerIdx = 0;
     if (op === 'reject') later(100, () => calls.onCall(raw({ id: a.callId, state: 0, removed: true, logResult: 3, userEnded: true })));
     if (op === 'hangup') later(100, () => calls.onCall(raw({ id: a.callId, state: 13, everConnected: true, userEnded: true, outgoing: a.callId.startsWith('OUT') })));
     return true;
@@ -54,15 +65,25 @@ const fakeBridge = {
     ops.push(op);
     if (op === 'start') {
       const id = `OUT${ops.length}`;
-      later(600, () => calls.onCall(raw({ id, state: 2, outgoing: true })));
-      later(2500, () => calls.onCall(raw({ id, state: 6, outgoing: true, everConnected: true })));
-      return raw({ id, state: 1, outgoing: true, peer: a.chatId });
+      const v = { isVideo: !!a.video, selfVideo: !!a.video };
+      later(600, () => calls.onCall(raw({ id, state: 2, outgoing: true, ...v })));
+      later(2500, () => calls.onCall(raw({ id, state: 6, outgoing: true, everConnected: true, ...v, peerVideo: !!a.video })));
+      return raw({ id, state: 1, outgoing: true, peer: a.chatId, ...v });
     }
     if (op === 'accept') {
-      calls.onCall(raw({ id: a.callId, state: 4 }));
-      later(500, () => calls.onCall(raw({ id: a.callId, state: 6, everConnected: true })));
+      const cur = calls.current();
+      const v = { isVideo: !!cur?.video, selfVideo: !!a.video, peerVideo: !!cur?.video };
+      calls.onCall(raw({ id: a.callId, state: 4, ...v }));
+      later(500, () => calls.onCall(raw({ id: a.callId, state: 6, everConnected: true, ...v })));
+    }
+    if (op === 'setVideo') {
+      const cur = calls.current()!;
+      return raw({ id: a.callId, state: 6, everConnected: true, outgoing: cur.direction === 'outgoing', isVideo: true, selfVideo: a.on, peerVideo: cur.peerVideo });
     }
     return true;
+  },
+  videoIn(frame: Buffer) {
+    ownerFrames.push(frame);
   },
   audioIn(pcm: Buffer) {
     micBytes += pcm.length;
@@ -246,6 +267,98 @@ try {
   if (process.env.SHOT) await p.screenshot({ path: `${process.env.SHOT}/call-phone.png` });
   await p.click('.call-panel button[aria-label="Hang up"]');
   check(await until(async () => (await panelText()).includes('Call ended')), 'hung up');
+  await until(async () => !(await p.$('.call-panel')), 7000);
+  await p.setViewport({ width: 1300, height: 850 });
+
+  /* ---------------------------------------------------------------------------------------------- video */
+  // The other side's video: 30 frames of red with a key frame every 15, encoded as VP8 in a helper page.
+  const helper = await bctx.newPage();
+  await helper.goto(`${BASE}/login`);
+  await helper.evaluate('window.__name = (f) => f'); // tsx's helper for named functions inside evaluate()
+  const encoded = (await helper.evaluate(`(async () => {
+    const c = document.createElement('canvas'); c.width = 320; c.height = 240; const g = c.getContext('2d'); const out = [];
+    const enc = new VideoEncoder({ output: (ch) => { const d = new Uint8Array(ch.byteLength); ch.copyTo(d);
+      const b = new Uint8Array(12 + d.length); const dv = new DataView(b.buffer); b[0] = 2; b[1] = ch.type === 'key' ? 1 : 0;
+      dv.setUint16(4, 320, true); dv.setUint16(6, 240, true); dv.setUint32(8, Math.floor(ch.timestamp / 1000), true); b.set(d, 12);
+      let s = ''; for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); out.push(btoa(s)); }, error: () => undefined });
+    enc.configure({ codec: 'vp8', width: 320, height: 240, bitrate: 300000, framerate: 15 });
+    for (let i = 0; i < 30; i++) { g.fillStyle = '#ff0000'; g.fillRect(0, 0, 320, 240); const f = new VideoFrame(c, { timestamp: i * 66666 }); enc.encode(f, { keyFrame: i % 15 === 0 }); f.close(); }
+    await enc.flush(); return out; })()`)) as string[];
+  peerFrames = encoded.map((b64) => Buffer.from(b64, 'base64'));
+  const remoteColor = () =>
+    p.evaluate(() => {
+      const c = document.querySelector('canvas.call-remote') as HTMLCanvasElement | null;
+      if (!c || c.classList.contains('hidden') || !c.width) return null;
+      const d = c.getContext('2d')!.getImageData(c.width / 2, c.height / 2, 1, 1).data;
+      return [d[0], d[1], d[2]];
+    });
+
+  // Outgoing video call.
+  await p.bringToFront();
+  await p.click('.chat-head button[aria-label="Video call"]');
+  check(await until(async () => !!(await p.$('.call-stage'))), 'video call: the call screen opens');
+  check(await until(async () => (await p.$eval('.call-preview', (v) => (v as HTMLVideoElement).videoWidth).catch(() => 0)) > 0), 'video call: own camera preview');
+  check(await until(async () => {
+    const col = await remoteColor();
+    return !!col && col[0]! > 200 && col[1]! < 60;
+  }, 10000), 'video call: the other side’s video is shown');
+  check(await until(async () => ownerFrames.length > 10), `video call: the camera’s frames reach WhatsApp (${ownerFrames.length})`);
+  const ownerDecoded = (await helper.evaluate(
+    async (frames: string[]) => {
+      let n = 0;
+      const codec = Uint8Array.from(atob(frames[0]!), (ch) => ch.charCodeAt(0))[0] === 1 ? 'avc1.42001f' : 'vp8';
+      const dec = new VideoDecoder({ output: (f) => (n++, f.close()), error: () => undefined });
+      dec.configure({ codec });
+      let started = false;
+      for (const b64 of frames) {
+        const b = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
+        if (!started && !b[1]) continue;
+        started = true;
+        dec.decode(new EncodedVideoChunk({ type: b[1] ? 'key' : 'delta', timestamp: new DataView(b.buffer).getUint32(8, true) * 1000, data: b.subarray(12) }));
+      }
+      await dec.flush();
+      return n;
+    },
+    ownerFrames.slice(0, 20).map((f) => f.toString('base64')),
+  )) as number;
+  check(ownerDecoded > 5, `video call: the camera’s frames decode (${ownerDecoded})`);
+  // Camera off and on again.
+  await p.click('.call-stage button[aria-label="Turn camera off"]');
+  check(await until(async () => !(await p.$('.call-preview'))), 'camera off: preview gone');
+  const sentBefore = ownerFrames.length;
+  await wait(800);
+  check(ownerFrames.length - sentBefore < 3, 'camera off: no frames sent');
+  check(ops.includes('setVideo'), 'camera off: WhatsApp told');
+  await p.click('.call-stage button[aria-label="Turn camera on"]');
+  check(await until(async () => ownerFrames.length > sentBefore + 5), 'camera on again: frames flow');
+  if (process.env.SHOT) await p.screenshot({ path: `${process.env.SHOT}/video-call.png` });
+  // Minimize to the panel and back.
+  await p.click('.call-stage button[aria-label="Minimize"]');
+  check(await until(async () => !(await p.$('.call-stage')) && !!(await p.$('.call-panel button[aria-label="Show video"]'))), 'minimized to the call panel');
+  await p.click('.call-panel button[aria-label="Show video"]');
+  check(await until(async () => !!(await p.$('.call-stage'))), 'back to the video screen');
+  await p.click('.call-stage button[aria-label="Hang up"]');
+  check(await until(async () => !(await p.$('.call-stage'))), 'video call hung up');
+  check(await until(async () => !videoOn), 'video bridge switched off');
+  await until(async () => !(await p.$('.call-panel')), 7000);
+
+  // Incoming video call, answered with video.
+  calls.onCall(raw({ id: 'VIN1', isVideo: true, peerVideo: true }));
+  check(await until(async () => (await panelText()).includes('Incoming video call')), 'incoming video call rings');
+  await p.click('.call-panel button[aria-label="Answer with video"]');
+  check(await until(async () => !!(await p.$('.call-stage'))), 'answered with video: the call screen opens');
+  check(await until(async () => {
+    const col = await remoteColor();
+    return !!col && col[0]! > 200;
+  }, 10000), 'answered with video: the other side is shown');
+  if (process.env.SHOT) {
+    await p.setViewport({ width: 390, height: 800 });
+    await wait(500);
+    await p.screenshot({ path: `${process.env.SHOT}/video-call-phone.png` });
+  }
+  calls.onCall(raw({ id: 'VIN1', state: 0, removed: true, everConnected: true }));
+  check(await until(async () => !(await p.$('.call-stage'))), 'the other side hung up: the call screen closes');
+  await helper.close();
 } catch (e) {
   results.push(`FAIL exception: ${(e as Error).message}`);
 } finally {
