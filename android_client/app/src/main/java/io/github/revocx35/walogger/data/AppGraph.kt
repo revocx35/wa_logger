@@ -61,6 +61,8 @@ class ServerSession(graph: AppGraph, val baseUrl: HttpUrl) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + graph.errors)
     val api = ApiClient(graph.baseClient, baseUrl)
     val events = EventStream(api, scope)
+    /** Voice calls (follows the event stream; the audio runs only during a call). */
+    val calls = CallController(graph.context, api, events, scope)
 
     val imageLoader: ImageLoader = ImageLoader.Builder(graph.context)
         .components {
@@ -91,6 +93,7 @@ class ServerSession(graph: AppGraph, val baseUrl: HttpUrl) {
     fun mediaUrl(relative: String?): String? = api.mediaUrl(relative)
 
     fun close() {
+        calls.close()
         events.stop()
         if (audioUsed) audio.release()
         imageLoader.memoryCache?.clear()

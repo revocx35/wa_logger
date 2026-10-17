@@ -325,6 +325,14 @@ class ApiClient(baseClient: OkHttpClient, val baseUrl: HttpUrl) {
     suspend fun markRead(chatId: String): OkResponse = post("/api/chats/${enc(chatId)}/read")
     suspend fun newChat(phone: String): NewChatResponse = send("POST", "/api/chats/new", NewChatRequest(phone))
 
+    /* ---------------------------------------------------------------- calls */
+
+    suspend fun currentCall(): CurrentCall = get("/api/calls/current")
+    suspend fun startCall(chatId: String): CallInfo = post("/api/chats/${enc(chatId)}/call")
+    suspend fun acceptCall(callId: String): CallInfo = post("/api/calls/${enc(callId)}/accept")
+    suspend fun rejectCall(callId: String): OkResponse = post("/api/calls/${enc(callId)}/reject")
+    suspend fun hangupCall(callId: String): OkResponse = post("/api/calls/${enc(callId)}/hangup")
+
     suspend fun settings(): Settings = get("/api/settings")
     suspend fun updateSettings(patch: SettingsPatch): Settings = send("PUT", "/api/settings", patch)
     suspend fun audit(before: Long? = null): List<AuditEntry> =

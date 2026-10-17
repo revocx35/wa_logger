@@ -272,6 +272,10 @@ sealed class ServerEvent {
     @Serializable @SerialName("sync_progress")
     data class SyncProgressChanged(val sync: SyncProgress? = null) : ServerEvent()
 
+    /** A call changed state (no names: fetch `GET /api/calls/current` for the display name). */
+    @Serializable @SerialName("call")
+    data class CallChanged(val call: CallInfo) : ServerEvent()
+
     @Serializable @SerialName("session_revoked")
     data object SessionRevoked : ServerEvent()
 }
@@ -319,3 +323,44 @@ enum class SendMediaKind {
 
 @Serializable data class AuditEntry(val id: Long, val ts: Long = 0, val event: String = "", val ip: String? = null, val detail: String? = null)
 @Serializable data class WipeRequest(val password: String, val totp: String? = null)
+
+/* ------------------------------------------------------------------- calls */
+
+/** incoming: ringing here · calling: we dial · ringing: the other phone rings · connecting · active · ended */
+@Serializable
+enum class CallState {
+    @SerialName("incoming") Incoming,
+    @SerialName("calling") Calling,
+    @SerialName("ringing") Ringing,
+    @SerialName("connecting") Connecting,
+    @SerialName("active") Active,
+    @SerialName("ended") Ended,
+}
+
+/** A WhatsApp voice call of the linked account. Audio goes through `WS /api/calls/audio` ([CallAudioSocket]). */
+@Serializable
+data class CallInfo(
+    val id: String = "",
+    /** "incoming" | "outgoing" */
+    val direction: String = "incoming",
+    val state: CallState = CallState.Ended,
+    val video: Boolean = false,
+    val group: Boolean = false,
+    val chatId: String? = null,
+    /** Only in `GET /api/calls/current` and the POST responses. */
+    val name: String? = null,
+    val avatarUrl: String? = null,
+    val startedAt: Long = 0,
+    val connectedAt: Long? = null,
+    val endedAt: Long? = null,
+    /** completed | declined | busy | missed | unavailable | canceled | elsewhere | failed */
+    val endReason: String? = null,
+    /** Some client is connected to the call audio. */
+    val audio: Boolean = false,
+) {
+    val incoming: Boolean get() = direction == "incoming"
+    val live: Boolean get() = state != CallState.Ended
+}
+
+@Serializable data class CurrentCall(val call: CallInfo? = null, val available: Boolean = false)
+@Serializable data class CallAudioHello(val type: String = "", val sampleRate: Int = 0, val channels: Int = 0, val format: String = "", val callId: String = "")

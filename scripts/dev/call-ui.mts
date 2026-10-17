@@ -82,7 +82,9 @@ class FakeWa extends NullWa {
 }
 
 const h = await makeHarness({ COOKIE_SECURE: 'false', PUBLIC_ORIGIN: '', TRUST_PROXY: '0', WEB_DIR }, { wa: (ctx) => new FakeWa(ctx) as WaController });
-await h.app.listen({ port: PORT, host: '127.0.0.1' });
+// SERVE=1: only run the server (e.g. for the Android emulator at http://10.0.2.2:18094). Commands on stdin:
+// "incoming" (a call rings), "hangup" (the other side ends the current call); stats are printed every second.
+await h.app.listen({ port: PORT, host: process.env.SERVE ? '0.0.0.0' : '127.0.0.1' });
 const ingest = new Ingest(
   h.ctx,
   {
@@ -102,6 +104,24 @@ h.ctx.repo.setState('wa_me', ME);
 await ingest.ensureContact(ME, null, true);
 const t = Math.floor(Date.now() / 1000);
 await ingest.message({ id: { fromMe: false, remote: CHAT, id: 'IN1', _serialized: `false_${CHAT}_IN1` }, type: 'chat', body: 'Selam', t: t - 60, from: CHAT, ack: 1 }, 'live');
+
+if (process.env.SERVE) {
+  console.log(`serving on :${PORT}, owner / ${PASSWORD}`);
+  let n = 0;
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (d: string) => {
+    for (const cmd of d.split('\n').map((x) => x.trim()).filter(Boolean)) {
+      const cur = calls.current();
+      if (cmd === 'incoming') calls.onCall(raw({ id: `SIN${++n}` }));
+      else if (cmd === 'hangup' && cur) calls.onCall(raw({ id: cur.id, state: 0, removed: true, everConnected: true, outgoing: cur.direction === 'outgoing' }));
+    }
+  });
+  setInterval(() => {
+    const c = calls.current();
+    console.log(`call=${c ? `${c.id}:${c.state}:audio=${c.audio}` : 'none'} bridging=${bridging} micBytes=${micBytes} micPeak=${micPeak} ops=${ops.join(',')}`);
+  }, 1000);
+  await new Promise(() => undefined);
+}
 
 const results: string[] = [];
 const problems: string[] = [];

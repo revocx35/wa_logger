@@ -65,10 +65,10 @@ class AppController(private val graph: AppGraph) {
         })
     }
 
-    /** The live stream runs only while the app is visible and the owner is logged in. */
+    /** The live stream runs only while the app is visible (or a call goes on) and the owner is logged in. */
     private fun syncEvents() {
         val s = _session.value ?: return
-        if (foreground && _state.value?.authenticated == true) s.events.start() else s.events.stop()
+        if ((foreground || s.calls.busy) && _state.value?.authenticated == true) s.events.start() else s.events.stop()
     }
 
     private fun open(url: HttpUrl) {
@@ -78,6 +78,7 @@ class AppController(private val graph: AppGraph) {
         graph.trust.serverHost = url.host
         val s = ServerSession(graph, url)
         s.api.onUnauthorized = { graph.scope.launch { refresh() } }
+        s.calls.onIdle = { if (_session.value === s) syncEvents() }
         _session.value = s
         _state.value = null
         _wa.value = null

@@ -32,6 +32,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
@@ -66,6 +67,7 @@ import io.github.revocx35.walogger.ui.LocalMessageActions
 import io.github.revocx35.walogger.ui.LocalSelection
 import io.github.revocx35.walogger.ui.MessageSelection
 import io.github.revocx35.walogger.ui.MessageActions
+import io.github.revocx35.walogger.ui.LocalCalls
 import io.github.revocx35.walogger.ui.LocalSender
 import io.github.revocx35.walogger.ui.components.Avatar
 import io.github.revocx35.walogger.ui.components.Composer
@@ -391,6 +393,7 @@ fun ChatPane(
                         MutedText(sub, style = WaType.small, maxLines = 1)
                     }
                 }
+                if (chat?.kind == ChatKind.User && !chat.removed) CallButton(state.chatId, title)
                 IconBtn(WaIcons.search, "Search in chat", { state.searchOpen = !state.searchOpen }, active = state.searchOpen)
             }
             if (state.searchOpen) {
@@ -505,4 +508,14 @@ fun ChatPane(
             )
         }
     }
+}
+
+/** The phone button in a one-to-one chat's header (hidden where calls aren't available, e.g. screenshot tests). */
+@Composable
+private fun CallButton(chatId: String, name: String) {
+    val calls = LocalCalls.current ?: return
+    val ui by calls.ui.collectAsState()
+    val withMic = io.github.revocx35.walogger.ui.components.rememberCallPermission(calls)
+    val enabled = ui.available && ui.call?.live != true && !ui.busy
+    IconBtn(WaIcons.phone, "Voice call", { withMic { calls.start(chatId, name) } }, enabled = enabled)
 }

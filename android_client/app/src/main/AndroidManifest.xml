@@ -2,8 +2,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Voice messages (asked for when recording the first one). -->
+    <!-- Voice messages and calls (asked for when recording the first one / starting the first call). -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Calls: keep the microphone while the app is in the background (an ongoing-call notification is shown). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Calls: earpiece/speaker routing and the call audio mode. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- Incoming calls vibrate while the app is open. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Android 17+ (target SDK 37): needed to reach a server on a private address (home network, 192.168.x.x). -->
     <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
 
@@ -32,6 +40,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Holds an ongoing call in the foreground (microphone); see media/CallForegroundService.kt. -->
+        <service
+            android:name=".media.CallForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <!-- Temporary copies for "Open with…" (app cache, read-only grants, deleted on next start). -->
         <provider

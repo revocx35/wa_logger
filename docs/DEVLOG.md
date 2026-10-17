@@ -278,3 +278,16 @@ model, and explicitly not in wa_logger mobile (Android WebView can't run WhatsAp
   container exists, so `resolve_bind_ip` took the route to that address. It now only accepts an on-link route. The same
   could happen on any host whose resolver answers for `app`. Smoke test: 23/23 again.
 
+## 2026-10-17 — Android client 0.6.0: calls
+
+- The native client (not wa_logger mobile) talks to the server, so it can carry calls over the same audio WebSocket:
+  `CallAudioSocket` + `JitterBuffer` in core (unit-tested with MockWebServer), `CallAudioEngine` (AudioRecord in
+  voice-communication mode → 16 kHz frames, AudioTrack for the other side), `CallController` (the web CallProvider's
+  logic), a foreground service of type microphone while a call goes on, the call panel and a call button.
+- Emulator walkthrough (Android 17, adb + uiautomator, `QEMU_AUDIO_DRV=none` for a silent virtual microphone) against
+  `scripts/dev/call-ui.mts` in serve mode: outgoing call connected with the microphone stream arriving (≈32 kB/s),
+  mute stops it, backgrounding keeps it (service type 0x80, audio mode IN_COMMUNICATION), Hang up from the
+  notification ends it and restores the audio mode, incoming call answered then ended by the other side ("Call ended ·
+  0:05"), decline. connectedDebugAndroidTest still passes.
+- Not verified: sound quality and echo on a real phone, and a real WhatsApp call.
+

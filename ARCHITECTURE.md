@@ -267,8 +267,8 @@ speakers ◄─ AudioWorklet ◄──────── WS ◄─────�
   id). SSE `call` events carry ids/states; `GET /api/calls/current` adds the decrypted name.
 * Not stored: call audio is never written anywhere or logged. WhatsApp's own call-log messages are logged as before.
   Audit: `call_started`, `call_accepted`, `call_declined` (no ids). Cap: 30 started calls per hour on top of route limits.
-* Clients: the web UI only. The Android client has no calls yet; wa_logger mobile can't have them (Android WebView
-  pages are never cross-origin isolated, see docs/wwebjs-notes.md).
+* Clients: the web UI and the Android client (§12 "Calls", same WebSocket and PCM format). wa_logger mobile can't have
+  them (Android WebView pages are never cross-origin isolated, see docs/wwebjs-notes.md).
 
 ## 5. Web UI — `web/`
 
@@ -525,7 +525,8 @@ AAD context `msgbody|<messageId>`, so an edit can move the old ciphertext into `
 A native client for the same API (no WebView, no server changes needed). Kotlin 2.4, Jetpack Compose,
 AGP 9.4 (built-in Kotlin), Gradle 9.8 (wrapper with pinned checksum), minSdk 26, compile/target SDK 37.
 Package `io.github.revocx35.walogger` (debug builds get the `.debug` suffix and install side by side).
-Current release: 0.4.0 (versionCode 5: multi-select photos/videos in a chat and save them to the gallery).
+Current release: 0.6.0 (versionCode 7: voice calls). 0.5.0 (versionCode 6: sending). 0.4.0 (versionCode 5:
+multi-select photos/videos in a chat and save them to the gallery).
 0.3.0 (versionCode 4: auto-save with a disappearing-messages-only option, Android 17 local network
 permission). 0.1.1 (versionCode 2) was confirmed working by the owner on a Samsung, One UI 8.5 / Android 16,
 server in HTTP mode.
@@ -610,6 +611,28 @@ API; wa_logger mobile implements the same interface locally), `ui/components/Com
 `MessageMenu`, `NewChatDialog`), `media/VoiceRecorder.kt` (MediaRecorder Ogg/Opus, Android 10+, `RECORD_AUDIO` asked on
 first use; the recording stays in the private cache and is deleted after sending). Files are streamed from their
 content URI (`RequestBody`), never loaded whole into memory.
+
+### Calls (0.6.0)
+* `core/CallAudio.kt`: `CallAudioSocket` (OkHttp WebSocket to `/api/calls/audio`; the cookie jar and Origin interceptor
+  apply; checks the `CallAudioHello`; close codes → `CallAudioEnd`; callbacks never throw on OkHttp's thread) and
+  `JitterBuffer` (80 ms prebuffer, backlog above 300 ms dropped). Models: `CallInfo`, `CurrentCall`,
+  `ServerEvent.CallChanged`; ApiClient: `currentCall`, `startCall`, `acceptCall`, `rejectCall`, `hangupCall`.
+* `media/CallAudioEngine.kt`: `AudioRecord` (`VOICE_COMMUNICATION` source, 16 kHz mono, plus `AcousticEchoCanceler` /
+  `NoiseSuppressor` when available) → 20 ms frames → socket, socket → JitterBuffer → `AudioTrack`
+  (`USAGE_VOICE_COMMUNICATION`, blocking writes pace it). Two daemon threads; `MODE_IN_COMMUNICATION` and transient
+  audio focus during the call; earpiece by default, loudspeaker via `setCommunicationDevice` (API 31+).
+* `data/CallController.kt` (one per `ServerSession`, implements `ui/Calls.kt` `CallActions`): the web CallProvider's
+  logic (SSE `call` events + `GET /api/calls/current`, ringtone/vibration for incoming calls, `ToneGenerator`
+  ringback, ended calls shown for 4 s, "Join audio"). While a call goes on the event stream keeps running in the
+  background (`AppController.syncEvents`).
+* `media/CallForegroundService.kt`: foreground service of type `microphone` while audio flows (Android blocks the
+  microphone for background apps otherwise), ongoing notification with Hang up, private on the lock screen.
+* UI: `ui/components/CallPanel.kt` floats above the shell (`MainShell`), `CallButton` in one-to-one chat headers,
+  permissions asked in the click (`RECORD_AUDIO`, `POST_NOTIFICATIONS` on 13+). Manifest adds `FOREGROUND_SERVICE`,
+  `FOREGROUND_SERVICE_MICROPHONE`, `POST_NOTIFICATIONS`, `MODIFY_AUDIO_SETTINGS`, `VIBRATE`.
+* Verified on the emulator (Android 17) against `scripts/dev/call-ui.mts` with `SERVE=1`: outgoing call, microphone
+  audio arriving at the server, mute, call continuing in the background with the service, Hang up from the
+  notification, incoming call answered and ended by the other side, decline.
 
 ### Build, test, release
 * Tests: `:core:test` (unit tests incl. the UI-thread rule, ZRLE/RFB/DES, MockWebServer client tests),

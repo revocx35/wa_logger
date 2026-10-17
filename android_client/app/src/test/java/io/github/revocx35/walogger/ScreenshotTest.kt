@@ -16,7 +16,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.unit.dp
 import com.github.takahirom.roborazzi.captureRoboImage
 import io.github.revocx35.walogger.core.ChatSummary
@@ -182,6 +186,61 @@ class ScreenshotTest {
         }
     }
 
+    private class FakeCalls(state: io.github.revocx35.walogger.ui.CallUi) : io.github.revocx35.walogger.ui.CallActions {
+        override val ui = kotlinx.coroutines.flow.MutableStateFlow(state)
+        val calls = mutableListOf<String>()
+        override fun start(chatId: String, name: String) { calls += "start:$chatId" }
+        override fun accept() { calls += "accept" }
+        override fun decline() { calls += "decline" }
+        override fun hangup() { calls += "hangup" }
+        override fun joinAudio() { calls += "join" }
+        override fun toggleMute() { calls += "mute" }
+        override fun toggleSpeaker() { calls += "speaker" }
+        override fun dismissNote() = Unit
+        override fun reportNote(note: String) = Unit
+    }
+
+    private fun call(state: io.github.revocx35.walogger.core.CallState, incoming: Boolean) = io.github.revocx35.walogger.core.CallInfo(
+        id = "C1", direction = if (incoming) "incoming" else "outgoing", state = state, chatId = SampleData.ALI, name = aliSummary.name,
+        startedAt = System.currentTimeMillis() - 70_000, connectedAt = System.currentTimeMillis() - 65_000, audio = true,
+    )
+
+    @Test
+    fun phoneIncomingCall() = shot("phone_call_incoming") {
+        val calls = FakeCalls(io.github.revocx35.walogger.ui.CallUi(call(io.github.revocx35.walogger.core.CallState.Incoming, true), available = true))
+        CompositionLocalProvider(io.github.revocx35.walogger.ui.LocalCalls provides calls) {
+            Box(Modifier.fillMaxSize()) {
+                ChatPane(FakeChat(aliSummary, SampleData.aliChat), {}, false, NoMessageActions, Modifier.fillMaxSize())
+                io.github.revocx35.walogger.ui.components.CallPanel(calls.ui.collectAsStateValue(), calls)
+            }
+        }
+    }
+
+    @Test
+    fun phoneActiveCallDark() = shot("phone_call_active_dark", dark = true) {
+        val calls = FakeCalls(io.github.revocx35.walogger.ui.CallUi(call(io.github.revocx35.walogger.core.CallState.Active, false), available = true, audio = io.github.revocx35.walogger.ui.CallAudioState.Live, muted = true))
+        CompositionLocalProvider(io.github.revocx35.walogger.ui.LocalCalls provides calls) {
+            Box(Modifier.fillMaxSize()) {
+                ChatPane(FakeChat(aliSummary, SampleData.aliChat), {}, false, NoMessageActions, Modifier.fillMaxSize())
+                io.github.revocx35.walogger.ui.components.CallPanel(calls.ui.collectAsStateValue(), calls)
+            }
+        }
+    }
+
+    @Test
+    fun callPanelButtonsAndJoinAudio() {
+        val calls = FakeCalls(io.github.revocx35.walogger.ui.CallUi(call(io.github.revocx35.walogger.core.CallState.Incoming, true), available = true))
+        compose.setContent { WaTheme(false) { io.github.revocx35.walogger.ui.components.CallPanel(calls.ui.collectAsStateValue(), calls) } }
+        compose.onNodeWithContentDescription("Decline").performClick()
+        org.junit.Assert.assertEquals(listOf("decline"), calls.calls)
+        // A connected call without audio here offers to join it; the call button shows in a one-to-one chat.
+        calls.ui.value = io.github.revocx35.walogger.ui.CallUi(call(io.github.revocx35.walogger.core.CallState.Active, true).copy(audio = false), available = true)
+        compose.waitForIdle()
+        compose.onNodeWithText("Join audio").assertExists()
+        compose.onNodeWithContentDescription("Hang up").performClick()
+        org.junit.Assert.assertEquals(listOf("decline", "hangup"), calls.calls)
+    }
+
     @Test
     fun phoneSearch() = shot("phone_search") {
         Column(Modifier.fillMaxSize()) {
@@ -210,3 +269,6 @@ class ScreenshotTest {
         }
     }
 }
+
+@Composable
+private fun <T> kotlinx.coroutines.flow.StateFlow<T>.collectAsStateValue(): T = collectAsState().value

@@ -49,6 +49,10 @@ test browser with `--use-fake-device-for-media-stream --use-fake-ui-for-media-st
 cd server && npx tsx ../scripts/dev/call-ui.mts
 ```
 
+`SERVE=1` only runs the server on `0.0.0.0:18094` (the Android emulator reaches it at `http://10.0.2.2:18094`, user
+`owner`) and prints the call state, the audio bridge and the received microphone bytes every second. Commands on stdin:
+`incoming` (a call rings), `hangup` (the other side ends it), e.g. through a FIFO: `tail -f fifo | SERVE=1 npx tsx …`.
+
 ## call-audio.mts — call audio inside the real Chromium image (12 checks)
 
 callpage.ts' virtual microphone and speaker tap, installed by the real `CallBridge`, against a fake "WhatsApp" audio

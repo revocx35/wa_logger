@@ -31,6 +31,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,6 +68,7 @@ import io.github.revocx35.walogger.data.ServerSender
 import io.github.revocx35.walogger.data.ServerSession
 import io.github.revocx35.walogger.media.MediaOps
 import io.github.revocx35.walogger.media.MediaViewer
+import io.github.revocx35.walogger.ui.components.CallPanel
 import io.github.revocx35.walogger.ui.components.WaIcon
 import io.github.revocx35.walogger.ui.components.WaStatePill
 import io.github.revocx35.walogger.ui.components.WarnBanner
@@ -216,7 +218,7 @@ fun MainShell(graph: AppGraph, session: ServerSession, state: AppState, wa: WaSt
                 }
             }
             Box(Modifier.weight(1f).fillMaxWidth().then(if (needsAttention) Modifier.consumeWindowInsets(WindowInsets.statusBars) else Modifier)) {
-                CompositionLocalProviderActions(actions, sender) {
+                CompositionLocalProviderActions(actions, sender, session.calls) {
                     NavHost(nav, startDestination = ChatsRoute, modifier = Modifier.fillMaxSize()) {
                         composable<ChatsRoute> {
                             if (wide) {
@@ -284,6 +286,10 @@ fun MainShell(graph: AppGraph, session: ServerSession, state: AppState, wa: WaSt
     }
 
     viewing?.let { msg -> MediaViewer(session, msg, onSave = { save(msg) }, onClose = { viewing = null }) }
+
+    // Calls float above everything, like the web's call panel.
+    val callUi by session.calls.ui.collectAsState()
+    CallPanel(callUi, session.calls)
 }
 
 /** The web's `.rail` on wide screens: menu items on top, WhatsApp status and log out at the bottom. */
@@ -325,5 +331,5 @@ fun BottomRail(active: Tab?, onTab: (Tab?) -> Unit) {
 }
 
 @Composable
-private fun CompositionLocalProviderActions(actions: MessageActions, sender: MessageSender, content: @Composable () -> Unit) =
-    androidx.compose.runtime.CompositionLocalProvider(LocalMessageActions provides actions, LocalSender provides sender, content = content)
+private fun CompositionLocalProviderActions(actions: MessageActions, sender: MessageSender, calls: CallActions, content: @Composable () -> Unit) =
+    androidx.compose.runtime.CompositionLocalProvider(LocalMessageActions provides actions, LocalSender provides sender, LocalCalls provides calls, content = content)

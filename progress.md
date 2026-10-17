@@ -167,7 +167,9 @@ Update this file whenever a step is completed.
       `scripts/dev/call-audio.mts` (12 checks), browser end-to-end `scripts/dev/call-ui.mts` (24 steps)
 - [x] Read-only check of the live instance: web calling enabled for the account, all modules present
 - [ ] Owner: a first real call from the web UI (outgoing and incoming); watch `docker compose logs app`
-- Android client: no calls yet (the API is ready for it: 16 kHz s16le over the audio WebSocket); wa_logger mobile can't
+- [x] Android client 0.6.0: calls (AudioRecord/AudioTrack over the audio WebSocket, call panel, call button, foreground
+      service while a call goes on); tested on the emulator against `call-ui.mts` (`SERVE=1`)
+- wa_logger mobile can't (Android WebView isn't cross-origin isolated)
 
 ## Next ideas (not started)
 - Android: push notifications for deletions (needs a server-side push channel; SSE only runs in the foreground)
