@@ -12,15 +12,20 @@ import android.os.Vibrator
 import io.github.revocx35.walogger.core.ApiClient
 import io.github.revocx35.walogger.core.CallAudioEnd
 import io.github.revocx35.walogger.core.CallInfo
+import io.github.revocx35.walogger.core.CallVideoSocket
 import io.github.revocx35.walogger.core.CallState
 import io.github.revocx35.walogger.core.EventStream
 import io.github.revocx35.walogger.core.ServerEvent
 import io.github.revocx35.walogger.core.userMessage
 import io.github.revocx35.walogger.media.CallAudioEngine
 import io.github.revocx35.walogger.media.CallForegroundService
+import io.github.revocx35.walogger.media.CameraEncoder
+import io.github.revocx35.walogger.media.RemoteVideoDecoder
 import io.github.revocx35.walogger.ui.CallActions
 import io.github.revocx35.walogger.ui.CallAudioState
 import io.github.revocx35.walogger.ui.CallUi
+import io.github.revocx35.walogger.ui.CameraState
+import io.github.revocx35.walogger.ui.RemoteVideo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -55,9 +60,15 @@ class CallController(
     private var ringing: String? = null
     /** Hang up was pressed before the server answered the start request. */
     private var hangupPending = false
+    // Video: the socket, the other side's decoder, our camera, and the views they draw into.
+    private var videoSocket: CallVideoSocket? = null
+    private var decoder: RemoteVideoDecoder? = null
+    private var camera: CameraEncoder? = null
+    private var remoteSurface: android.view.Surface? = null
+    private var previewTexture: android.graphics.SurfaceTexture? = null
 
     /** True while a call goes on (keeps the event stream running in the background). */
-    val busy: Boolean get() = _ui.value.call?.live == true || engine != null
+    val busy: Boolean get() = _ui.value.call?.live == true || engine != null || videoSocket != null
 
     /** Called when a call is over (the event stream may stop again if the app is in the background). */
     var onIdle: (() -> Unit)? = null
@@ -114,36 +125,41 @@ class CallController(
         }
         if (c?.state == CallState.Ended) {
             stopAudio()
+            stopVideo()
             onIdle?.invoke()
             if (endedJob == null) {
                 val id = c.id
                 endedJob = scope.launch {
                     delay(ENDED_SHOW_MS)
-                    _ui.update { u -> if (u.call?.id == id && u.call.state == CallState.Ended) u.copy(call = null, note = null) else u }
+                    _ui.update { u -> if (u.call?.id == id && u.call.state == CallState.Ended) u.copy(call = null, note = null, minimized = false) else u }
                     endedJob = null
                 }
             }
         } else if (c != null) {
             endedJob?.cancel()
             endedJob = null
+            // The other side switched video on (or it is a video call): show it once our audio runs here.
+            val live = c.state == CallState.Active || c.state == CallState.Connecting
+            if (live && c.peerVideo && engine != null && videoSocket == null) beginVideo(false)
         }
     }
 
     /* --------------------------------------------------------------------------------------- actions */
 
-    override fun start(chatId: String, name: String) {
+    override fun start(chatId: String, name: String, video: Boolean) {
         if (_ui.value.call?.live == true || _ui.value.busy) return
         hangupPending = false
         _ui.update {
             it.copy(
                 note = null,
                 busy = true,
-                call = CallInfo(id = "", direction = "outgoing", state = CallState.Calling, chatId = chatId, name = name, startedAt = System.currentTimeMillis()),
+                call = CallInfo(id = "", direction = "outgoing", state = CallState.Calling, video = video, selfVideo = video, chatId = chatId, name = name, startedAt = System.currentTimeMillis()),
+                minimized = false,
             )
         }
         scope.launch {
             try {
-                val c = api.startCall(chatId)
+                val c = api.startCall(chatId, video)
                 if (hangupPending) {
                     hangupPending = false
                     runCatching { api.hangupCall(c.id) }
@@ -154,6 +170,7 @@ class CallController(
                     u.copy(call = if (prev != null && prev.id == c.id && prev.state != c.state) prev.copy(name = c.name, avatarUrl = c.avatarUrl) else c)
                 }
                 startAudio()
+                if (video) beginVideo(true)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 _ui.update { it.copy(call = null, note = e.userMessage()) }
@@ -164,15 +181,17 @@ class CallController(
         }
     }
 
-    override fun accept() {
+    override fun accept(video: Boolean) {
         val c = _ui.value.call ?: return
         if (_ui.value.busy) return
-        _ui.update { it.copy(note = null, busy = true) }
+        _ui.update { it.copy(note = null, busy = true, minimized = false) }
         stopTones()
         scope.launch {
             try {
-                api.acceptCall(c.id)
+                api.acceptCall(c.id, video)
                 startAudio()
+                // A video call shows the other side even when answered without the camera.
+                if (video || c.video) beginVideo(video)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 _ui.update { it.copy(note = e.userMessage()) }
@@ -202,6 +221,7 @@ class CallController(
     override fun hangup() {
         val c = _ui.value.call ?: return
         stopAudio()
+        stopVideo()
         if (c.id.isEmpty()) {
             hangupPending = true
             _ui.update { it.copy(call = c.copy(state = CallState.Ended, endedAt = System.currentTimeMillis(), endReason = "canceled")) }
@@ -221,6 +241,112 @@ class CallController(
     override fun joinAudio() {
         _ui.update { it.copy(note = null) }
         startAudio()
+        val c = _ui.value.call
+        if (c != null && (c.video || c.peerVideo)) beginVideo(false)
+    }
+
+    /* ----------------------------------------------------------------------------------------- video */
+
+    override fun toggleCamera() {
+        val c = _ui.value.call ?: return
+        if (c.id.isEmpty()) return
+        val on = _ui.value.camera == CameraState.Off
+        if (on) beginVideo(true) else stopCamera()
+        scope.launch {
+            try {
+                val r = api.setCallVideo(c.id, on)
+                _ui.update { u -> if (u.call?.id == r.id) u.copy(call = u.call.copy(selfVideo = r.selfVideo, video = r.video)) else u }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                _ui.update { it.copy(note = e.userMessage()) }
+                if (on) stopCamera()
+            }
+        }
+    }
+
+    override fun setMinimized(minimized: Boolean) {
+        _ui.update { it.copy(minimized = minimized) }
+    }
+
+    override fun setRemoteSurface(surface: android.view.Surface?) {
+        remoteSurface = surface
+        decoder?.setSurface(surface)
+    }
+
+    override fun setPreviewTexture(texture: android.graphics.SurfaceTexture?) {
+        previewTexture = texture
+        camera?.setPreview(texture)
+    }
+
+    /** The video connection (and, with [withCamera], the camera) for the current call. */
+    private fun beginVideo(withCamera: Boolean) {
+        if (videoSocket == null) {
+            val dec = RemoteVideoDecoder(
+                needKeyFrame = { videoSocket?.requestKeyFrame() },
+                onSize = { w, h, r -> _ui.update { it.copy(remote = RemoteVideo(w, h, r)) } },
+            )
+            decoder = dec
+            dec.setSurface(remoteSurface)
+            val sock = CallVideoSocket(
+                api,
+                onFrame = { h, frame -> dec.offer(h, frame) },
+                onKeyFrameWanted = { camera?.requestKeyFrame() },
+                onEnd = { why, detail -> scope.launch { onVideoEnd(why, detail) } },
+            )
+            videoSocket = sock
+            sock.start()
+            _ui.update { it.copy(videoLive = true) }
+        }
+        if (withCamera && camera == null) startCamera()
+    }
+
+    private fun startCamera() {
+        val enc = CameraEncoder(
+            context,
+            send = { videoSocket?.send(it) },
+            onError = { msg ->
+                scope.launch {
+                    stopCamera()
+                    _ui.update { it.copy(note = msg) }
+                }
+            },
+            onOpened = { front -> _ui.update { it.copy(frontCamera = front) } },
+        )
+        camera = enc
+        enc.setPreview(previewTexture)
+        enc.start()
+        _ui.update { it.copy(camera = CameraState.On) }
+        if (engine != null) CallForegroundService.start(context, _ui.value.call?.name, camera = true)
+    }
+
+    private fun stopCamera() {
+        val enc = camera ?: return
+        camera = null
+        enc.stop()
+        _ui.update { it.copy(camera = CameraState.Off) }
+        if (engine != null) CallForegroundService.start(context, _ui.value.call?.name, camera = false)
+    }
+
+    private fun onVideoEnd(why: CallAudioEnd, detail: String?) {
+        stopVideo()
+        _ui.update {
+            it.copy(
+                note = when (why) {
+                    CallAudioEnd.Replaced -> "The call video moved to another device or window."
+                    CallAudioEnd.Failed -> detail ?: "The video connection was lost."
+                    else -> it.note
+                },
+            )
+        }
+    }
+
+    private fun stopVideo() {
+        stopCamera()
+        videoSocket?.close()
+        videoSocket = null
+        decoder?.stop()
+        decoder = null
+        _ui.update { it.copy(videoLive = false, remote = null) }
     }
 
     override fun toggleMute() {
@@ -257,7 +383,7 @@ class CallController(
         engine = e
         if (_ui.value.speaker) e.setSpeaker(true)
         _ui.update { it.copy(audio = CallAudioState.Live, muted = false) }
-        CallForegroundService.start(context, _ui.value.call?.name)
+        CallForegroundService.start(context, _ui.value.call?.name, camera = camera != null)
     }
 
     private fun onAudioEnd(why: CallAudioEnd, detail: String?) {
@@ -322,6 +448,7 @@ class CallController(
     fun close() {
         stopTones()
         stopAudio()
+        stopVideo()
         endedJob?.cancel()
     }
 }

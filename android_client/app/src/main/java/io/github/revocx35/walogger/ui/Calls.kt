@@ -6,6 +6,10 @@ import io.github.revocx35.walogger.core.CallState
 import kotlinx.coroutines.flow.StateFlow
 
 enum class CallAudioState { Off, Live }
+enum class CameraState { Off, Starting, On }
+
+/** The other side's picture: frame size and the quarter turns (clockwise) that make it upright. */
+data class RemoteVideo(val width: Int, val height: Int, val rotation: Int)
 
 /** What the call panel shows (see [io.github.revocx35.walogger.data.CallController]). */
 data class CallUi(
@@ -19,18 +23,33 @@ data class CallUi(
     val note: String? = null,
     /** A request to the server is in flight. */
     val busy: Boolean = false,
-)
+    /** This phone is connected to the call video; our camera; the other side's picture once frames arrive. */
+    val videoLive: Boolean = false,
+    val camera: CameraState = CameraState.Off,
+    val frontCamera: Boolean = false,
+    val remote: RemoteVideo? = null,
+    /** The video screen is minimized to the panel. */
+    val minimized: Boolean = false,
+) {
+    /** The call has video on either side (or our camera is starting): show the video screen. */
+    val hasVideo: Boolean get() = call?.let { it.video || it.peerVideo || it.selfVideo } == true || camera != CameraState.Off
+}
 
 /** Voice calls through the server (ARCHITECTURE §4 "Calls"). RECORD_AUDIO must be granted before start/accept/joinAudio. */
 interface CallActions {
     val ui: StateFlow<CallUi>
-    fun start(chatId: String, name: String)
-    fun accept()
+    fun start(chatId: String, name: String, video: Boolean)
+    fun accept(video: Boolean)
     fun decline()
     fun hangup()
     fun joinAudio()
     fun toggleMute()
     fun toggleSpeaker()
+    fun toggleCamera()
+    fun setMinimized(minimized: Boolean)
+    /** Where the other side's video is drawn / the camera preview goes (null when the view is gone). */
+    fun setRemoteSurface(surface: android.view.Surface?)
+    fun setPreviewTexture(texture: android.graphics.SurfaceTexture?)
     fun dismissNote()
     fun reportNote(note: String)
 }
@@ -61,7 +80,7 @@ private val END_TEXT = mapOf(
 /** The status line of the call panel (same texts as the web). */
 fun callStatusText(c: CallInfo, now: Long): String = when (c.state) {
     CallState.Incoming ->
-        if (c.video) "Incoming video call · answer as voice" else if (c.group) "Incoming group call" else "Incoming voice call"
+        if (c.video) "Incoming video call" else if (c.group) "Incoming group call" else "Incoming voice call"
     CallState.Calling -> "Calling…"
     CallState.Ringing -> "Ringing…"
     CallState.Connecting -> "Connecting…"

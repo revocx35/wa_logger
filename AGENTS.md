@@ -12,5 +12,5 @@ The full agent notes live in [CLAUDE.md](CLAUDE.md) (rules, commands, gotchas) a
   client `android_client/`, API contract `shared/api.d.ts`.
 - **Never:** log message content/names/numbers/secrets, weaken CSP/cookies/sandbox/network isolation, call
   whatsapp-web.js `destroy()`/`logout()`, use its chat helpers, edit old DB migrations, put message text in URLs.
-- **Calls** (web UI and Android client; wa_logger mobile can't): WhatsApp Web's own calling in the Chromium tab, audio
+- **Calls** incl. video (web UI and Android client; wa_logger mobile can't): WhatsApp Web's own calling in the Chromium tab, audio
   bridged over `WS /api/calls/audio` (ARCHITECTURE §4 "Calls", §12 "Calls"). Never record or log call audio.

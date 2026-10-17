@@ -51,7 +51,9 @@ cd server && npx tsx ../scripts/dev/call-ui.mts
 
 `SERVE=1` only runs the server on `0.0.0.0:18094` (the Android emulator reaches it at `http://10.0.2.2:18094`, user
 `owner`) and prints the call state, the audio bridge and the received microphone bytes every second. Commands on stdin:
-`incoming` (a call rings), `hangup` (the other side ends it), e.g. through a FIFO: `tail -f fifo | SERVE=1 npx tsx …`.
+`incoming` (a call rings), `incomingvideo`, `hangup` (the other side ends it), `check` (decodes the last camera frames the
+client sent; with `CHECK_PNG=<file>` the last one is saved, turned as its header says), e.g. through a FIFO:
+`tail -f fifo | SERVE=1 npx tsx …`. With the test browser running, the other side sends H.264 video.
 
 ## call-video.mts — call video inside the real Chromium image (9 checks)
 

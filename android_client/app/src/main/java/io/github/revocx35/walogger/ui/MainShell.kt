@@ -68,7 +68,7 @@ import io.github.revocx35.walogger.data.ServerSender
 import io.github.revocx35.walogger.data.ServerSession
 import io.github.revocx35.walogger.media.MediaOps
 import io.github.revocx35.walogger.media.MediaViewer
-import io.github.revocx35.walogger.ui.components.CallPanel
+import io.github.revocx35.walogger.ui.components.CallScreen
 import io.github.revocx35.walogger.ui.components.WaIcon
 import io.github.revocx35.walogger.ui.components.WaStatePill
 import io.github.revocx35.walogger.ui.components.WarnBanner
@@ -289,7 +289,7 @@ fun MainShell(graph: AppGraph, session: ServerSession, state: AppState, wa: WaSt
 
     // Calls float above everything, like the web's call panel.
     val callUi by session.calls.ui.collectAsState()
-    CallPanel(callUi, session.calls)
+    CallScreen(callUi, session.calls)
 }
 
 /** The web's `.rail` on wide screens: menu items on top, WhatsApp status and log out at the bottom. */

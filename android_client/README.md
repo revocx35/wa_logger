@@ -27,7 +27,7 @@ Everything the web UI does, through the same server API (`shared/api.d.ts`):
   drag = scroll, pinch = zoom, keyboard input, view-only switch, restart, unlink), **Settings** (password,
   2FA with QR code, recovery key, sessions, logging options, WhatsApp connection, security log, wipe).
 - **Live updates** over the server's event stream while the app is open.
-- **Sending** (0.5.0) and **voice calls** (0.6.0), see below.
+- **Sending** (0.5.0), **voice calls** (0.6.0) and **video calls** (0.7.0), see below.
 - Phones get the bottom menu, tablets / landscape (≥ 900 dp) get the web's side rail and two-pane layout.
 
 ## Install
@@ -151,6 +151,13 @@ ongoing-call notification (with **Hang up**) keeps it running when you switch ap
 asks for the microphone (and, on Android 13+, notifications) the first time. Calls are not recorded. Needs a server
 with calls (wa_logger from 2026-10-17 on); it works in HTTP mode too, but the audio is then unencrypted on the
 network, like everything else.
+
+## Video calls (0.7.0)
+
+The **camera** button next to the phone button starts a video call; incoming video calls offer **Answer with video**.
+The call screen shows the other side full size with your camera in a corner, and has camera on/off, loudspeaker, mute,
+hang up and minimize (the call goes on in the small panel; **Show video** brings the screen back). The app asks for the
+camera the first time. Needs a server with video calls (wa_logger from 2026-10-17 on).
 
 ## Not included (yet)
 

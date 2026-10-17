@@ -269,7 +269,7 @@ speakers ◄─ AudioWorklet ◄──────── WS ◄─────�
   id). SSE `call` events carry ids/states; `GET /api/calls/current` adds the decrypted name.
 * Not stored: call audio is never written anywhere or logged. WhatsApp's own call-log messages are logged as before.
   Audit: `call_started`, `call_accepted`, `call_declined` (no ids). Cap: 30 started calls per hour on top of route limits.
-* Clients: the web UI and the Android client (§12 "Calls", same WebSocket and PCM format). wa_logger mobile can't have
+* Clients: the web UI and the Android client (§12 "Calls", same WebSockets and formats). wa_logger mobile can't have
   them (Android WebView pages are never cross-origin isolated, see docs/wwebjs-notes.md).
 
 ### Video
@@ -571,7 +571,7 @@ AAD context `msgbody|<messageId>`, so an edit can move the old ciphertext into `
 A native client for the same API (no WebView, no server changes needed). Kotlin 2.4, Jetpack Compose,
 AGP 9.4 (built-in Kotlin), Gradle 9.8 (wrapper with pinned checksum), minSdk 26, compile/target SDK 37.
 Package `io.github.revocx35.walogger` (debug builds get the `.debug` suffix and install side by side).
-Current release: 0.6.0 (versionCode 7: voice calls). 0.5.0 (versionCode 6: sending). 0.4.0 (versionCode 5:
+Current release: 0.7.0 (versionCode 8: video calls). 0.6.0 (versionCode 7: voice calls). 0.5.0 (versionCode 6: sending). 0.4.0 (versionCode 5:
 multi-select photos/videos in a chat and save them to the gallery).
 0.3.0 (versionCode 4: auto-save with a disappearing-messages-only option, Android 17 local network
 permission). 0.1.1 (versionCode 2) was confirmed working by the owner on a Samsung, One UI 8.5 / Android 16,
@@ -676,9 +676,23 @@ content URI (`RequestBody`), never loaded whole into memory.
 * UI: `ui/components/CallPanel.kt` floats above the shell (`MainShell`), `CallButton` in one-to-one chat headers,
   permissions asked in the click (`RECORD_AUDIO`, `POST_NOTIFICATIONS` on 13+). Manifest adds `FOREGROUND_SERVICE`,
   `FOREGROUND_SERVICE_MICROPHONE`, `POST_NOTIFICATIONS`, `MODIFY_AUDIO_SETTINGS`, `VIBRATE`.
+* Video (0.7.0): `core/CallVideo.kt` (`VideoFrameHeader`, `CallVideoSocket` on `/api/calls/video`). `media/CallVideoEngine.kt`:
+  `RemoteVideoDecoder` (MediaCodec H.264/VP8 → the TextureView's surface; starts at a key frame, asks for one when it
+  can't continue; a decoder that fails is skipped for the next one of the codec — the emulator's hardware H.264
+  decoder fails on input, Android's software one works) and `CameraEncoder` (Camera2, front camera when there is one,
+  640×480 → MediaCodec H.264 Baseline encoder via its input surface, 24 fps, 900 kbit/s, key frame every 2 s or on
+  request, SPS/PPS repeated before each key frame; the frames stay in sensor orientation and the header carries the
+  rotation: the sensor angle for a phone held upright). `CallController` runs them like the web's CallProvider; the
+  foreground service adds the `camera` type while the camera is on. UI: `CallScreen` shows `VideoStage` (remote
+  TextureView fitted and turned upright with `setTransform`, camera preview in a corner, camera/speaker/mute/hang up/
+  minimize) while the call has video, otherwise the panel; video-call button in chat headers; "Answer with video".
+  Camera sessions are rebuilt when the preview view comes back; callbacks of older sessions are ignored.
 * Verified on the emulator (Android 17) against `scripts/dev/call-ui.mts` with `SERVE=1`: outgoing call, microphone
   audio arriving at the server, mute, call continuing in the background with the service, Hang up from the
-  notification, incoming call answered and ended by the other side, decline.
+  notification, incoming call answered and ended by the other side, decline. Video (emulated front camera, real H.264
+  from the test browser as the other side): the picture shown fitted and upright, the phone's camera frames decodable
+  and upright once turned by their header, camera off/on, minimize/restore, background (service types camera +
+  microphone), incoming video call answered with video.
 
 ### Build, test, release
 * Tests: `:core:test` (unit tests incl. the UI-thread rule, ZRLE/RFB/DES, MockWebServer client tests),

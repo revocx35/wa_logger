@@ -328,8 +328,11 @@ class ApiClient(baseClient: OkHttpClient, val baseUrl: HttpUrl) {
     /* ---------------------------------------------------------------- calls */
 
     suspend fun currentCall(): CurrentCall = get("/api/calls/current")
-    suspend fun startCall(chatId: String): CallInfo = post("/api/chats/${enc(chatId)}/call")
-    suspend fun acceptCall(callId: String): CallInfo = post("/api/calls/${enc(callId)}/accept")
+    suspend fun startCall(chatId: String, video: Boolean = false): CallInfo =
+        send("POST", "/api/chats/${enc(chatId)}/call", CallVideoFlag(if (video) true else null))
+    suspend fun acceptCall(callId: String, video: Boolean = false): CallInfo =
+        send("POST", "/api/calls/${enc(callId)}/accept", CallVideoFlag(if (video) true else null))
+    suspend fun setCallVideo(callId: String, on: Boolean): CallInfo = send("POST", "/api/calls/${enc(callId)}/video", CallVideoRequest(on))
     suspend fun rejectCall(callId: String): OkResponse = post("/api/calls/${enc(callId)}/reject")
     suspend fun hangupCall(callId: String): OkResponse = post("/api/calls/${enc(callId)}/hangup")
 

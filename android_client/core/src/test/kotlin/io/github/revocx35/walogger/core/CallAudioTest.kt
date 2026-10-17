@@ -131,4 +131,61 @@ class CallAudioTest {
         assertTrue(ended.await(5, TimeUnit.SECONDS))
         assertEquals(CallAudioEnd.Replaced, why)
     }
+
+    @Test
+    fun videoHeaderRoundTrip() {
+        val h = VideoFrameHeader(VIDEO_H264, key = true, rotation = 3, width = 640, height = 480, timestampMs = 0x1_2345_6789L)
+        val f = h.frame(byteArrayOf(0, 0, 0, 1, 0x65))
+        assertEquals(17, f.size)
+        assertEquals(listOf(1, 1, 3, 0, 0x80, 2, 0xe0, 1), f.take(8).map { it.toInt() and 0xff })
+        // the timestamp wraps at 32 bits
+        assertEquals(h.copy(timestampMs = 0x2345_6789L), VideoFrameHeader.parse(f))
+        assertEquals(null, VideoFrameHeader.parse(ByteArray(12)))
+        assertEquals(null, VideoFrameHeader.parse(byteArrayOf(9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)))
+    }
+
+    @Test
+    fun videoSocketCarriesFramesAndKeyFrameRequests() {
+        val received = CopyOnWriteArrayList<Any>()
+        val open = CountDownLatch(1)
+        var peer: WebSocket? = null
+        server.enqueue(
+            MockResponse.Builder().webSocketUpgrade(object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    peer = webSocket
+                    webSocket.send("""{"type":"hello","callId":"C1","codecs":["h264","vp8"]}""")
+                    webSocket.send("""{"type":"keyframe"}""")
+                    webSocket.send(VideoFrameHeader(VIDEO_VP8, true, 1, 320, 240, 5).frame(byteArrayOf(7)).toByteString())
+                    webSocket.send(byteArrayOf(3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1).toByteString()) // unknown codec: dropped
+                    open.countDown()
+                }
+
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    received.add(text)
+                }
+
+                override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                    received.add(bytes)
+                }
+            }).build(),
+        )
+        val frames = CopyOnWriteArrayList<VideoFrameHeader>()
+        var keyWanted = 0
+        val ended = CountDownLatch(1)
+        val sock = CallVideoSocket(api, { h, _ -> frames.add(h) }, { keyWanted++ }, { _, _ -> ended.countDown() })
+        sock.start()
+        assertTrue(open.await(5, TimeUnit.SECONDS))
+        assertEquals("/api/calls/video", server.takeRequest().target)
+        val deadline = System.currentTimeMillis() + 5000
+        while ((frames.isEmpty() || keyWanted == 0) && System.currentTimeMillis() < deadline) Thread.sleep(20)
+        assertEquals(listOf(VideoFrameHeader(VIDEO_VP8, true, 1, 320, 240, 5)), frames.toList())
+        assertEquals(1, keyWanted)
+        sock.requestKeyFrame()
+        assertTrue(sock.send(VideoFrameHeader(VIDEO_H264, false, 0, 640, 480, 9).frame(byteArrayOf(1, 2))))
+        while (received.size < 2 && System.currentTimeMillis() < deadline) Thread.sleep(20)
+        assertEquals("""{"type":"keyframe"}""", received[0])
+        assertEquals(14, (received[1] as ByteString).size)
+        peer!!.close(1000, "Call ended")
+        assertTrue(ended.await(5, TimeUnit.SECONDS))
+    }
 }

@@ -305,3 +305,16 @@ model, and explicitly not in wa_logger mobile (Android WebView can't run WhatsAp
   window that hides its tab, so the Chromium container now runs without background throttling.
 - Verified: vm/API tests, `call-video.mts` in the real image (H.264 out decodes red, VP8 in shows blue and rotated),
   `call-ui.mts` 39 steps with Chromium's fake camera. Not verified: a real video call (same as audio).
+
+## 2026-10-17 — Android client 0.7.0: video calls
+
+- Camera2 (front camera) → MediaCodec H.264 encoder through its input surface; frames keep the sensor orientation and the
+  header carries the rotation. The other side's H.264/VP8 → MediaCodec decoder → TextureView, fitted and turned upright
+  with `setTransform`.
+- Found on the emulator: the goldfish hardware H.264 decoder fails on its first input (an SELinux-denied buffer pool),
+  so a decoder that fails is now skipped for the next one (Android's software decoder works); the TextureView transform
+  must be re-applied on layout (it was set before the view had a size: a stretched picture); minimizing and restoring
+  rebuilt the camera session twice and the failure callback of the stale one switched the camera off.
+- Verified on the emulator: picture fitted and upright, the phone's frames upright after their rotation (saved and
+  compared with the preview), camera off/on, background with the camera+microphone service, incoming video answered.
+

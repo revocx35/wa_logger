@@ -128,18 +128,96 @@ await ingest.message({ id: { fromMe: false, remote: CHAT, id: 'IN1', _serialized
 
 if (process.env.SERVE) {
   console.log(`serving on :${PORT}, owner / ${PASSWORD}`);
+  // With the test browser running (CDP 127.0.0.1:9333), the other side "sends" H.264 video (red, white top-left
+  // corner, 320x240) like WhatsApp Web does, and "check" decodes what the client's camera sent.
+  let helper: Awaited<ReturnType<Awaited<ReturnType<typeof puppeteer.connect>>['newPage']>> | null = null;
+  try {
+    const b = await puppeteer.connect({ browserURL: 'http://127.0.0.1:9333', protocolTimeout: 30_000 });
+    helper = await b.newPage();
+    await helper.goto(`${BASE}/login`);
+    await helper.evaluate('window.__name = (f) => f');
+    const frames = (await helper.evaluate(`(async () => {
+      const c = document.createElement('canvas'); c.width = 320; c.height = 240; const g = c.getContext('2d'); const out = [];
+      const enc = new VideoEncoder({ output: (ch) => { const d = new Uint8Array(ch.byteLength); ch.copyTo(d);
+        const b = new Uint8Array(12 + d.length); const dv = new DataView(b.buffer); b[0] = 1; b[1] = ch.type === 'key' ? 1 : 0;
+        dv.setUint16(4, 320, true); dv.setUint16(6, 240, true); dv.setUint32(8, Math.floor(ch.timestamp / 1000), true); b.set(d, 12);
+        let s = ''; for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); out.push(btoa(s)); }, error: () => undefined });
+      enc.configure({ codec: 'avc1.42001f', avc: { format: 'annexb' }, width: 320, height: 240, bitrate: 300000, framerate: 15 });
+      for (let i = 0; i < 30; i++) { g.fillStyle = '#ff0000'; g.fillRect(0, 0, 320, 240); g.fillStyle = '#ffffff'; g.fillRect(0, 0, 80, 60);
+        const f = new VideoFrame(c, { timestamp: i * 66666 }); enc.encode(f, { keyFrame: i % 15 === 0 }); f.close(); }
+      await enc.flush(); return out; })()`)) as string[];
+    peerFrames = frames.map((x) => Buffer.from(x, 'base64'));
+    console.log(`peer video: ${peerFrames.length} H.264 frames`);
+  } catch (e) {
+    console.log(`no test browser, no peer video (${(e as Error).message})`);
+  }
   let n = 0;
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', (d: string) => {
     for (const cmd of d.split('\n').map((x) => x.trim()).filter(Boolean)) {
       const cur = calls.current();
       if (cmd === 'incoming') calls.onCall(raw({ id: `SIN${++n}` }));
+      else if (cmd === 'incomingvideo') calls.onCall(raw({ id: `SVIN${++n}`, isVideo: true, peerVideo: true }));
       else if (cmd === 'hangup' && cur) calls.onCall(raw({ id: cur.id, state: 0, removed: true, everConnected: true, outgoing: cur.direction === 'outgoing' }));
+      else if (cmd === 'check' && helper) {
+        const last = ownerFrames.slice(-40);
+        const head = last[0];
+        void helper
+          .evaluate(
+            async (frames: string[]) => {
+              const c = document.createElement('canvas');
+              let n = 0;
+              let size = '';
+              const first = Uint8Array.from(atob(frames[0]!), (ch) => ch.charCodeAt(0));
+              const dec = new VideoDecoder({
+                output: (f) => {
+                  c.width = f.displayWidth;
+                  c.height = f.displayHeight;
+                  c.getContext('2d')!.drawImage(f, 0, 0);
+                  size = `${f.displayWidth}x${f.displayHeight}`;
+                  f.close();
+                  n++;
+                },
+                error: (e) => (size = 'error ' + e.message),
+              });
+              dec.configure({ codec: first[0] === 1 ? 'avc1.42001f' : 'vp8' });
+              let started = false;
+              for (const b64 of frames) {
+                const b = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
+                if (!started && !b[1]) continue;
+                started = true;
+                dec.decode(new EncodedVideoChunk({ type: b[1] ? 'key' : 'delta', timestamp: new DataView(b.buffer).getUint32(8, true) * 1000, data: b.subarray(12) }));
+              }
+              await dec.flush().catch(() => undefined);
+              const d = n ? c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data : [];
+              let sum = 0;
+              for (let i = 0; i < d.length; i += 4) sum += d[i]! + d[i + 1]! + d[i + 2]!;
+              // the last picture turned upright as its header says (what WhatsApp's camera shows)
+              const rot = first[2]! & 3;
+              const o = document.createElement('canvas');
+              o.width = rot % 2 ? c.height : c.width;
+              o.height = rot % 2 ? c.width : c.height;
+              const og = o.getContext('2d')!;
+              og.translate(o.width / 2, o.height / 2);
+              og.rotate((Math.PI / 2) * rot);
+              og.drawImage(c, -c.width / 2, -c.height / 2);
+              return { decoded: n, size, meanLuma: d.length ? Math.round(sum / (d.length / 4) / 3) : 0, png: n ? o.toDataURL('image/png') : null };
+            },
+            last.map((f) => f.toString('base64')),
+          )
+          .then(async (r) => {
+            if (r.png && process.env.CHECK_PNG) await import('node:fs').then((fs) => fs.writeFileSync(process.env.CHECK_PNG!, Buffer.from(r.png!.split(',')[1]!, 'base64')));
+            console.log(`CHECK camera frames=${ownerFrames.length} codec=${head?.[0]} rot=${head?.[2]} ${head?.readUInt16LE(4)}x${head?.readUInt16LE(6)} -> ${JSON.stringify({ ...r, png: !!r.png })}`);
+          })
+          .catch((e) => console.log(`CHECK failed ${(e as Error).message}`));
+      }
     }
   });
   setInterval(() => {
     const c = calls.current();
-    console.log(`call=${c ? `${c.id}:${c.state}:audio=${c.audio}` : 'none'} bridging=${bridging} micBytes=${micBytes} micPeak=${micPeak} ops=${ops.join(',')}`);
+    console.log(
+      `call=${c ? `${c.id}:${c.state}:audio=${c.audio}:video=${c.videoClient}:self=${c.selfVideo}` : 'none'} bridging=${bridging} video=${videoOn} micBytes=${micBytes} cameraFrames=${ownerFrames.length} ops=${ops.join(',')}`,
+    );
   }, 1000);
   await new Promise(() => undefined);
 }

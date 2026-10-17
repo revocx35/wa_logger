@@ -180,7 +180,8 @@ Update this file whenever a step is completed.
 - [x] Web: video call screen, video-call button, Answer with video, camera toggle, minimize
 - [x] Tests: vm + API tests; `scripts/dev/call-video.mts` (real image, real H.264/VP8, 9 checks); `call-ui.mts` (39 checks)
 - [ ] Owner: a first real video call
-- [ ] Android client video
+- [x] Android client 0.7.0 video (Camera2 → MediaCodec H.264, MediaCodec decoder with fallback, video screen);
+      tested on the emulator against `call-ui.mts` (`SERVE=1`, real H.264 from the test browser)
 
 ## Next ideas (not started)
 - Android: push notifications for deletions (needs a server-side push channel; SSE only runs in the foreground)

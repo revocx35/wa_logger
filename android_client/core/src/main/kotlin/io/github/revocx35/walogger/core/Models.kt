@@ -344,7 +344,11 @@ data class CallInfo(
     /** "incoming" | "outgoing" */
     val direction: String = "incoming",
     val state: CallState = CallState.Ended,
+    /** Started or answered as a video call (or switched to video later). */
     val video: Boolean = false,
+    /** We send video / the other side sends video. */
+    val selfVideo: Boolean = false,
+    val peerVideo: Boolean = false,
     val group: Boolean = false,
     val chatId: String? = null,
     /** Only in `GET /api/calls/current` and the POST responses. */
@@ -355,12 +359,15 @@ data class CallInfo(
     val endedAt: Long? = null,
     /** completed | declined | busy | missed | unavailable | canceled | elsewhere | failed */
     val endReason: String? = null,
-    /** Some client is connected to the call audio. */
+    /** Some client is connected to the call audio / video. */
     val audio: Boolean = false,
+    val videoClient: Boolean = false,
 ) {
     val incoming: Boolean get() = direction == "incoming"
     val live: Boolean get() = state != CallState.Ended
 }
 
+@Serializable data class CallVideoFlag(val video: Boolean? = null)
+@Serializable data class CallVideoRequest(val on: Boolean)
 @Serializable data class CurrentCall(val call: CallInfo? = null, val available: Boolean = false)
 @Serializable data class CallAudioHello(val type: String = "", val sampleRate: Int = 0, val channels: Int = 0, val format: String = "", val callId: String = "")

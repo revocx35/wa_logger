@@ -18,9 +18,10 @@ import io.github.revocx35.walogger.R
 import io.github.revocx35.walogger.WaLoggerApp
 
 /**
- * Keeps a call going while the app is in the background: Android stops microphone access for background apps
- * unless a foreground service of type "microphone" runs. Shows an ongoing notification with "Hang up". The audio
- * itself lives in [CallAudioEngine]; this service only holds the process in the foreground.
+ * Keeps a call going while the app is in the background: Android stops microphone (and camera) access for background
+ * apps unless a foreground service of type "microphone" (and "camera") runs. Shows an ongoing notification with
+ * "Hang up". Audio and video live in [CallAudioEngine] / [CameraEncoder]; this service only holds the process in the
+ * foreground.
  */
 class CallForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
@@ -31,12 +32,15 @@ class CallForegroundService : Service() {
             return START_NOT_STICKY
         }
         val name = intent?.getStringExtra(EXTRA_NAME)
+        val camera = intent?.getBooleanExtra(EXTRA_CAMERA, false) == true
         try {
             ServiceCompat.startForeground(
                 this,
                 NOTIFICATION_ID,
                 notification(name),
-                if (Build.VERSION.SDK_INT >= 30) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0,
+                if (Build.VERSION.SDK_INT >= 30) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or (if (camera) ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA else 0)
+                } else 0,
             )
         } catch (_: Exception) {
             // Not allowed right now (e.g. started from the background): the call still works while the app is open.
@@ -71,9 +75,13 @@ class CallForegroundService : Service() {
         private const val NOTIFICATION_ID = 41
         private const val ACTION_HANGUP = "io.github.revocx35.walogger.HANGUP"
         private const val EXTRA_NAME = "name"
+        private const val EXTRA_CAMERA = "camera"
 
-        fun start(context: Context, name: String?) {
-            runCatching { ContextCompat.startForegroundService(context, Intent(context, CallForegroundService::class.java).putExtra(EXTRA_NAME, name)) }
+        /** Starts (or updates) the service; [camera]: the camera is on too (its foreground type is needed then). */
+        fun start(context: Context, name: String?, camera: Boolean = false) {
+            runCatching {
+                ContextCompat.startForegroundService(context, Intent(context, CallForegroundService::class.java).putExtra(EXTRA_NAME, name).putExtra(EXTRA_CAMERA, camera))
+            }
         }
 
         fun stop(context: Context) {

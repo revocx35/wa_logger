@@ -189,8 +189,12 @@ class ScreenshotTest {
     private class FakeCalls(state: io.github.revocx35.walogger.ui.CallUi) : io.github.revocx35.walogger.ui.CallActions {
         override val ui = kotlinx.coroutines.flow.MutableStateFlow(state)
         val calls = mutableListOf<String>()
-        override fun start(chatId: String, name: String) { calls += "start:$chatId" }
-        override fun accept() { calls += "accept" }
+        override fun start(chatId: String, name: String, video: Boolean) { calls += "start:$chatId:$video" }
+        override fun accept(video: Boolean) { calls += "accept:$video" }
+        override fun toggleCamera() { calls += "camera" }
+        override fun setMinimized(minimized: Boolean) { calls += "minimized:$minimized" }
+        override fun setRemoteSurface(surface: android.view.Surface?) = Unit
+        override fun setPreviewTexture(texture: android.graphics.SurfaceTexture?) = Unit
         override fun decline() { calls += "decline" }
         override fun hangup() { calls += "hangup" }
         override fun joinAudio() { calls += "join" }
@@ -225,6 +229,51 @@ class ScreenshotTest {
                 io.github.revocx35.walogger.ui.components.CallPanel(calls.ui.collectAsStateValue(), calls)
             }
         }
+    }
+
+    @Test
+    fun phoneVideoCall() = shot("phone_call_video", dark = true) {
+        val calls = FakeCalls(
+            io.github.revocx35.walogger.ui.CallUi(
+                call(io.github.revocx35.walogger.core.CallState.Active, false).copy(video = true, selfVideo = true, peerVideo = false),
+                available = true,
+                audio = io.github.revocx35.walogger.ui.CallAudioState.Live,
+                camera = io.github.revocx35.walogger.ui.CameraState.On,
+            ),
+        )
+        io.github.revocx35.walogger.ui.components.CallScreen(calls.ui.collectAsStateValue(), calls)
+    }
+
+    @Test
+    fun phoneIncomingVideoCall() = shot("phone_call_incoming_video") {
+        val calls = FakeCalls(io.github.revocx35.walogger.ui.CallUi(call(io.github.revocx35.walogger.core.CallState.Incoming, true).copy(video = true, peerVideo = true), available = true))
+        Box(Modifier.fillMaxSize()) {
+            ChatPane(FakeChat(aliSummary, SampleData.aliChat), {}, false, NoMessageActions, Modifier.fillMaxSize())
+            io.github.revocx35.walogger.ui.components.CallScreen(calls.ui.collectAsStateValue(), calls)
+        }
+    }
+
+    @Test
+    fun videoStageControls() {
+        val calls = FakeCalls(
+            io.github.revocx35.walogger.ui.CallUi(
+                call(io.github.revocx35.walogger.core.CallState.Incoming, true).copy(video = true, peerVideo = true),
+                available = true,
+            ),
+        )
+        compose.setContent { WaTheme(true) { io.github.revocx35.walogger.ui.components.CallScreen(calls.ui.collectAsStateValue(), calls) } }
+        compose.onNodeWithContentDescription("Answer with video").assertExists()
+        compose.onNodeWithContentDescription("Answer without video").assertExists()
+        // answered: the video screen with camera, speaker, mute, hang up and minimize
+        calls.ui.value = calls.ui.value.copy(call = calls.ui.value.call!!.copy(state = io.github.revocx35.walogger.core.CallState.Active), audio = io.github.revocx35.walogger.ui.CallAudioState.Live, camera = io.github.revocx35.walogger.ui.CameraState.On)
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Turn camera off").performClick()
+        compose.onNodeWithContentDescription("Minimize").performClick()
+        org.junit.Assert.assertEquals(listOf("camera", "minimized:true"), calls.calls)
+        calls.ui.value = calls.ui.value.copy(minimized = true)
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Show video").performClick()
+        org.junit.Assert.assertEquals("minimized:false", calls.calls.last())
     }
 
     @Test

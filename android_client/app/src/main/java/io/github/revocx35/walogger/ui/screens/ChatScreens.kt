@@ -393,7 +393,10 @@ fun ChatPane(
                         MutedText(sub, style = WaType.small, maxLines = 1)
                     }
                 }
-                if (chat?.kind == ChatKind.User && !chat.removed) CallButton(state.chatId, title)
+                if (chat?.kind == ChatKind.User && !chat.removed) {
+                    CallButton(state.chatId, title, video = true)
+                    CallButton(state.chatId, title, video = false)
+                }
                 IconBtn(WaIcons.search, "Search in chat", { state.searchOpen = !state.searchOpen }, active = state.searchOpen)
             }
             if (state.searchOpen) {
@@ -510,12 +513,12 @@ fun ChatPane(
     }
 }
 
-/** The phone button in a one-to-one chat's header (hidden where calls aren't available, e.g. screenshot tests). */
+/** The phone / camera button in a one-to-one chat's header (hidden where calls aren't available, e.g. screenshot tests). */
 @Composable
-private fun CallButton(chatId: String, name: String) {
+private fun CallButton(chatId: String, name: String, video: Boolean) {
     val calls = LocalCalls.current ?: return
     val ui by calls.ui.collectAsState()
     val withMic = io.github.revocx35.walogger.ui.components.rememberCallPermission(calls)
     val enabled = ui.available && ui.call?.live != true && !ui.busy
-    IconBtn(WaIcons.phone, "Voice call", { withMic { calls.start(chatId, name) } }, enabled = enabled)
+    IconBtn(if (video) WaIcons.video else WaIcons.phone, if (video) "Video call" else "Voice call", { withMic(video) { calls.start(chatId, name, video) } }, enabled = enabled)
 }
