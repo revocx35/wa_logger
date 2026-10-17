@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router';
 import type { ChatSummary, Message, SearchHit } from '../../../shared/api';
 import { api, errorMessage } from '../api/client';
 import { useServerEvents } from '../api/events';
+import { CallButton } from '../components/Calls';
 import { Composer } from '../components/Composer';
 import { Icon } from '../components/Icon';
 import { MessageBubble, isSelectable, type MessageActions } from '../components/MessageBubble';
@@ -320,6 +321,7 @@ export function ChatView({ chatId }: { chatId: string }) {
                 : ''}
             </div>
           </div>
+          {chat?.kind === 'user' && !chat.removed ? <CallButton chatId={chatId} name={title} /> : null}
           <button className="icon-btn" onClick={() => setSelecting(true)} aria-label="Select photos and videos to download" title="Select photos and videos to download">
             <Icon name="download" />
           </button>

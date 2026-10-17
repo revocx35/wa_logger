@@ -36,6 +36,36 @@ Ogg/Opus), a new chat by number and the phone layout. Start the test browser wit
 cd server && npx tsx ../scripts/dev/send-ui.mts
 ```
 
+## call-ui.mts — calls in a real browser (24 steps)
+
+The real server, `CallService` and audio WebSocket with a fake WhatsApp tab whose call models change state like
+WhatsApp Web's and whose "other side" speaks a 440 Hz tone. Covers an outgoing call (calling → ringing → connected,
+microphone audio arriving, the tone audible in the page, mute/unmute, hang up), an incoming call answered and ended by
+the other side, declining, "answered on another device", "Join audio" after a reload, and the phone layout. Start the
+test browser with `--use-fake-device-for-media-stream --use-fake-ui-for-media-stream` (no autoplay flag needed).
+
+```bash
+(cd web && npm run build)
+cd server && npx tsx ../scripts/dev/call-ui.mts
+```
+
+## call-audio.mts — call audio inside the real Chromium image (12 checks)
+
+callpage.ts' virtual microphone and speaker tap, installed by the real `CallBridge`, against a fake "WhatsApp" audio
+graph built like WhatsApp Web's (capture from getUserMedia at 16 kHz; playback through a worklet into an `<audio>` or
+straight to the output), in the tab and in a popout window. It needs the chromium image running **its own entrypoint**
+(Xvfb, no sound devices, sandbox, managed policy) with `localhost` allowed:
+
+```bash
+mkdir -p /tmp/pol && python3 -c "import json;p=json.load(open('chromium/policies.json'));p['URLAllowlist'].append('localhost');json.dump(p,open('/tmp/pol/wa_logger.json','w'))"
+docker run -d --name walcalltest --network host --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+  --security-opt seccomp=chromium/seccomp-chromium.json -e VNC_PASSWORD=testtest123 -e BIND_ADDRESS=127.0.0.1 \
+  -e CDP_PORT=19223 -e VNC_PORT=15900 -v /tmp/pol:/etc/chromium/policies/managed:ro \
+  --tmpfs /tmp:size=512m --tmpfs /home/chrome:uid=10002,gid=10002,mode=0700 --tmpfs /data:uid=10002,gid=10002,mode=0700 \
+  --shm-size 1g wa_logger-chromium:local
+cd server && npx tsx ../scripts/dev/call-audio.mts
+```
+
 ## e2e-ui.mjs — full UI walkthrough (61 steps)
 
 1. `scripts/smoke.sh --keep` (prints the project name, URL and env file), then seed sample data into its volume:

@@ -27,7 +27,7 @@ const waApi: WaApi = {
 type Call = { op: string; args: unknown[] };
 
 class FakeWa extends NullWa {
-  calls: Call[] = [];
+  log: Call[] = [];
   fail: Error | null = null;
   override readonly sender: WaSender;
   constructor() {
@@ -35,7 +35,7 @@ class FakeWa extends NullWa {
     const rec =
       (op: string, ret: unknown = undefined) =>
       async (...args: unknown[]) => {
-        this.calls.push({ op, args });
+        this.log.push({ op, args });
         if (this.fail) throw this.fail;
         return ret;
       };
@@ -50,7 +50,7 @@ class FakeWa extends NullWa {
     };
   }
   ops(op: string): unknown[][] {
-    return this.calls.filter((c) => c.op === op).map((c) => c.args);
+    return this.log.filter((c) => c.op === op).map((c) => c.args);
   }
 }
 
@@ -114,7 +114,7 @@ describe('send API', () => {
       payload: Buffer.from('abc'),
     });
     expect(up.statusCode).toBe(403);
-    expect(wa.calls).toEqual([]);
+    expect(wa.log).toEqual([]);
   });
 
   it('uploads a file and sends it once, only from the same session', async () => {

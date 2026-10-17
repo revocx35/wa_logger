@@ -154,7 +154,20 @@ Update this file whenever a step is completed.
 - [x] Browser end-to-end `scripts/dev/send-ui.mts` (17 steps, real MediaRecorder voice note decoded as Ogg/Opus)
 - [x] Android client: composer, message actions, new chat, voice notes
 - [ ] Owner: send a first real message / photo / voice note from the web UI and the Android client
-- Calls: not implemented (see docs/wwebjs-notes.md "Calls" for why the standalone mobile app can't either)
+- Calls: Phase 15 (web UI); the standalone mobile app can't (docs/wwebjs-notes.md "Calls")
+
+## Phase 15 — Voice calls (2026-10-17)
+- [x] Page code `wa/callpage.ts`: call monitor + start/answer/decline/hang up through WhatsApp Web's own VoIP functions
+      (from wa2sip), virtual microphone, speaker tap, popout-window hooks, no document PiP; `wa/callbridge.ts` (CDP
+      bindings, audio pump, trusted click with fallback); `wa/calls.ts` (state machine, one audio client, hourly cap)
+- [x] API: `GET /api/calls/current`, `POST /api/chats/:chatId/call`, `POST /api/calls/:id/accept|reject|hangup`,
+      `WS /api/calls/audio`, SSE `call`; Chromium `--autoplay-policy=no-user-gesture-required`
+- [x] Web: call panel (ringing, ringback, mute, timer, join/move audio), call button in one-to-one chats, AudioWorklet
+- [x] Tests: `callpage.test.ts` (vm), `api/calls.test.ts`, `callWorklet.test.ts`; real Chromium image
+      `scripts/dev/call-audio.mts` (12 checks), browser end-to-end `scripts/dev/call-ui.mts` (24 steps)
+- [x] Read-only check of the live instance: web calling enabled for the account, all modules present
+- [ ] Owner: a first real call from the web UI (outgoing and incoming); watch `docker compose logs app`
+- Android client: no calls yet (the API is ready for it: 16 kHz s16le over the audio WebSocket); wa_logger mobile can't
 
 ## Next ideas (not started)
 - Android: push notifications for deletions (needs a server-side push channel; SSE only runs in the foreground)

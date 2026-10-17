@@ -1,4 +1,4 @@
-import type { SendMediaKind, SendResult, WaStatus } from '../../shared/api.js';
+import type { CallInfo, SendMediaKind, SendResult, WaStatus } from '../../shared/api.js';
 import type { Config } from './config.js';
 import { Errors } from './errors.js';
 import { DataWriter } from './crypto/keyring.js';
@@ -28,6 +28,28 @@ export interface WaSender {
   openChat(phone: string): Promise<string | null>;
 }
 
+/** The client end of the call audio (the `/api/calls/audio` WebSocket). */
+export interface CallAudioClient {
+  send(pcm: Buffer): void;
+  close(code: number, reason: string): void;
+}
+
+/** Voice calls as the linked account (throws AppError: unavailable when WhatsApp is not connected). */
+export interface WaCalls {
+  /** WhatsApp is connected and the call code is installed in its tab. */
+  available(): boolean;
+  /** The call going on (or just ended), null when there is none. */
+  current(): CallInfo | null;
+  start(chatId: string): Promise<CallInfo>;
+  accept(callId: string): Promise<CallInfo>;
+  reject(callId: string): Promise<void>;
+  hangup(callId: string): Promise<void>;
+  /** Becomes the call's audio client (replacing another); returns the detach function, null when there is no call. */
+  attachAudio(client: CallAudioClient): (() => void) | null;
+  /** The owner's voice: 16 kHz mono s16le. Ignored unless [client] is the attached one and audio is flowing. */
+  audioIn(client: CallAudioClient, pcm: Buffer): void;
+}
+
 /** Control surface of the WhatsApp integration, used by the HTTP layer. */
 export interface WaController {
   status(): WaStatus;
@@ -42,6 +64,7 @@ export interface WaController {
   onDataWiped(): void;
   stop(): Promise<void>;
   readonly sender: WaSender;
+  readonly calls: WaCalls;
 }
 
 export class AppContext {
@@ -92,6 +115,16 @@ export class NullWa implements WaController {
     edit: notConnected,
     markRead: notConnected,
     openChat: notConnected,
+  };
+  readonly calls: WaCalls = {
+    available: () => false,
+    current: () => null,
+    start: notConnected,
+    accept: notConnected,
+    reject: notConnected,
+    hangup: notConnected,
+    attachAudio: () => null,
+    audioIn: () => undefined,
   };
   status(): WaStatus {
     return { state: 'idle', mediaQueue: 0, since: this.since, sync: null };

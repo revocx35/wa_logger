@@ -19,6 +19,10 @@ Read these first, every session:
 - Sending goes through `server/src/wa/walpage.ts` (WhatsApp Web's own send actions; notes in docs/wwebjs-notes.md
   "Sending"). It is injected as source text: keep it self-contained (`walpage.test.ts` runs the string in a bare `vm`).
   Never put message text in URLs or logs: JSON bodies only (files: raw body on `/api/uploads`).
+- Calls go through `server/src/wa/callpage.ts` (WhatsApp Web's own calling; injected source text, self-contained like
+  walpage.ts, tested in a bare `vm` by `callpage.test.ts`). Its audio hooks (virtual microphone, speaker tap) must stay
+  installed at document start. Never record, store or log call audio, and never send audio when `setBridge` is off.
+  Re-check the audio path in the real Chromium image with `scripts/dev/call-audio.mts` after touching it.
 - DB migrations are append-only (`server/src/db/db.ts`). Encrypted columns are AAD-bound to their row id, so ids
   can't be changed after the fact.
 - Commits end with the Co-Authored-By trailer. CI must stay green: it publishes the GHCR images on `main`.
@@ -34,7 +38,8 @@ Read these first, every session:
   (= the CI job; JDK 21 and SDK at /opt/android-sdk on this LXC). Screenshots: `./gradlew :app:recordRoborazziDebug`.
   Live end-to-end: `LiveServerTest` (see `android_client/README.md`). Release: ARCHITECTURE §12 "Build, test, release".
 - Full stack from source: `scripts/smoke.sh` (23 checks). Standalone layout: `scripts/smoke.sh --deploy`.
-- UI/SSE browser tests: `scripts/dev/README.md` (`send-ui.mts`: sending end-to-end incl. a real voice recording).
+- UI/SSE browser tests: `scripts/dev/README.md` (`send-ui.mts`: sending end-to-end incl. a real voice recording;
+  `call-ui.mts`: calls in the web UI; `call-audio.mts`: call audio inside the real Chromium image).
   Sample data: `server/src/testutil/seed.ts`.
 - Live instance health (read-only, aggregates only): `docker compose exec -T app node - < scripts/wa-diagnose.js`.
 

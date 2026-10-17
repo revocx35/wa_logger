@@ -5,9 +5,13 @@ The full agent notes live in [CLAUDE.md](CLAUDE.md) (rules, commands, gotchas) a
 
 - **Build/test:** `cd server && npm test && npm run typecheck` · `cd web && npm test && npm run build` ·
   `cd android_client && ./gradlew :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug` ·
-  full stack `scripts/smoke.sh` · browser tests in `scripts/dev/` (`send-ui.mts` for sending).
+  full stack `scripts/smoke.sh` · browser tests in `scripts/dev/` (`send-ui.mts` for sending, `call-ui.mts` and
+  `call-audio.mts` for calls).
 - **Where things are:** server `server/src` (WhatsApp side in `wa/`, sending in `wa/walpage.ts` + `wa/sender.ts`,
-  HTTP API in `api/`), web UI `web/src`, Android client `android_client/`, API contract `shared/api.d.ts`.
+  calls in `wa/callpage.ts` + `wa/callbridge.ts` + `wa/calls.ts`, HTTP API in `api/`), web UI `web/src`, Android
+  client `android_client/`, API contract `shared/api.d.ts`.
 - **Never:** log message content/names/numbers/secrets, weaken CSP/cookies/sandbox/network isolation, call
   whatsapp-web.js `destroy()`/`logout()`, use its chat helpers, edit old DB migrations, put message text in URLs.
-- **Calls** are not implemented.
+- **Calls** (web UI only; the Android client and wa_logger mobile have none): WhatsApp Web's own calling in the
+  Chromium tab, audio bridged to the browser over `WS /api/calls/audio` (ARCHITECTURE §4 "Calls"). Never record or log
+  call audio.

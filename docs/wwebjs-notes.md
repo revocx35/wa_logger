@@ -101,10 +101,50 @@ These are facts about the library that the design relies on, checked against
 - These modules are defined before login, so their source can be read without an account (the wa2sip repo's
   `agent/probe.js --source <Module>` loads web.whatsapp.com logged out and prints a module).
 
-## Calls
+## Calls (wa/callpage.ts, checked on WhatsApp Web 2.3000.1050707140)
 - WhatsApp Web has had calling since July 2026, but it needs `SharedArrayBuffer` (a cross-origin isolated page).
   Android System WebView never isolates pages, so WhatsApp Web reports `missing_shared_array_buffer`
   (`WAWebVoipGatingUtils.getUnsupportedBrowserReason()`) there; wa_logger mobile cannot place or take calls.
+- On the owner's instance (2026-10-17, read-only `scripts/wa-diagnose.js`): `crossOriginIsolated` true,
+  `enable_web_calling` true, no unsupported reason, every module below present. Before the hooks the page saw
+  microphone permission `denied` and 0 audio inputs (managed policy, no device), which is what the virtual microphone
+  replaces.
+- The control functions are the ones the wa2sip project found (its `docs/whatsapp-web-internals.md`; its call path was
+  never tested with a linked phone either):
+  - `WAWebCallCollection` (default export): `getModelsArray()`, `activeCall`. CallModel: `id`, `peerJid` (user or LID
+    Wid), `outgoing`, `isVideo`, `isGroup`/`groupJid`, `getState()`, `peerBusy`, `callFailedReason`, `callLogResult`,
+    `wasEverConnected`, `userEndedCall`.
+  - `CallState` (`WAWebVoipWaCallEnums`) → ours: 1 Calling, 12 PreCalling, 14 CallBCallStarting → `calling`;
+    2 PreacceptReceived → `ringing`; 3 ReceivedCall, 8 ReceivedCallWithoutOffer → `incoming`; 4 AcceptSent,
+    5 AcceptReceived, 9 Rejoining, 10 Link → `connecting`; 6 CallActive, 11 ConnectedLonely → `active`;
+    7 CallActiveElseWhere → ended `elsewhere`; 0 None, 13 CallStateEnding or the model gone → `ended`.
+    `callLogResult`: 1 connected, 2 missed, 3 declined, 4 canceled, 5 unavailable, 6 accepted elsewhere, 7 missed (muted).
+  - start `WAWebVoipStartCall.startWAWebVoipCall(wid, isVideo, CALL_FROM_UI.CONVERSATION (8), 0, null,
+    {entryTrust:'user_gesture'})` (without the trust flag WhatsApp asks "Start a call with …?" like for deep links);
+    the model appears as `activeCall` with `outgoing` before the promise settles.
+  - answer/decline/end through `await WAWebVoipStackInterface.getVoipStackInterface()` (`type === 'web'`):
+    `acceptCall(audio, video)`, `rejectCall()`, `endCall(WAWebVoipSignalingEnums.EndCallReason.Self (2), true)`, after
+    `WAWebCallRingtone.stopCallRingtone()` and `WAWebVoipAcquireMediaStream.checkVoipDevicePermissions(video, call)`.
+- **Audio** (`WAWebVoipAudioCaptureAndPlayback`, `…CaptureBase`, `…PlaybackSharedBufferWorklet`):
+  - capture: `WAWebBackendApi.frontendSendAndReceive("voipAcquireMediaStream", {type:"microphone", selectedDeviceId})`
+    → `getUserMedia`, then `audioContext.createMediaStreamSource(stream)` → a capture worklet (default 16 kHz, 320-frame
+    chunks). The device comes from `WAWebAudioDeviceManager` (`enumerateDevices`); permission state from
+    `navigator.permissions.query({name:'microphone'})`. With no microphone it falls back to "silent capture".
+  - playback: `new AudioContext({sampleRate, latencyHint:'interactive'})` (or one pre-unlocked by
+    `WAWebVoipCallAudioUnlock`) → `AudioWorkletNode('voip-shared-buffer-playback-processor')` connected to
+    `ctx.destination` ("direct_audio_context") or to a `MediaStreamDestination` played by an `<audio>` element
+    ("media_element", AB prop `web_voip_audio_playback_use_media_element_output`).
+  - popout: accepted **video** calls open the call UI in a popout window (`web_calling_auto_popout_video`), and when it
+    opens WhatsApp re-acquires the microphone *in that window* (`requestAudioReacquisition` with `targetWindow`). Document
+    picture-in-picture is used when `"documentPictureInPicture" in window` (`WAWebVoipGatingUtils.isDocPipEnabled`).
+    callpage.ts hooks every window `window.open` returns and deletes `documentPictureInPicture`.
+- CDP: `Runtime.bindingCalled` is only delivered while the `Runtime` domain is enabled on that session.
+  `Page.addScriptToEvaluateOnNewDocument` needs `Page.enable` first. A CDP mouse click (`page.click`) never completes
+  while the tab is hidden (e.g. behind a popout window): callbridge.ts gives up after 3 s and uses `page.evaluate`
+  (puppeteer's evaluate counts as a user gesture). Chromium without `--autoplay-policy=no-user-gesture-required` keeps
+  the AudioContexts of a never-clicked popout window suspended.
+- Re-reading the sources after a WhatsApp update: the wa2sip image's `agent/probe.js --grep Voip` / `--source <Module>`
+  (logged out; the VoIP modules are defined before login), then adapt callpage.ts and callpage.test.ts.
 
 ## Avatars
 - `client.getProfilePicUrl(id)` returns a signed `pps.whatsapp.net` URL. The app container has no internet, so we

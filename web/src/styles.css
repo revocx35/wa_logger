@@ -271,6 +271,11 @@ h3 {
   width: 28px;
   height: 28px;
 }
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  background: transparent;
+}
 .link-btn {
   background: none;
   border: none;
@@ -1747,4 +1752,96 @@ label.switch {
 .menu-reactions button:hover,
 .menu-reactions button.active {
   background: var(--active);
+}
+/* ------------------------------------------------------------------ calls */
+.call-panel {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 90;
+  width: min(420px, calc(100vw - 24px));
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 6px 24px rgba(11, 20, 26, 0.25);
+  padding: 12px 14px;
+}
+.call-panel.incoming {
+  border-color: var(--accent);
+  animation: call-pulse 1.6s ease-in-out infinite;
+}
+@keyframes call-pulse {
+  0%,
+  100% {
+    box-shadow: 0 6px 24px rgba(0, 168, 132, 0.2);
+  }
+  50% {
+    box-shadow: 0 6px 30px rgba(0, 168, 132, 0.55);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .call-panel.incoming {
+    animation: none;
+  }
+}
+.call-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.call-info {
+  flex: 1;
+  min-width: 0;
+}
+.call-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.call-actions {
+  display: flex;
+  gap: 10px;
+}
+.call-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #fff;
+}
+.call-btn.accept {
+  background: var(--accent);
+}
+.call-btn.decline {
+  background: var(--danger);
+}
+.call-btn.mute {
+  background: var(--active);
+  color: var(--text);
+}
+.call-btn.mute.on {
+  background: var(--text);
+  color: var(--panel);
+}
+.call-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.call-note {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+.call-note.warn {
+  color: var(--danger);
 }

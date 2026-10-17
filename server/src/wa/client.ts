@@ -3,6 +3,8 @@ import type { Page } from 'puppeteer';
 import type { WaState, WaStatus } from '../../../shared/api.js';
 import type { AppContext, WaController } from '../context.js';
 import { refreshAvatars } from './avatars.js';
+import { CallBridge } from './callbridge.js';
+import { CallService } from './calls.js';
 import { cdpReachable, cleanupTabs, focusWaTab, resolveBrowserUrl } from './browser.js';
 import { Ingest, type WaApi } from './ingest.js';
 import { jid, phoneOf, type RawMsg } from './mapper.js';
@@ -67,7 +69,9 @@ export class WaService implements WaController {
   readonly ingest: Ingest;
   readonly sync: Sync;
   readonly sender: Sender;
+  readonly calls: CallService;
   private wal: WalPage | null = null;
+  private callBridge: CallBridge | null = null;
 
   constructor(private readonly ctx: AppContext) {
     this.media = new MediaQueue(ctx, () => this.page());
@@ -104,6 +108,8 @@ export class WaService implements WaController {
       () => (this.wal && this.page() && this.wal.page === this.page() ? this.wal : null),
       (chatId) => this.ingest.ensureChat(chatId, true),
     );
+    // Calls through WhatsApp Web's own calling; the page code (callpage.ts) is attached in onReady() too.
+    this.calls = new CallService(ctx, () => (this.callBridge && this.page() && this.callBridge.page === this.page() ? this.callBridge : null));
     this.sync = new Sync(ctx, this.ingest, syncApi, (p) => {
       this.syncInfo = p;
       ctx.events.emit({ type: 'sync_progress', sync: p });
@@ -258,6 +264,10 @@ export class WaService implements WaController {
     const wal = this.wal;
     this.wal = null;
     await wal?.detach();
+    const calls = this.callBridge;
+    this.callBridge = null;
+    await calls?.detach();
+    this.calls.onPageLost();
     const c = this.client;
     this.client = null;
     if (c) {
@@ -344,6 +354,7 @@ export class WaService implements WaController {
     client.on('disconnected', (reason: unknown) => {
       if (!live()) return;
       this.media.pause();
+      this.calls.onPageLost();
       const r = String(reason);
       this.ctx.repo.audit('wa_disconnected', null, r.slice(0, 64));
       this.setState('disconnected', r === 'LOGOUT' ? 'Device was unlinked — scan the QR code again' : `Disconnected (${r})`);
@@ -471,6 +482,19 @@ export class WaService implements WaController {
       }
     } catch (err) {
       this.ctx.log.warn({ err: (err as Error).message }, 'installing the send code failed');
+    }
+    try {
+      if (client.pupPage && gen === this.generation) {
+        const bridge = new CallBridge(client.pupPage, {
+          event: (c) => gen === this.generation && this.calls.onCall(c),
+          audio: (pcm) => gen === this.generation && this.calls.onPageAudio(pcm),
+        });
+        await bridge.attach();
+        if (gen === this.generation) this.callBridge = bridge;
+        else await bridge.detach();
+      }
+    } catch (err) {
+      this.ctx.log.warn({ err: (err as Error).message }, 'installing the call code failed');
     }
     this.ctx.repo.audit('wa_ready', null);
     const firstSync = !this.ctx.repo.getState(INITIAL_SYNC_KEY);

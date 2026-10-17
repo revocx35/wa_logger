@@ -30,12 +30,16 @@ unset VNC_PASSWORD
 # network shared with the app (so nothing listens on the egress network). BIND_ADDRESS overrides.
 resolve_bind_ip() {
   if [[ -n "${BIND_ADDRESS:-}" ]]; then echo "$BIND_ADDRESS"; return; fi
-  local peer_ip src
+  local peer_ip route src
   while true; do
     peer_ip="$(getent ahostsv4 "$BACKEND_PEER" 2>/dev/null | awk 'NR==1{print $1}')" || true
     if [[ -n "$peer_ip" ]]; then
-      src="$(ip -4 route get "$peer_ip" 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p')" || true
-      if [[ -n "$src" ]]; then echo "$src"; return; fi
+      route="$(ip -4 route get "$peer_ip" 2>/dev/null)" || true
+      src="$(sed -n 's/.* src \([0-9.]*\).*/\1/p' <<<"$route")"
+      # The app shares a network with us, so its address is on-link. A route "via" a gateway means the name
+      # resolved somewhere else (before the app container exists, Docker's DNS asks the host's resolver, and a
+      # search domain can turn "app" into a public address): binding there would listen on the egress network.
+      if [[ -n "$src" && "$route" != *" via "* ]]; then echo "$src"; return; fi
     fi
     sleep 2
   done
@@ -81,6 +85,8 @@ start_chromium() {
   fi
   local out=/dev/null
   [[ "${CHROMIUM_DEBUG:-0}" == "1" ]] && out=/dev/stderr
+  # --autoplay-policy: calls (server/src/wa/callpage.ts) need WhatsApp Web's audio running without a human click,
+  # also in a call popout window nobody clicks into. There are no speakers here; the audio only goes to the app.
   chromium \
     --user-data-dir="$PROFILE_DIR" \
     --remote-debugging-port="$CDP_INTERNAL_PORT" \
@@ -95,6 +101,7 @@ start_chromium() {
     --disable-session-crashed-bubble \
     --lang=en-US \
     --force-device-scale-factor=1 \
+    --autoplay-policy=no-user-gesture-required \
     --window-position=0,0 \
     --window-size="${WIDTH},${HEIGHT}" \
     "${extra[@]}" \

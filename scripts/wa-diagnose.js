@@ -3,7 +3,7 @@
 //   docker compose exec -T app node - < scripts/wa-diagnose.js
 //
 // Prints aggregates only (never message content, names or numbers). Use it when WhatsApp Web changes break
-// something (history import, names, media): it shows which assumptions in docs/wwebjs-notes.md still hold.
+// something (history import, names, media, calls): it shows which assumptions in docs/wwebjs-notes.md still hold.
 /* eslint-disable */
 'use strict';
 const dns = require('dns').promises;
@@ -86,6 +86,39 @@ async function browserChecks() {
           out.modules[name] = false;
         }
       }
+      // Calls (server/src/wa/callpage.ts): can WhatsApp Web call from this account and browser?
+      const R = (n) => {
+        try {
+          return w.require(n);
+        } catch (e) {
+          return null;
+        }
+      };
+      const calls = { crossOriginIsolated: !!w.crossOriginIsolated, sharedArrayBuffer: typeof w.SharedArrayBuffer !== 'undefined' };
+      try {
+        calls.enable_web_calling = R('WAWebABProps').getABPropConfigValue('enable_web_calling');
+      } catch (e) {
+        calls.enable_web_calling = 'error';
+      }
+      try {
+        const G = R('WAWebVoipGatingUtils');
+        calls.unsupportedReason = G && G.getUnsupportedBrowserReason ? G.getUnsupportedBrowserReason() || null : 'n/a';
+      } catch (e) {
+        calls.unsupportedReason = 'error';
+      }
+      calls.modules = {};
+      for (const n of ['WAWebCallCollection', 'WAWebVoipStartCall', 'WAWebVoipStackInterface', 'WAWebVoipAcquireMediaStream', 'WAWebVoipSignalingEnums', 'WAWebVoipWaCallEnums', 'WAWebCallRingtone']) {
+        calls.modules[n] = !!R(n);
+      }
+      calls.walcallInstalled = typeof w.__walcall === 'object';
+      calls.docPip = 'documentPictureInPicture' in w;
+      try {
+        calls.micPermission = (await navigator.permissions.query({ name: 'microphone' })).state;
+        calls.audioInputs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput').length;
+      } catch (e) {
+        calls.micPermission = 'error';
+      }
+      out.calls = calls;
       return out;
     });
     for (const [k, v] of Object.entries(r)) console.log(`${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`);

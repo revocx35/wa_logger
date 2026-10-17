@@ -12,11 +12,12 @@ the owner's account sends or receives, encrypted at rest. When someone deletes a
 ("deleted for everyone"), the logged copy stays viewable and is flagged as deleted.
 
 The web UI looks like WhatsApp: chat list, chat view, media. Since 2026-10 it can also **send** as the linked account
-(text, replies, media, files, voice notes, reactions, edits, delete for everyone, new chats; §4 "Sending").
+(text, replies, media, files, voice notes, reactions, edits, delete for everyone, new chats; §4 "Sending") and make and
+take **voice calls** from the browser (§4 "Calls").
 The live Chromium screen can be opened from the menu ("WA Web") through an in-browser VNC client.
 
-Out of scope on purpose: calls, multiple WhatsApp accounts or tenants, and **view-once media**
-(it is logged only as a placeholder and never downloaded).
+Out of scope on purpose: video (calls are voice only), call recording, multiple WhatsApp accounts or tenants, and
+**view-once media** (it is logged only as a placeholder and never downloaded).
 
 ## 2. User flow
 
@@ -95,9 +96,16 @@ Out of scope on purpose: calls, multiple WhatsApp accounts or tenants, and **vie
   `Singleton*` locks, then starts `Xvfb :99 -screen 0 ${SCREEN}`,
   `chromium --user-data-dir=/data/profile --remote-debugging-port=9222 --kiosk --no-first-run
   --no-default-browser-check --password-store=basic --disable-features=Translate,MediaRouter
-  --noerrdialogs --hide-crash-restore-bubble --window-position=0,0 --window-size=W,H about:blank`,
+  --noerrdialogs --hide-crash-restore-bubble --autoplay-policy=no-user-gesture-required --window-position=0,0
+  --window-size=W,H about:blank` (the autoplay flag lets WhatsApp Web's call audio run without a human click, also in
+  a call popout window; there are no sound devices, the audio only goes to the app, §4 "Calls"),
   `x11vnc -display :99 -rfbport 5900 -rfbauth … -forever -shared`, and
   `socat TCP-LISTEN:9223,fork,reuseaddr TCP:127.0.0.1:9222`. Crashed children are restarted.
+* socat and x11vnc listen only on the container's address in the network shared with the app (`BACKEND_PEER`): the
+  entrypoint resolves `app` and takes the source address of the route to it, and accepts it only if that route is
+  on-link (no gateway). Before the app container exists, Docker's DNS forwards the name to the host's resolver, where a
+  search domain can turn `app` into some public address; without the check the relays would listen on the egress
+  network and the app could not reach them (seen on the dev host, 2026-10-17).
 * The healthcheck calls `curl -fs http://127.0.0.1:9222/json/version`.
 * The profile volume **contains the live WhatsApp session**. Anyone with it can impersonate the account.
 
@@ -134,6 +142,10 @@ server/src/
     walpage.ts        code installed into WhatsApp Web as window.__wal: sending through WhatsApp Web's own send actions
     walbridge.ts      WalPage: injects walpage.ts (now + at every document start, so self-reloads keep it), runs its ops
     sender.ts         Sender: send API used by api/send.ts (chunked uploads into the page, hourly cap, stores sent media)
+    callpage.ts       code installed into WhatsApp Web as window.__walcall: call monitor and controls, virtual microphone,
+                      speaker tap (§4 "Calls")
+    callbridge.ts     CallBridge: injects callpage.ts, CDP bindings for call events + audio, 40 ms audio pump, trusted click
+    calls.ts          CallService: call state machine, audio bridging to one client, hourly cap (used by api/calls.ts)
   testutil/           harness (in-process app + cookie-jar client), seed.ts (dev sample data) — not in the build
 shared/api.d.ts       API DTO types shared by server and web (type-only)
 ```
@@ -212,6 +224,52 @@ shared/api.d.ts       API DTO types shared by server and web (type-only)
   reaction) marks the chat as read; opening a chat does so only with the `readReceipts` setting.
 * Limits: route rate limits plus 300 sends/hour (`Sender.charge`), audited as `message_sent` (type only).
 
+### Calls
+WhatsApp Web has had calling since July 2026 (it needs a cross-origin isolated page, which our Chromium has). The owner's
+browser is not where WhatsApp Web runs, so the call runs in the Chromium tab and only its **audio** is carried over:
+
+```
+owner's browser                      app                                Chromium tab (WhatsApp Web)
+mic → AudioWorklet (16 kHz s16le) ─► WS /api/calls/audio ─► CallBridge ─► Runtime.evaluate __walcall.audioIn (40 ms)
+                                                                          → virtual microphone (MediaStreamDestination)
+                                                                          → getUserMedia → WhatsApp's capture worklet
+speakers ◄─ AudioWorklet ◄──────── WS ◄──────────────── binding __walCallAudio ◄─ speaker tap (ScriptProcessor, 16 kHz)
+                                                                          ◄─ WhatsApp's playback worklet → output
+```
+* **Control** (`wa/callpage.ts`, adapted from the wa2sip project's `agent/page.js`): a 250 ms poll of
+  `WAWebCallCollection` reports every state change through the CDP binding `__walCallEvent` (ids and states, no names).
+  Start: `WAWebVoipStartCall.startWAWebVoipCall(wid, false, CALL_FROM_UI.CONVERSATION, 0, null, {entryTrust:
+  'user_gesture'})`. Answer: `WAWebCallRingtone.stopCallRingtone()`, `WAWebVoipAcquireMediaStream.checkVoipDevicePermissions`,
+  `(await WAWebVoipStackInterface.getVoipStackInterface()).acceptCall(true, false)` (audio only). Decline: `rejectCall()`.
+  Hang up: `endCall(EndCallReason.Self, true)`. These are the functions WhatsApp Web's own call buttons use.
+* **User activation:** start and answer run inside a trusted CDP mouse click on a 6×6 px transparent button the page
+  code adds, like a real click on WhatsApp's buttons. While the tab is hidden (behind a call popout) the click never
+  completes, so after 3 s the operation runs from `page.evaluate` instead. Chromium also runs with
+  `--autoplay-policy=no-user-gesture-required`.
+* **Audio in the page:** WhatsApp Web takes the microphone from `getUserMedia` and plays the other side through Web
+  Audio (a worklet connected to `AudioContext.destination`, or to a `MediaStreamDestination` played by an `<audio>`).
+  `callpage.ts` hooks, at document start: `getUserMedia` (audio-only requests get a clone of the virtual microphone's
+  track; requests with video are untouched), `enumerateDevices` (the virtual microphone is the only audio input),
+  `permissions.query({name:'microphone'})` → granted (the browser itself keeps no microphone access: managed policy
+  `AudioCaptureAllowed: false`, and there is no device), and `AudioNode.prototype.connect`: any node connected to an
+  output is also connected to a per-context ScriptProcessor that decimates to 16 kHz. Only one tap sends at a time
+  (the one that last carried sound), digital silence is not sent. Windows WhatsApp Web opens (`window.open`, the call
+  popout it uses automatically for video calls) get the same hooks; `documentPictureInPicture` is removed so the call
+  UI never moves into a PiP window.
+* **Bridging:** audio crosses only while `setBridge(true)`: the call is ours (outgoing being placed, or connecting/active)
+  **and** a client is attached. One audio client at a time; a new connection replaces the old one (close 4000), the
+  socket closes with the call (1000). Frames: binary 16 kHz mono s16le, even length, ≤ 6400 bytes, ≤ 96 kB/s per client
+  (3× real time, else 1008); towards the page at most 0.5 s is queued, towards a slow client ≥ 64 kB buffered is dropped.
+  The browser's worklet keeps a 60 ms prebuffer and drops backlog above 300 ms.
+* **State** (`wa/calls.ts`): WhatsApp's `CallState` → `incoming | calling | ringing | connecting | active | ended` (table in
+  docs/wwebjs-notes.md "Calls"); end reasons from `callLogResult`, `peerBusy`, `wasEverConnected`, `userEndedCall`.
+  A call first seen in a terminal state is ignored. The chat shown is the one we log (the call's LID or its phone-number
+  id). SSE `call` events carry ids/states; `GET /api/calls/current` adds the decrypted name.
+* Not stored: call audio is never written anywhere or logged. WhatsApp's own call-log messages are logged as before.
+  Audit: `call_started`, `call_accepted`, `call_declined` (no ids). Cap: 30 started calls per hour on top of route limits.
+* Clients: the web UI only. The Android client has no calls yet; wa_logger mobile can't have them (Android WebView
+  pages are never cross-origin isolated, see docs/wwebjs-notes.md).
+
 ## 5. Web UI — `web/`
 
 React 19 + Vite + TypeScript SPA, built into `server` static assets. No CDN, no external fonts, and no inline
@@ -230,11 +288,20 @@ system messages as centered pills; a view-once placeholder; select photos/videos
 rows, Select all, Esc) and download them as one ZIP; infinite scroll upward; live updates via SSE;
 per-chat and global search. Layout is responsive (single pane under 900px). Light and dark themes follow the system.
 
+Calls (`components/Calls.tsx`, `lib/callAudio.ts`, `lib/call-worklet.js`): a `CallProvider` around the main layout
+follows the current call (SSE `call` + `GET /api/calls/current`) and shows a floating call panel (incoming: Answer /
+Decline with a Web Audio ringtone and the tab title; outgoing: Calling… / Ringing… with a ringback; active: timer, mute,
+hang up; ended: the reason for 4 s; "Join audio" / "Move audio here" when the call has no audio in this tab, e.g. after
+a reload). The phone button in one-to-one chat headers starts a call. `CallAudio` is created inside the click (browsers
+start audio only after a gesture): `getUserMedia` with echo cancellation/noise suppression/AGC, an AudioWorklet (plain JS
+module emitted by Vite as a hashed same-origin asset, so `script-src 'self'` covers it) that resamples between the
+context rate and 16 kHz, and the WebSocket. Calls need a secure context (HTTPS or localhost) for the microphone.
+
 ## 6. Security model
 
 **Threats considered:** internet attackers reaching the login page, CSRF/XSS against the owner's browser,
 malicious message content (HTML/SVG/scripts inside messages or media), theft of disk or backups,
-lateral movement between containers, brute force.
+lateral movement between containers, brute force, and (with calls) someone listening to or placing calls.
 
 **Accepted / out of scope:** a fully compromised running host (it can read process memory and the live WA
 session), and WhatsApp's own terms of service (unofficial client; ban risk is the user's decision).
@@ -281,6 +348,17 @@ session), and WhatsApp's own terms of service (unofficial client; ban risk is th
   (or the request `Host` when that is unset). Authenticated non-GET requests must also carry
   `X-CSRF-Token = HMAC(HKDF(secret,"wal/v1/csrf"), "csrf")`, which `GET /api/state` returns.
 * The WebSocket (`/api/vnc`) and SSE (`/api/events`) require a valid session cookie and a matching `Origin`.
+
+### Calls
+* Who can listen: only a valid session (cookie) from our Origin can open `WS /api/calls/audio`, and audio flows only
+  for a call the owner started or answered (or one answered in WA Web), to one client at a time. A stolen session can
+  call and listen like the owner can send; revoking sessions closes the socket within 30 s (immediately on revoke events).
+* What the Chromium page can do: the page (WhatsApp Web) can feed the app arbitrary call events and audio through the
+  two bindings. Payloads are size-capped and validated (call ids and JIDs by pattern, PCM even-length ≤ 16 KiB base64)
+  and only ever forwarded to the attached client as binary audio; nothing from the page is rendered as HTML.
+* The browser's microphone is opened only after a click on Call / Answer / Join audio and is released when the call
+  ends. The Chromium container still has no microphone permission or device: WhatsApp Web only gets the virtual one.
+* No call audio is stored or logged; logs carry direction, reason and duration only.
 
 ### Encryption at rest (envelope, public-key)
 The logger writes while the owner is logged out, but must not be able to read old data without the owner.
@@ -384,7 +462,11 @@ AAD context `msgbody|<messageId>`, so an edit can move the old ciphertext into `
 | POST | /api/chats/:chatId/send-media | ✓ | `{uploadId, kind: auto\|document\|voice\|gif, caption?, quotedId?}` |
 | POST | /api/messages/:messageId/react · revoke · edit | ✓ | `{emoji}` ('' removes) · – · `{text}` |
 | POST | /api/chats/:chatId/read · /api/chats/new | ✓ | send read receipts · `{phone}` → `{chatId}` |
-| GET | /api/events | ✓ | SSE: `wa_state`, `message`, `message_update`, `chat_update`, `sync_progress` |
+| GET | /api/calls/current | ✓ | `CurrentCall` (`{call, available}`; the call with the decrypted name) |
+| POST | /api/chats/:chatId/call | ✓ | `{}` → `CallInfo` (voice call to a one-to-one chat; 409 while another call is going on) |
+| POST | /api/calls/:callId/accept · reject · hangup | ✓ | answer (voice) / decline / end |
+| WS | /api/calls/audio | ✓ | call audio both ways: binary 16 kHz mono s16le frames (`CallAudioHello` first) |
+| GET | /api/events | ✓ | SSE: `wa_state`, `message`, `message_update`, `chat_update`, `sync_progress`, `call` |
 | GET/PUT | /api/settings | ✓ | `{logStatus, downloadHistoryMedia, mediaMaxMb, historyPerChat, readReceipts}` |
 | GET | /api/audit | ✓ | audit log |
 | POST | /api/data/wipe | ✓ + password | delete all logged messages/media (keeps owner) |
@@ -412,6 +494,10 @@ AAD context `msgbody|<messageId>`, so an edit can move the old ciphertext into `
   lockout races, TOTP replay races, WAL scrubbing and `COOKIE_SECURE=auto`.
 * `scripts/smoke.sh` (23 checks: TLS incl. no-SNI, headers, cookies, CSRF/Origin, signup, WA reaches `qr`, VNC
   `RFB 003.00x`, no app egress, Chromium sandbox) and `scripts/smoke.sh --deploy` (the standalone layout).
+* Calls: `wa/callpage.test.ts` runs the injected source in a `vm` against fake WhatsApp modules and fake Web Audio,
+  `api/calls.test.ts` covers the routes, the audio WebSocket and the call state machine. `scripts/dev/call-audio.mts`
+  checks the audio path inside the real Chromium image (tab and popout, both output routes) and `scripts/dev/call-ui.mts`
+  drives the call UI in a real browser with a fake microphone.
 * `scripts/dev/` has a full-UI browser walkthrough (61 steps) and a live-update (SSE) test. `scripts/wa-diagnose.js`
   checks a *running* instance against WhatsApp Web changes (see §11).
 

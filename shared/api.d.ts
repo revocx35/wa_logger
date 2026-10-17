@@ -247,6 +247,49 @@ export interface EditRequest { text: string }
 export interface NewChatRequest { phone: string }
 export interface NewChatResponse { chatId: string }
 
+/* ------------------------------------------------------------------- calls */
+
+/**
+ * incoming: ringing here, not answered · calling: we dial · ringing: the other phone rings ·
+ * connecting: answered, audio being set up · active: talking · ended
+ */
+export type CallState = 'incoming' | 'calling' | 'ringing' | 'connecting' | 'active' | 'ended';
+/** completed: was connected and ended normally · elsewhere: answered or declined on another device */
+export type CallEndReason = 'completed' | 'declined' | 'busy' | 'missed' | 'unavailable' | 'canceled' | 'elsewhere' | 'failed';
+
+/** A WhatsApp voice call of the linked account (one at a time). Audio goes through `WS /api/calls/audio`. */
+export interface CallInfo {
+  id: string;
+  direction: 'incoming' | 'outgoing';
+  state: CallState;
+  /** WhatsApp video call: handled as a voice call here (no camera). */
+  video: boolean;
+  group: boolean;
+  /** The chat to show: the other person's (as logged here), or the group's. null when unknown. */
+  chatId: string | null;
+  /** Display name and picture. Only in `GET /api/calls/current` and the POST responses (SSE events carry no names). */
+  name?: string | null;
+  avatarUrl?: string | null;
+  startedAt: number;
+  connectedAt: number | null;
+  endedAt: number | null;
+  endReason: CallEndReason | null;
+  /** A browser or app is connected to the call audio. */
+  audio: boolean;
+}
+
+/** `GET /api/calls/current`. `available`: WhatsApp is connected and calling is set up in its tab. */
+export interface CurrentCall { call: CallInfo | null; available: boolean }
+
+/**
+ * `WS /api/calls/audio` (session cookie + same Origin, like `/api/vnc`). One connection at a time; a new one replaces
+ * the old (close code 4000). Closed with 1000 when the call ends, 4004 when there is no call.
+ * Audio both ways: **binary** messages of 16 kHz mono signed 16-bit little-endian PCM, 20–200 ms each (even length,
+ * at most 6400 bytes). The server first sends one text message `CallAudioHello`. Silence may not be sent at all:
+ * play silence when nothing arrives.
+ */
+export interface CallAudioHello { type: 'hello'; sampleRate: 16000; channels: 1; format: 's16le'; callId: string }
+
 /* ------------------------------------------------------------------ events */
 
 export type ServerEvent =
@@ -255,6 +298,8 @@ export type ServerEvent =
   | { type: 'message_update'; chatId: string; messageId: string; reason: 'deleted' | 'edited' | 'reaction' | 'ack' | 'media' }
   | { type: 'chat_update'; chatId: string }
   | { type: 'sync_progress'; sync: WaStatus['sync'] }
+  /** Every state change of a call (no names: fetch `GET /api/calls/current` for the display name). */
+  | { type: 'call'; call: CallInfo }
   | { type: 'session_revoked' };
 
 /* ---------------------------------------------------------------- settings */

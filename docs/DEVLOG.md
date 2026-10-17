@@ -247,3 +247,34 @@ The owner asked for a "full client": sending as well as logging.
   modules only. The first real send should be watched (`docker compose logs app`, Settings → Security log shows
   `message_sent`).
 - Calls were asked for too. They are not part of this change.
+
+## 2026-10-17 — Voice calls (web UI)
+
+The owner asked for calls to make wa_logger a full client, taking the wa2sip project's WhatsApp call bridge as the
+model, and explicitly not in wa_logger mobile (Android WebView can't run WhatsApp Web's calling).
+
+- Design: the call runs where WhatsApp Web runs (the Chromium tab); only its audio travels. WhatsApp Web's VoIP code was
+  read logged out (2.3000.1050707140, wa2sip's probe image): it takes the microphone from `getUserMedia` and plays
+  through Web Audio worklets, so `wa/callpage.ts` gives it a virtual microphone (a MediaStreamDestination the app feeds)
+  and taps every node connected to an output. wa2sip used PulseAudio devices instead; here that would have meant sound
+  servers and a new audio port in the Chromium container, while the hooks need nothing but the page.
+- Control code is wa2sip's (`startWAWebVoipCall`, the VoIP stack's `acceptCall`/`rejectCall`/`endCall`, a 250 ms poll of
+  `WAWebCallCollection`). Neither project has placed a real call yet.
+- Found while testing in the real Chromium image: `Runtime.bindingCalled` only arrives with `Runtime.enable`; two tapped
+  contexts interleaved their samples (fixed: one sending tap at a time, silence not sent); WhatsApp Web moves accepted
+  video calls into a popout window and uses document PiP when available, whose `getUserMedia`/Web Audio are that
+  window's own (fixed: hook `window.open` results, delete `documentPictureInPicture`); a CDP click hangs while the tab is
+  hidden behind a popout (fixed: 3 s timeout, then `page.evaluate`); a never-clicked popout keeps its audio suspended
+  (fixed: `--autoplay-policy=no-user-gesture-required` in the Chromium entrypoint).
+- Verified: `scripts/dev/call-audio.mts` in the real image (440 Hz in → 440 Hz heard by the fake WhatsApp graph, 1 kHz out
+  → 1000 Hz at the app, in the tab and in a popout, both output routes), `scripts/dev/call-ui.mts` in a browser with a
+  fake microphone (24 steps), unit tests for the page code (vm), the API/WebSocket/state machine and the browser worklet.
+- Read-only check of the owner's instance: `enable_web_calling` true, page cross-origin isolated, all call modules
+  present, microphone `denied` / 0 inputs before the hooks (expected).
+- Not verified: a real WhatsApp call. The first one should be watched (`docker compose logs app` shows `call` /
+  `call ended` with direction, reason and duration; Settings → Security log shows `call_started` / `call_accepted`).
+- Also fixed: `scripts/smoke.sh` failed on the dev host because Chromium's CDP/VNC relays listened on the egress network.
+  The host's DNS search domain resolves the bare name `app` to a public address, and Chromium starts before the app
+  container exists, so `resolve_bind_ip` took the route to that address. It now only accepts an on-link route. The same
+  could happen on any host whose resolver answers for `app`. Smoke test: 23/23 again.
+

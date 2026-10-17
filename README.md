@@ -6,7 +6,7 @@ wa_logger runs the real WhatsApp Web inside a sandboxed Chromium container on yo
 message, photo, video, voice note, document, edit and reaction your account sends or receives, and keeps it
 **even after the sender deletes it**. You read everything in a WhatsApp-style web interface, and you can **send** from
 it too: text, replies, photos, videos, files, voice notes, reactions, edits and "delete for everyone". You can also
-open the live WhatsApp Web session from the menu (**WA Web**).
+make and take **voice calls** from the browser, and open the live WhatsApp Web session from the menu (**WA Web**).
 
 <p>
   <img src="docs/screenshots/chat.png" width="49%" alt="Chat view with a deleted message still visible" />
@@ -30,6 +30,11 @@ _(Screenshots show generated demo data.)_
   list). Sending goes through the linked WhatsApp Web session with WhatsApp Web's own send functions, and everything
   you send is logged like any other message. Read receipts are off unless you turn them on (Settings → Logging);
   replying in a chat marks it as read, as in WhatsApp.
+- **Voice calls** from the browser: the phone button in a one-to-one chat calls the contact, and incoming calls ring
+  in every open wa_logger tab (Answer / Decline, mute, hang up). The call runs in the linked WhatsApp Web session, with
+  WhatsApp Web's own calling; your browser's microphone and speakers are bridged to it over the authenticated
+  connection. Needs HTTPS (browsers only allow the microphone there). Calls are **not recorded**. Video calls can be
+  answered as voice calls; group calls can be answered but not started.
 - **All message types** are logged except view-once media: text with WhatsApp formatting, photos, videos,
   GIFs, voice notes, audio, documents, stickers, locations, contact cards, polls, calls, group events, reactions,
   replies, forwards and status updates (optional).
@@ -345,6 +350,9 @@ In a chat, deleted messages have a **red frame** and the time they were deleted.
   retried later while WhatsApp still has it.
 - View-once media is never logged.
 - If the phone unlinks the device, a banner appears. Relink from **WA Web**.
+- Calls: one at a time, voice only, while a wa_logger tab is open (there are no push notifications). Your phone rings
+  too; answering there ends the call here ("Answered on another device"). Calls are never recorded; WhatsApp's own
+  call log entries appear in the chat as usual.
 
 ## Operations
 
@@ -379,6 +387,8 @@ docker run --rm -v wa_logger_app_data:/data -v "$PWD":/backup debian:trixie-slim
 | Status stuck at "Starting" | `docker compose logs chromium app`; check that the chromium container can reach `web.whatsapp.com`. |
 | WhatsApp says "open in another window" | wa_logger takes the session over automatically. If it persists, press **Restart** on the WA Web page. |
 | Lost password | Use **Forgot your password?** on the login page with your recovery key. |
+| Call button greyed out, or "can’t call from this account" | WhatsApp must be connected (status pill). Calling has to be enabled for the account by WhatsApp: `docker compose exec -T app node - < scripts/wa-diagnose.js` shows `enable_web_calling` and `unsupportedReason` under `calls`. |
+| Call connects but no sound | Open wa_logger over HTTPS and allow the microphone. If the call panel says "Join audio", the audio is not in this tab yet: press it. |
 | Custom reverse-proxy settings | Mount your own Caddyfile: `volumes: [./Caddyfile:/etc/caddy/Caddyfile:ro]` on the `caddy` service. |
 
 ## Android app

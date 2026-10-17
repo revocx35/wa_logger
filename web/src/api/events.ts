@@ -3,7 +3,7 @@ import type { ServerEvent } from '../../../shared/api';
 
 type Listener = (ev: ServerEvent) => void;
 
-const EVENT_TYPES: ServerEvent['type'][] = ['wa_state', 'message', 'message_update', 'chat_update', 'sync_progress', 'session_revoked'];
+const EVENT_TYPES: ServerEvent['type'][] = ['wa_state', 'message', 'message_update', 'chat_update', 'sync_progress', 'call', 'session_revoked'];
 
 /**
  * One shared EventSource for the whole app (SSE; the browser reconnects automatically).

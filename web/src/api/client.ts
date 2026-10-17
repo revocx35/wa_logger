@@ -1,7 +1,9 @@
 import type {
   AppState,
   AuditEntry,
+  CallInfo,
   ChatSummary,
+  CurrentCall,
   DeletedFeedPage,
   LoginResponse,
   Message,
@@ -155,6 +157,12 @@ export const api = {
   editMessage: (messageId: string, text: string) => request<{ ok: true }>('POST', `/api/messages/${enc(messageId)}/edit`, { text }),
   markRead: (chatId: string) => request<{ ok: true }>('POST', `/api/chats/${enc(chatId)}/read`),
   newChat: (phone: string) => request<NewChatResponse>('POST', '/api/chats/new', { phone }),
+
+  currentCall: () => request<CurrentCall>('GET', '/api/calls/current'),
+  startCall: (chatId: string) => request<CallInfo>('POST', `/api/chats/${enc(chatId)}/call`),
+  acceptCall: (callId: string) => request<CallInfo>('POST', `/api/calls/${enc(callId)}/accept`),
+  rejectCall: (callId: string) => request<{ ok: true }>('POST', `/api/calls/${enc(callId)}/reject`),
+  hangupCall: (callId: string) => request<{ ok: true }>('POST', `/api/calls/${enc(callId)}/hangup`),
 
   settings: () => request<Settings>('GET', '/api/settings'),
   updateSettings: (patch: Partial<Settings>) => request<Settings>('PUT', '/api/settings', patch),
