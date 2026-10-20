@@ -39,6 +39,12 @@ Read these first, every session:
   touching it. Never record or store call video either.
 - DB migrations are append-only (`server/src/db/db.ts`). Encrypted columns are AAD-bound to their row id, so ids
   can't be changed after the fact.
+- **Push to `main` when a piece of work is finished, without waiting for the owner to ask** (standing permission, 2026-10-20,
+  for this repo only) — but **only after a careful leak scan** of the working tree *and* all git history: IPs (LAN and public),
+  passwords, tokens/keys (`ghp_`, `sk-`, `AKIA`, JWTs), private keys, keystores, `.env`, `local.properties`, private hostnames,
+  emails, home paths; plus gitleaks (`docker run --rm -v "$PWD":/repo:ro zricethezav/gitleaks git /repo --no-banner -v`).
+  Fix and rewrite history if anything is found; never push with an open finding. Commit as the GitHub noreply identity.
+  Deploying to the owner's production instance is still not covered: ask first.
 - Commits end with the Co-Authored-By trailer. CI must stay green: it publishes the GHCR images on `main`.
 - Android (`android_client/`, ARCHITECTURE §12): all network I/O and JSON decoding off the main thread (ApiClient
   already runs requests on `Dispatchers.IO`; keep it that way and never read a response body elsewhere on the
