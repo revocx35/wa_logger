@@ -7,7 +7,7 @@ import { Browser, makeGateway, SETUP, type TestGateway } from './testutil.js';
 
 const ADMIN_PW = 'correct-horse-battery-staple-1';
 const FRIEND_PW = 'my-very-own-passphrase-1';
-const PORT_A = 18101;
+const PORT_A = 38101;
 
 describe('gateway: multi-user', () => {
   let g: TestGateway;
@@ -204,10 +204,20 @@ describe('gateway: multi-user', () => {
       const anon = new Browser(g.port);
       for (const p of ['/internal/info', '/%69nternal/info', '/api/../internal/info']) {
         const r = await anon.req('GET', p);
-        expect([401, 404], p).toContain(r.status);
+        expect([400, 401, 404], p).toContain(r.status);
         expect(r.body?.hasOwner, p).toBeUndefined();
       }
-      expect((await anon.req('GET', '/%61pi/chats')).status).toBe(401);
+      expect([400, 401]).toContain((await anon.req('GET', '/%61pi/chats')).status);
+      // Odd spellings are refused before they get anywhere near a worker, even for a signed-in user (who would otherwise
+      // have the gateway's token attached to whatever path they send).
+      for (const p of ['/api/../internal/info', '/api/%2e%2e/internal/info', '/api//internal/info', '/api/..%2finternal/info', '/api/%252e%252e/x', '/api/x\\..\\internal', '/api/./chats', '/api/chats/../../internal/reset']) {
+        const r = await admin.req('GET', p);
+        expect(r.status, p).toBe(400);
+      }
+      expect((await admin.req('GET', '/api/chats')).status).toBe(200);
+      // A client's own X-WAL-* headers are dropped on the way in.
+      const spoof = await admin.req('GET', '/api/auth/whoami', undefined, { headers: { 'x-wal-scope': 'internal', 'x-wal-internal': 'guess' } });
+      expect(spoof.status).toBe(200);
       expect((await anon.req('GET', '/api/chats')).status).toBe(401);
       expect((await anon.req('GET', '/api/auth/whoami')).status).toBe(401);
     });

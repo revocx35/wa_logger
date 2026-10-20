@@ -6,10 +6,9 @@
 //
 //   cd server && npx tsx ../scripts/dev/call-video.mts
 import http from 'node:http';
-import puppeteer from '../../server/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js';
 import { CallBridge } from '../../server/src/wa/callbridge.ts';
+import { connectManagedChromium } from './managed-chromium.mts';
 
-const CDP = process.env.CDP ?? 'http://127.0.0.1:19223';
 const PAGE_PORT = 18778;
 const server = http.createServer((_req, res) => res.writeHead(200, { 'content-type': 'text/html', connection: 'close' }).end('<!doctype html><title>t</title><body></body>'));
 await new Promise<void>((r) => server.listen(PAGE_PORT, '127.0.0.1', () => r()));
@@ -67,7 +66,7 @@ const SAMPLE = (expr: string, region: 'center' | 'topleft') => `(() => {
   return { w, h, r: Math.round(r / 64), g: Math.round(gg / 64), b: Math.round(b / 64) };
 })()`;
 
-const browser = await puppeteer.connect({ browserURL: CDP, defaultViewport: null, protocolTimeout: 30_000 });
+const browser = await connectManagedChromium({ protocolTimeout: 30_000 });
 for (const pg of await browser.pages()) if (pg.url().includes(`:${PAGE_PORT}`)) await pg.close(); // leftovers of an aborted run
 try {
   const owner = await browser.newPage(); // plays the owner's browser (encoder/decoder)

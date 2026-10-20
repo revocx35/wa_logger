@@ -1920,3 +1920,50 @@ label.switch {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
   background: #000;
 }
+
+/* ------------------------------------------------------------ user management (admin) */
+
+.table.users select,
+.table input {
+  width: 100%;
+  min-width: 140px;
+}
+.table td.actions {
+  white-space: nowrap;
+  text-align: right;
+}
+.table td.actions .btn + .btn {
+  margin-left: 6px;
+}
+.badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 0.75em;
+  background: var(--panel-2);
+  color: var(--muted);
+  vertical-align: middle;
+}
+.radio-group {
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.radio {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  flex-direction: row;
+  cursor: pointer;
+}
+.radio input {
+  margin-top: 4px;
+  width: auto;
+}
+.grow {
+  flex: 1;
+  min-width: 200px;
+}

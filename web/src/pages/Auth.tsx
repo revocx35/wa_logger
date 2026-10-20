@@ -64,8 +64,8 @@ export function SignupPage() {
 
   return (
     <AuthShell
-      title="Create your account"
-      subtitle="This instance has no owner yet. Create the single owner account to start logging your WhatsApp."
+      title="Create the admin account"
+      subtitle="This instance has no account yet. The first account is the admin: it can add more users, each with their own WhatsApp."
     >
       <form onSubmit={submit} className="form">
         <label>
@@ -99,12 +99,17 @@ export function SignupPage() {
 }
 
 export function LoginPage() {
-  const { refresh } = useAppState();
+  const { refresh, setPendingRecoveryKey } = useAppState();
   const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [totp, setTotp] = useState('');
   const [needTotp, setNeedTotp] = useState(false);
+  // Set after signing in with a temporary password an admin issued: the user must choose their own now.
+  const [claim, setClaim] = useState<{ needRecoveryKey: boolean } | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [recoveryKey, setRecoveryKey] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -113,7 +118,19 @@ export function LoginPage() {
     setError(null);
     setBusy(true);
     try {
+      if (claim) {
+        if (newPassword !== confirm) return setError('Passwords do not match.');
+        const res = await api.claim(username.trim(), password, newPassword, claim.needRecoveryKey ? recoveryKey.trim() : undefined);
+        setPendingRecoveryKey(res.recoveryKey);
+        await refresh();
+        navigate('/setup/recovery', { replace: true });
+        return;
+      }
       const res = await api.login(username.trim(), password, needTotp ? totp.trim() : undefined);
+      if (!res.ok && res.mustChangePassword) {
+        setClaim({ needRecoveryKey: !!res.needRecoveryKey });
+        return;
+      }
       if (!res.ok && res.needTotp) {
         setNeedTotp(true);
         return;
@@ -126,6 +143,46 @@ export function LoginPage() {
       setBusy(false);
     }
   };
+
+  if (claim) {
+    return (
+      <AuthShell
+        title="Choose your own password"
+        subtitle={
+          claim.needRecoveryKey
+            ? 'The admin reset your password. Enter your recovery key and choose a new password: your logged messages stay readable only with it.'
+            : 'You signed in with a temporary password from the admin. Choose one only you know — your data is encrypted with it, so neither the admin nor anyone else can read it or get it back for you.'
+        }
+      >
+        <form onSubmit={submit} className="form">
+          {claim.needRecoveryKey ? (
+            <label>
+              Recovery key
+              <textarea value={recoveryKey} onChange={(e) => setRecoveryKey(e.target.value)} rows={3} spellCheck={false} autoComplete="off" required autoFocus className="mono" />
+            </label>
+          ) : null}
+          <label>
+            New password
+            <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoComplete="new-password" required minLength={12} maxLength={256} autoFocus={!claim.needRecoveryKey} />
+          </label>
+          <label>
+            Confirm new password
+            <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" required />
+          </label>
+          <PasswordHints password={newPassword} username={username} />
+          <ErrorNote error={error} />
+          <button className="btn primary block" disabled={busy}>
+            {busy ? <Spinner size={18} /> : 'Set password and continue'}
+          </button>
+          <p className="center muted small">
+            <button type="button" className="link-btn" onClick={() => { setClaim(null); setPassword(''); setNewPassword(''); setConfirm(''); setError(null); }}>
+              Back to login
+            </button>
+          </p>
+        </form>
+      </AuthShell>
+    );
+  }
 
   return (
     <AuthShell title="Log in" subtitle="Unlock your encrypted WhatsApp log.">

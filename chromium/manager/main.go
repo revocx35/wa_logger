@@ -36,10 +36,6 @@ func main() {
 		log.Fatal("CONTROL_SECRET must be set (at least 8 characters)")
 	}
 	_ = os.Unsetenv("CONTROL_SECRET") // children never see it (their environment is built from scratch anyway)
-	listen := os.Getenv("LISTEN_ADDR")
-	if listen == "" {
-		log.Fatal("LISTEN_ADDR must be set (host:port on the network shared with the app)")
-	}
 	m := regexp.MustCompile(`^(\d{3,4})x(\d{3,4})x(16|24)$`).FindStringSubmatch(env("SCREEN", "1280x800x24"))
 	if m == nil {
 		log.Fatal("invalid SCREEN (expected e.g. 1280x800x24)")
@@ -63,32 +59,60 @@ func main() {
 	})
 	handler := NewHandler(mgr, []byte(secret))
 
-	serve := func(addr string, h http.Handler) *http.Server {
+	serve := func(addr string, h http.Handler) (*http.Server, error) {
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
-			log.Fatalf("listen %s: %v", addr, err)
+			return nil, err
 		}
 		srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}
 		go func() {
 			if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-				log.Fatalf("serve %s: %v", addr, err)
+				log.Printf("serve %s: %v", addr, err)
 			}
 		}()
 		log.Printf("listening on %s", addr)
-		return srv
+		return srv, nil
 	}
-	servers := []*http.Server{serve(listen, handler)}
-	// The container's healthcheck only needs /healthz, on loopback.
-	if host, port, err := net.SplitHostPort(listen); err == nil && host != "127.0.0.1" && host != "0.0.0.0" && host != "::" && host != "" {
-		health := http.NewServeMux()
-		health.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]bool{"ok": true}) })
-		servers = append(servers, serve(net.JoinHostPort("127.0.0.1", port), health))
+	port := env("MANAGER_PORT", "9223")
+	// Loopback answers /healthz only (the container's healthcheck; the app container may not even exist yet).
+	health := http.NewServeMux()
+	health.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]bool{"ok": true}) })
+	servers := []*http.Server{}
+	explicit := os.Getenv("LISTEN_ADDR")
+	if h, _, err := net.SplitHostPort(explicit); explicit == "" || (err == nil && h != "" && h != "0.0.0.0" && h != "::" && h != "127.0.0.1") {
+		if srv, err := serve(net.JoinHostPort("127.0.0.1", port), health); err != nil {
+			log.Fatalf("listen: %v", err)
+		} else {
+			servers = append(servers, srv)
+		}
 	}
+	// The API listens on our address on the network shared with the app, as soon as that network is there.
+	apiCh := make(chan *http.Server, 1)
+	go func() {
+		addr := os.Getenv("LISTEN_ADDR")
+		for addr == "" {
+			if ip := onLinkAddress(env("BACKEND_PEER", "app")); ip != "" {
+				addr = net.JoinHostPort(ip, port)
+				break
+			}
+			time.Sleep(2 * time.Second)
+		}
+		srv, err := serve(addr, handler)
+		if err != nil {
+			log.Fatalf("listen %s: %v", addr, err)
+		}
+		apiCh <- srv
+	}()
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
 	<-sig
 	log.Print("stopping")
+	select {
+	case srv := <-apiCh:
+		servers = append(servers, srv)
+	default:
+	}
 	for _, s := range servers {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		_ = s.Shutdown(ctx)

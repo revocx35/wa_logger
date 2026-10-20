@@ -31,11 +31,16 @@ services:
     ports:
       - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-80}:80"
       - "${HTTPS_BIND:-0.0.0.0}:${HTTPS_PORT:-443}:443"
+      # Extra ports for users the admin keeps off the default port (user management). Closed to the network by default:
+      # set EXTRA_BIND=0.0.0.0 (or your LAN address) when the reverse proxy for those users runs on another host.
+      - "${EXTRA_BIND:-127.0.0.1}:${EXTRA_PORTS:-8101-8110}:${EXTRA_PORTS:-8101-8110}"
     # Caddyfile = HTTPS (Let's Encrypt / internal CA); Caddyfile.http = plain HTTP behind your own TLS proxy.
     command: ["caddy", "run", "--config", "/etc/caddy/${CADDY_CONFIG:-Caddyfile}", "--adapter", "caddyfile"]
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:?run scripts/setup.sh first}
       CADDY_TLS: ${CADDY_TLS:-internal}
+      CADDY_CONFIG: ${CADDY_CONFIG:-Caddyfile}
+      EXTRA_PORTS: ${EXTRA_PORTS:-8101-8110}
     volumes:
       - caddy_data:/data
       - caddy_config:/config
@@ -55,25 +60,38 @@ services:
     image: wa_logger-app:local
     restart: unless-stopped
     <<: *hardening
+    # The supervisor (PID 1's child) starts the gateway and one worker per user under their own unix users: it needs
+    # exactly these capabilities (KILL: to stop a worker that runs as another user), everything else stays dropped. The
+    # processes it starts hold none.
+    cap_add: [SETUID, SETGID, CHOWN, KILL]
     env_file:
       - ${WAL_ENV_FILE:-.env}
     environment:
       DATA_DIR: /data
+      USERS_DIR: /users
       PORT: "8080"
       HOST: 0.0.0.0
-      CHROMIUM_HOST: chromium
+      CHROMIUM_URL: http://chromium:9223
+      # Shared with the chromium container only; the supervisor derives each user's browser token from it. (Releases
+      # before user management used VNC_PASSWORD for the VNC server: it is the fallback so existing .env files work.)
+      CONTROL_SECRET: ${CONTROL_SECRET:-${VNC_PASSWORD:?run scripts/setup.sh first}}
+      EXTRA_PORTS: ${EXTRA_PORTS:-8101-8110}
       # 1 = only the bundled Caddy; 2 = Caddy + your own reverse proxy in front (HTTP mode).
       TRUST_PROXY: ${TRUST_PROXY:-1}
     volumes:
       - app_data:/data
+      - app_users:/users
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
+      # Control socket and one socket directory per user worker.
+      - /run/wal:rw,noexec,nosuid,nodev,size=4m,mode=0711
     networks: [edge, backend]
     depends_on:
       chromium:
         condition: service_healthy
-    mem_limit: 1g
-    pids_limit: 256
+    # One Node worker per user (about 200 MB each, more while they download media).
+    mem_limit: ${APP_MEM_LIMIT:-2g}
+    pids_limit: 1024
 
   chromium:
     build:
@@ -82,24 +100,32 @@ services:
     restart: unless-stopped
     read_only: true
     cap_drop: [ALL]
+    # The manager (root) starts every user's browser under that user's own unix user and stops it again: only these four
+    # are needed (KILL: to signal a browser that runs as another user).
+    cap_add: [SETUID, SETGID, CHOWN, KILL]
     security_opt:
       - no-new-privileges:true
       # Docker's default profile + the syscalls Chromium's namespace sandbox needs (sandbox stays ON).
       - seccomp=./chromium/seccomp-chromium.json
     logging: *logging
     environment:
-      VNC_PASSWORD: ${VNC_PASSWORD:?run scripts/setup.sh first}
+      CONTROL_SECRET: ${CONTROL_SECRET:-${VNC_PASSWORD:?run scripts/setup.sh first}}
+      MAX_INSTANCES: ${MAX_USERS:-10}
       SCREEN: ${SCREEN:-1280x800x24}
       BACKEND_PEER: app
     volumes:
       - chromium_profile:/data
     tmpfs:
       - /tmp:rw,nosuid,nodev,size=512m
-      - /home/chrome:rw,nosuid,nodev,size=256m,uid=10002,gid=10002,mode=0700
-    shm_size: 1gb
+      # One home directory per user below here (the manager creates them 0700 for the right unix user).
+      - /home/chrome:rw,nosuid,nodev,size=512m,mode=0711
+      # Per-user X authority cookie and VNC password.
+      - /run/wal:rw,noexec,nosuid,nodev,size=8m,mode=0711
+    shm_size: ${CHROMIUM_SHM:-2gb}
     networks: [backend, egress]
-    mem_limit: 2500m
-    pids_limit: 1024
+    # Every active user runs a Chromium of about 1.5 GB: raise this with MAX_USERS.
+    mem_limit: ${CHROMIUM_MEM_LIMIT:-6g}
+    pids_limit: 4096
     stop_grace_period: 20s
 
 networks:
@@ -116,6 +142,8 @@ networks:
 
 volumes:
   app_data: {}
+  # Every user but the first (the first account's data stays in app_data).
+  app_users: {}
   chromium_profile: {}
   caddy_data: {}
   caddy_config: {}

@@ -105,6 +105,7 @@ describe('supervisor', () => {
     expect(e1.DATA_DIR).toBe(path.join(dir, 'data'));
     expect(e2.DATA_DIR).toBe(path.join(dir, 'users', '2'));
     expect(e2.TENANT_ID).toBe('2');
+    expect(e2.HOME).toBe(path.join(dir, 'users', '2'));
     expect(e2.CHROMIUM_INSTANCE).toBe('2');
     // Each worker gets its own browser token and nobody else's.
     expect(e1.CHROMIUM_TOKEN).toBe(instanceToken('control-secret-0123456789', 1));

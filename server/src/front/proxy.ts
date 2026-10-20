@@ -9,7 +9,9 @@ import type { WorkerHandle } from '../supervisor/protocol.js';
  */
 
 const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'proxy-connection', 'te', 'trailer', 'transfer-encoding', 'upgrade']);
-const NOT_FORWARDED = new Set(['x-forwarded-for', 'x-forwarded-proto', 'x-forwarded-host', 'x-forwarded-port', 'x-forwarded-server', 'forwarded', 'x-real-ip', 'x-wal-internal', 'via']);
+const NOT_FORWARDED = new Set(['x-forwarded-for', 'x-forwarded-proto', 'x-forwarded-host', 'x-forwarded-port', 'x-forwarded-server', 'forwarded', 'x-real-ip', 'via']);
+/** Headers of our own that only the gateway may set (a client's are dropped). */
+const isOurs = (k: string) => k.startsWith('x-wal-');
 
 export interface ClientInfo {
   ip: string;
@@ -21,11 +23,11 @@ export function upstreamHeaders(
   src: IncomingHttpHeaders,
   client: ClientInfo,
   handle: WorkerHandle,
-  opts: { keepUpgrade?: boolean } = {},
+  opts: { keepUpgrade?: boolean; internal?: boolean } = {},
 ): http.OutgoingHttpHeaders {
   const out: http.OutgoingHttpHeaders = {};
   for (const [k, v] of Object.entries(src)) {
-    if (v === undefined || NOT_FORWARDED.has(k)) continue;
+    if (v === undefined || NOT_FORWARDED.has(k) || isOurs(k)) continue;
     if (HOP_BY_HOP.has(k) && !(opts.keepUpgrade && (k === 'connection' || k === 'upgrade'))) continue;
     out[k] = v;
   }
@@ -33,6 +35,8 @@ export function upstreamHeaders(
   out['x-forwarded-proto'] = client.proto;
   out['x-forwarded-host'] = client.host;
   out['x-wal-internal'] = handle.internalToken;
+  // Only the gateway's own calls may reach the worker's /internal routes; a request on behalf of a client never carries this.
+  if (opts.internal) out['x-wal-scope'] = 'internal';
   return out;
 }
 

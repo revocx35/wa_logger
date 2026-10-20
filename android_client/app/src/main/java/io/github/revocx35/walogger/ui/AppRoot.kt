@@ -118,7 +118,10 @@ fun AppRoot(graph: AppGraph) {
                         },
                         login = { user, pw, totp ->
                             val res = s.api.login(user, pw, totp)
-                            if (!res.ok && res.needTotp == true) {
+                            if (!res.ok && res.mustChangePassword == true) {
+                                // An admin-issued temporary password: choosing a new one happens on the server's web page.
+                                throw ApiException(401, "must_change_password", "This is a temporary password. Open the server's web page once, sign in there and choose your own password; then sign in here.")
+                            } else if (!res.ok && res.needTotp == true) {
                                 true
                             } else {
                                 ctrl.refresh().join()

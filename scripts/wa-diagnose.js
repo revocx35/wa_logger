@@ -1,24 +1,36 @@
 // wa_logger health check for a RUNNING instance — run on the Docker host:
 //
-//   docker compose exec -T app node - < scripts/wa-diagnose.js
+//   docker compose exec -T -u 10001 app node - < scripts/wa-diagnose.js                 # the first account (admin)
+//   docker compose exec -T -u $((10100+N)) -e TENANT=N app node - < scripts/wa-diagnose.js  # user number N
+//
+// (Every account's data belongs to its own unix user, so run it as that user. The container's CONTROL_SECRET is used to
+// open the account's own browser through the chromium manager, read-only.)
 //
 // Prints aggregates only (never message content, names or numbers). Use it when WhatsApp Web changes break
 // something (history import, names, media, calls): it shows which assumptions in docs/wwebjs-notes.md still hold.
 /* eslint-disable */
 'use strict';
-const dns = require('dns').promises;
+const crypto = require('crypto');
 const Database = require('/app/node_modules/better-sqlite3');
 const puppeteer = require('/app/node_modules/puppeteer');
+
+const TENANT = Number(process.env.TENANT || 1);
+const DATA = TENANT === 1 ? '/data' : `/users/${TENANT}`;
 
 function section(t) {
   console.log(`\n== ${t}`);
 }
 
 async function browserChecks() {
-  const host = process.env.CHROMIUM_HOST || 'chromium';
-  const port = process.env.CDP_PORT || '9223';
-  const { address } = await dns.lookup(host, { family: 4 });
-  const browser = await puppeteer.connect({ browserURL: `http://${address}:${port}`, defaultViewport: null, protocolTimeout: 120000 });
+  const base = process.env.CHROMIUM_URL || 'http://chromium:9223';
+  const secret = process.env.CONTROL_SECRET || process.env.VNC_PASSWORD;
+  if (!secret) throw new Error('CONTROL_SECRET is not set in this container');
+  const token = crypto.createHmac('sha256', secret).update(`wal/chromium/instance/${TENANT}`).digest('hex');
+  const headers = { authorization: `Bearer ${token}` };
+  const v = await (await fetch(`${base}/i/${TENANT}/cdp/json/version`, { headers })).json();
+  const ws = new URL(`${base}/i/${TENANT}/cdp${new URL(v.webSocketDebuggerUrl).pathname}`);
+  ws.protocol = ws.protocol === 'https:' ? 'wss:' : 'ws:';
+  const browser = await puppeteer.connect({ browserWSEndpoint: ws.toString(), headers, defaultViewport: null, protocolTimeout: 120000 });
   try {
     const pages = await browser.pages();
     const wa = pages.find((p) => p.url().startsWith('https://web.whatsapp.com'));
@@ -128,7 +140,7 @@ async function browserChecks() {
 }
 
 function dbChecks() {
-  const db = new Database('/data/wa_logger.db', { readonly: true, fileMustExist: true });
+  const db = new Database(`${DATA}/wa_logger.db`, { readonly: true, fileMustExist: true });
   const all = (q, ...a) => db.prepare(q).all(...a);
   const one = (q, ...a) => db.prepare(q).get(...a);
   console.log('owner:', one('select count(*) n from owner').n ? 'yes' : 'NO');

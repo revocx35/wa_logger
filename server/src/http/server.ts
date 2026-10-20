@@ -231,6 +231,8 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
     if (config.internalToken) {
       const t = req.headers['x-wal-internal'];
       if (typeof t !== 'string' || !ctEqual(t, config.internalToken)) return sendError(reply, Errors.forbidden());
+      // /internal is for the gateway's own calls: it marks those with a scope header it never forwards from a client.
+      if (/^\/internal(\/|$)/i.test(req.url) && req.headers['x-wal-scope'] !== 'internal') return sendError(reply, Errors.forbidden());
     }
     if (peerGuard.isBlocked(req.socket.remoteAddress)) {
       return sendError(reply, Errors.forbidden());

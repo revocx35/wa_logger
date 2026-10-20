@@ -10,8 +10,6 @@ SCREEN="${SCREEN:-1280x800x24}"
 if [[ ! "$SCREEN" =~ ^([0-9]{3,4})x([0-9]{3,4})x(16|24)$ ]]; then
   log "invalid SCREEN '$SCREEN' (expected e.g. 1280x800x24)"; exit 1
 fi
-MANAGER_PORT="${MANAGER_PORT:-9223}"
-BACKEND_PEER="${BACKEND_PEER:-app}"
 
 umask 077
 # The profile volume's root must be traversable by every user's browser but listable by none; each user's directory
@@ -23,26 +21,7 @@ chmod 0711 /run/wal
 chmod 0711 /home/chrome
 chmod 1777 /tmp/.X11-unix
 
-# Determine which address the manager listens on. By default: our own address on the network shared with the app (so
-# nothing listens on the egress network). BIND_ADDRESS overrides.
-resolve_bind_ip() {
-  if [[ -n "${BIND_ADDRESS:-}" ]]; then echo "$BIND_ADDRESS"; return; fi
-  local peer_ip route src
-  while true; do
-    peer_ip="$(getent ahostsv4 "$BACKEND_PEER" 2>/dev/null | awk 'NR==1{print $1}')" || true
-    if [[ -n "$peer_ip" ]]; then
-      route="$(ip -4 route get "$peer_ip" 2>/dev/null)" || true
-      src="$(sed -n 's/.* src \([0-9.]*\).*/\1/p' <<<"$route")"
-      # The app shares a network with us, so its address is on-link. A route "via" a gateway means the name
-      # resolved somewhere else (before the app container exists, Docker's DNS asks the host's resolver, and a
-      # search domain can turn "app" into a public address): binding there would listen on the egress network.
-      if [[ -n "$src" && "$route" != *" via "* ]]; then echo "$src"; return; fi
-    fi
-    sleep 2
-  done
-}
-
-ip="$(resolve_bind_ip)"
-log "manager listening on ${ip}:${MANAGER_PORT} (screen ${SCREEN})"
-export LISTEN_ADDR="${ip}:${MANAGER_PORT}"
+# The manager answers /healthz on loopback straight away and listens on our address on the network shared with the app
+# (BACKEND_PEER, default "app") as soon as that network exists. LISTEN_ADDR overrides the address.
+log "starting the manager (screen ${SCREEN})"
 exec /usr/local/bin/wal-chromium-manager

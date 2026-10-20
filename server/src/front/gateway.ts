@@ -157,7 +157,7 @@ export class Gateway {
     extraHeaders: http.OutgoingHttpHeaders = {},
   ): Promise<UpstreamResult> {
     const handle = await this.worker(user);
-    const headers = upstreamHeaders(req.headers, this.info(req), handle);
+    const headers = upstreamHeaders(req.headers, this.info(req), handle, { internal: path.startsWith('/internal/') });
     delete headers['content-length'];
     delete headers['content-type'];
     if (body !== undefined) headers['content-type'] = 'application/json';
@@ -172,7 +172,7 @@ export class Gateway {
   /** Calls the worker of a tenant without a client request (startup checks, admin actions on other users). */
   async callInternal(user: Pick<UserRow, 'id'>, method: string, path: string, body?: unknown, timeoutMs = 60_000): Promise<UpstreamResult> {
     const handle = await this.worker(user);
-    const headers: http.OutgoingHttpHeaders = { 'x-wal-internal': handle.internalToken };
+    const headers: http.OutgoingHttpHeaders = { 'x-wal-internal': handle.internalToken, 'x-wal-scope': 'internal' };
     if (body !== undefined) headers['content-type'] = 'application/json';
     try {
       return await callWorker(handle, { method, path, headers, body: body === undefined ? undefined : JSON.stringify(body), timeoutMs });
@@ -333,9 +333,30 @@ function rawReply(res: http.ServerResponse, status: number, err: AppError): void
   res.end(body);
 }
 
+/**
+ * Only plain /api/… paths are forwarded: no dot segments, doubled or encoded slashes, backslashes, control characters or
+ * escapes of those. (The worker's /internal routes must stay unreachable from outside however a path is spelled.)
+ */
+export function cleanApiPath(url: string): boolean {
+  const [path = ''] = url.split('?');
+  if (!/^\/api(\/[\x21-\x7e]*)?$/.test(path)) return false;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(path);
+  } catch {
+    return false;
+  }
+  if (decoded !== path && /%/.test(decoded)) return false; // double encoding
+  return !/(^|\/)\.{1,2}(\/|$)|\/\/|\\|[\x00-\x1f\x7f]/.test(decoded) && /^\/api(\/|$)/.test(decoded);
+}
+
 /** Forwards a request of a signed-in user to that user's worker, streaming. */
 async function forwardApi(gw: Gateway, req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const res = reply.raw;
+  if (!cleanApiPath(req.url)) {
+    const e = new AppError(400, 'bad_request', 'Bad request.');
+    return rawReply(res, e.statusCode, e);
+  }
   const port = gw.localPort(req.raw);
   const secure = gw.secure(req);
   const user = gw.identify(req.headers, port, secure);
@@ -369,7 +390,7 @@ async function onUpgrade(gw: Gateway, req: IncomingMessage, socket: net.Socket, 
   socket.on('error', () => socket.destroy());
   try {
     const url = req.url ?? '';
-    if (!url.startsWith('/api/') || String(req.headers.upgrade).toLowerCase() !== 'websocket') return deny(400);
+    if (!cleanApiPath(url) || !url.startsWith('/api/') || String(req.headers.upgrade).toLowerCase() !== 'websocket') return deny(400);
     const port = gw.localPort(req);
     const info = gw.effective(rawClientInfo(req, gw.config.trustProxy), port);
     const secure = gw.config.cookieSecure === 'auto' ? info.proto === 'https' : gw.config.cookieSecure;

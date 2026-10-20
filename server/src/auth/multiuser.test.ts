@@ -26,7 +26,7 @@ describe('multi-user worker', () => {
   // What a browser's request looks like once the gateway has forwarded it (it adds the token).
   let browser: () => TestClient;
   const internal = (method: string, url: string, body?: unknown) =>
-    gw.req(method, url, body, { origin: null, headers: { 'x-wal-internal': INTERNAL_TOKEN } });
+    gw.req(method, url, body, { origin: null, headers: { 'x-wal-internal': INTERNAL_TOKEN, 'x-wal-scope': 'internal' } });
 
   beforeEach(async () => {
     // A worker as the supervisor starts it: no setup token, an internal token.
@@ -44,6 +44,11 @@ describe('multi-user worker', () => {
     expect((await c.req('GET', '/api/state', undefined, { origin: null })).status).toBe(403);
     expect((await c.req('GET', '/healthz', undefined, { origin: null, headers: { 'x-wal-internal': 'wrong' } })).status).toBe(403);
     expect((await internal('GET', '/internal/info')).status).toBe(200);
+    // The token alone (what a request forwarded for a browser carries) does not open the /internal routes.
+    const tokenOnly = h.client({ 'x-wal-internal': INTERNAL_TOKEN });
+    expect((await tokenOnly.req('GET', '/internal/info', undefined, { origin: null })).status).toBe(403);
+    expect((await tokenOnly.req('POST', '/internal/reset', { mode: 'wipe', tempPassword: TEMP }, { origin: null })).status).toBe(403);
+    expect((await tokenOnly.req('GET', '/INTERNAL/info', undefined, { origin: null })).status).toBe(403);
   });
 
   it('has no public signup route without a setup token, and no /internal routes without an internal token', async () => {

@@ -195,7 +195,8 @@ export class WaService implements WaController {
     } catch (err) {
       if (gen !== this.generation) return;
       const msg = err instanceof Error ? err.message : String(err);
-      this.ctx.log.warn({ err: msg }, 'whatsapp connect failed');
+      // Library failures carry no message content; the first stack frames show where WhatsApp Web's setup broke.
+      this.ctx.log.warn({ err: msg, stack: err instanceof Error ? err.stack?.split('\n').slice(1, 6).map((l) => l.trim()) : undefined }, 'whatsapp connect failed');
       await this.teardown();
       this.scheduleReconnect(msg.includes('not reachable') ? 'Chromium is not reachable' : 'Failed to load WhatsApp Web');
     } finally {

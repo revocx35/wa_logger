@@ -275,3 +275,26 @@ func TestManagerLimit(t *testing.T) {
 		t.Fatalf("expected limit, got %v", err)
 	}
 }
+
+func TestPickOnLink(t *testing.T) {
+	mk := func(cidr string) (*net.IPNet, net.IP) {
+		ip, n, _ := net.ParseCIDR(cidr)
+		return &net.IPNet{IP: ip, Mask: n.Mask}, ip
+	}
+	back, backIP := mk("172.20.0.3/16")
+	egress, egressIP := mk("172.21.0.2/16")
+	nets := []*net.IPNet{back, egress}
+	own := []net.IP{backIP, egressIP}
+	// The app is on the backend network: we listen on our backend address.
+	if got := pickOnLink([]net.IP{net.ParseIP("172.20.0.2")}, nets, own); got != "172.20.0.3" {
+		t.Fatalf("got %q", got)
+	}
+	// A name that resolved to somewhere else (a public address from the host's resolver) is never on-link.
+	if got := pickOnLink([]net.IP{net.ParseIP("93.184.216.34")}, nets, own); got != "" {
+		t.Fatalf("public address accepted: %q", got)
+	}
+	// Our own address is not the peer.
+	if got := pickOnLink([]net.IP{net.ParseIP("172.20.0.3")}, nets, own); got != "" {
+		t.Fatalf("own address accepted: %q", got)
+	}
+}

@@ -3,14 +3,13 @@
 // the way WhatsApp Web builds its own (getUserMedia → 16 kHz capture context; a worklet at 48 kHz → a
 // MediaStreamDestination + <audio>, or straight to AudioContext.destination), in the tab and in a popout window.
 // Needs the wa_logger chromium image running its own entrypoint (no sound devices, sandbox on, managed policy with
-// "localhost" added to URLAllowlist) with CDP on 127.0.0.1:19223 — see scripts/dev/README.md.
+// "localhost" added to URLAllowlist) with the manager on 127.0.0.1:19223 — see scripts/dev/README.md.
 //
 //   cd server && npx tsx ../scripts/dev/call-audio.mts
 import http from 'node:http';
-import puppeteer from '../../server/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js';
 import { CallBridge } from '../../server/src/wa/callbridge.ts';
+import { connectManagedChromium } from './managed-chromium.mts';
 
-const CDP = process.env.CDP ?? 'http://127.0.0.1:19223';
 const PAGE_PORT = 18777;
 const server = http.createServer((_req, res) => res.writeHead(200, { 'content-type': 'text/html' }).end('<!doctype html><title>t</title><body></body>'));
 await new Promise<void>((r) => server.listen(PAGE_PORT, '127.0.0.1', () => r()));
@@ -71,7 +70,7 @@ const BUILD = (route: string, popout: boolean) => `(async () => {
   return true;
 })()`;
 
-const browser = await puppeteer.connect({ browserURL: CDP, defaultViewport: null });
+const browser = await connectManagedChromium();
 try {
   for (const [route, popout] of [
     ['element', false],

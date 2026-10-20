@@ -227,7 +227,8 @@ func (in *Instance) start() error {
 		}()
 	}
 	spawn("xvfb", func() (string, []string, bool) {
-		_ = os.Remove(xsock)
+		// Leftovers of an Xvfb that died: its socket and lock file belong to the instance's user (and /tmp is sticky).
+		_ = in.m.runAs(id, nil, "rm", "-f", "--", xsock, fmt.Sprintf("/tmp/.X%d-lock", display))
 		return "Xvfb", []string{
 			":" + strconv.Itoa(display), "-screen", "0", fmt.Sprintf("%dx%dx24", cfg.Width, cfg.Height),
 			"-nolisten", "tcp", "-nolisten", "local", "-auth", authFile, "-dpi", "96", "+extension", "RANDR",
@@ -238,8 +239,11 @@ func (in *Instance) start() error {
 			return "", nil, false
 		}
 		profile := l.ProfileDir(id)
-		for _, f := range []string{"SingletonLock", "SingletonSocket", "SingletonCookie"} {
-			_ = os.Remove(filepath.Join(profile, f)) // a crash can leave the profile locked; only this instance uses it
+		// A crash or a recreated container (new hostname) leaves the profile "in use by another computer"; only this
+		// instance ever uses it. Done as the instance's user: the profile is closed to root.
+		if err := in.m.runAs(id, nil, "rm", "-f", "--",
+			filepath.Join(profile, "SingletonLock"), filepath.Join(profile, "SingletonSocket"), filepath.Join(profile, "SingletonCookie")); err != nil {
+			log.Printf("instance %d: could not clear the profile lock: %v", id, err)
 		}
 		args := []string{
 			"--user-data-dir=" + profile,

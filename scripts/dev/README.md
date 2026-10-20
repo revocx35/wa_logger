@@ -74,11 +74,11 @@ straight to the output), in the tab and in a popout window. It needs the chromiu
 
 ```bash
 mkdir -p /tmp/pol && python3 -c "import json;p=json.load(open('chromium/policies.json'));p['URLAllowlist'].append('localhost');json.dump(p,open('/tmp/pol/wa_logger.json','w'))"
-docker run -d --name walcalltest --network host --read-only --cap-drop ALL --security-opt no-new-privileges:true \
-  --security-opt seccomp=chromium/seccomp-chromium.json -e VNC_PASSWORD=testtest123 -e BIND_ADDRESS=127.0.0.1 \
-  -e CDP_PORT=19223 -e VNC_PORT=15900 -v /tmp/pol:/etc/chromium/policies/managed:ro \
-  --tmpfs /tmp:size=512m --tmpfs /home/chrome:uid=10002,gid=10002,mode=0700 --tmpfs /data:uid=10002,gid=10002,mode=0700 \
-  --shm-size 1g wa_logger-chromium:local
+docker run -d --name walcalltest --network host --read-only --cap-drop ALL --cap-add SETUID --cap-add SETGID \
+  --cap-add CHOWN --cap-add KILL --security-opt no-new-privileges:true \
+  --security-opt seccomp=chromium/seccomp-chromium.json -e CONTROL_SECRET=testtest123 -e LISTEN_ADDR=127.0.0.1:19223 \
+  -v /tmp/pol:/etc/chromium/policies/managed:ro --tmpfs /tmp:size=512m --tmpfs /home/chrome:mode=0711 \
+  --tmpfs /run/wal:mode=0711 --tmpfs /data:mode=0711 --shm-size 1g wa_logger-chromium:local
 cd server && npx tsx ../scripts/dev/call-audio.mts
 ```
 
@@ -87,7 +87,7 @@ cd server && npx tsx ../scripts/dev/call-audio.mts
 1. `scripts/smoke.sh --keep` (prints the project name, URL and env file), then seed sample data into its volume:
    ```bash
    . <env file>
-   docker run --rm -u 10001:10001 -e DATA_DIR=/data -e SETUP_TOKEN=$SETUP_TOKEN -e VNC_PASSWORD=$VNC_PASSWORD \
+   docker run --rm -u 10001:10001 -e DATA_DIR=/data -e SETUP_TOKEN=$SETUP_TOKEN \
      -e NODE_ENV=development -e HOME=/tmp -v <project>_app_data:/data -v "$PWD/server":/srv:ro -w /srv \
      node:24-trixie-slim node_modules/.bin/tsx src/testutil/seed.ts
    ```
@@ -98,9 +98,23 @@ cd server && npx tsx ../scripts/dev/call-audio.mts
 ## Probing a live WhatsApp Web (read-only)
 
 `scripts/wa-diagnose.js` (see ARCHITECTURE.md §11) is the safe way to check a running instance. Ad-hoc probes can
-connect to Chromium's CDP (`http://<chromium backend IP>:9223`, found via
+connect to a user's Chromium through the manager (`managed-chromium.mts` here: `MANAGER`, `CONTROL_SECRET`, `INSTANCE`;
+the manager's address is the chromium container's IP on the backend network, found via
 `docker inspect wa_logger-chromium-1`) and `page.evaluate()` inside the WhatsApp tab. Rules:
 - Never print message content, names or numbers.
 - Never navigate, click, send or close the tab.
 - Don't declare named helper functions inside `evaluate()` when running through `tsx`: esbuild wraps them with
   `__name`, which doesn't exist in the page. The production build (tsc) doesn't do this.
+
+## multiuser-e2e.mts — multi-user against a running stack (32 checks)
+
+Admin + two users on two extra ports against a real `docker compose` stack: first sign-in with the temporary password,
+port policy, a separate Chromium and QR code per user, VNC per user, forged tenant cookies, and what only a real
+deployment shows — unix users of the gateway, the workers and the browsers, file permissions between them, no
+capabilities, Chromium sandbox on, and that deleting a user removes their data, browser and processes.
+
+```bash
+export COMPOSE_PROJECT_NAME=walmulti   # any project name; a scratch .env with HTTP_PORT=18090 EXTRA_PORTS=18101-18103 CADDY_CONFIG=Caddyfile.http COOKIE_SECURE=false
+docker compose --env-file scratch.env up -d --build
+cd server && BASE=http://127.0.0.1:18090 EXTRA_PORT=18101 SETUP_TOKEN=… PROJECT=walmulti npx tsx ../scripts/dev/multiuser-e2e.mts
+```

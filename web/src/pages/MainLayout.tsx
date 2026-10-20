@@ -14,7 +14,7 @@ const NAV: { to: string; label: string; icon: IconName; end?: boolean }[] = [
 ];
 
 export function MainLayout() {
-  const { wa, refresh } = useAppState();
+  const { wa, refresh, state } = useAppState();
   const navigate = useNavigate();
   const location = useLocation();
   const inChat = location.pathname.startsWith('/chat/');
@@ -35,7 +35,7 @@ export function MainLayout() {
       <div className={inChat ? 'app-shell in-chat' : 'app-shell'}>
         <nav className="rail" aria-label="Main">
           <div className="rail-top">
-            {NAV.map((n) => (
+            {(state?.role === 'admin' ? [...NAV.slice(0, 4), { to: '/admin', label: 'Users', icon: 'group' as IconName }, ...NAV.slice(4)] : NAV).map((n) => (
               <NavLink
                 key={n.to}
                 to={n.to}

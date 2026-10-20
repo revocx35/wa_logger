@@ -34,7 +34,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -f "$ENV_FILE" && $FORCE -ne 1 ]]; then
-  echo "$ENV_FILE already exists. Refusing to overwrite (it holds your SETUP_TOKEN and VNC password)." >&2
+  echo "$ENV_FILE already exists. Refusing to overwrite (it holds your SETUP_TOKEN and control secret)." >&2
   echo "Delete it or pass --force if you really want new secrets." >&2
   exit 1
 fi
@@ -94,7 +94,7 @@ PUBLIC_ORIGIN=${ORIGIN}"
 fi
 
 SETUP_TOKEN="$(rand 32)"
-VNC_PASSWORD="$(rand 24)"
+CONTROL_SECRET="$(rand 32)"
 
 umask 077
 cat >"$ENV_FILE" <<EOF
@@ -108,10 +108,23 @@ HTTP_PORT=${HTTP_PORT}
 ${MODE_BLOCK}
 
 # --- Secrets
-# Needed once, on the signup page, to create the owner account.
+# Needed once, on the signup page, to create the first account (the admin).
 SETUP_TOKEN=${SETUP_TOKEN}
-# Protects the internal VNC server (defense in depth; it is never exposed outside Docker).
-VNC_PASSWORD=${VNC_PASSWORD}
+# Shared by the app and chromium containers only: the chromium manager checks a token derived from it for every user's
+# browser. Never shown to anyone, never sent to a browser. (Releases before user management called it VNC_PASSWORD.)
+CONTROL_SECRET=${CONTROL_SECRET}
+
+# --- Users
+# The admin (first account) creates more users in the web UI. Each user has a WhatsApp of their own, separate data,
+# separate keys and a separate Chromium. MAX_USERS also sizes the chromium container: about 1.5 GB RAM per active user
+# (raise CHROMIUM_MEM_LIMIT and APP_MEM_LIMIT, see README "Multiple users").
+MAX_USERS=10
+# Ports the admin can give to other users, so they reach wa_logger on another port (and domain) than the admin.
+# Published by the caddy container; one range, e.g. 8101-8110.
+EXTRA_PORTS=8101-8110
+# Address those ports are published on. Closed to the network by default; set 0.0.0.0 (or your LAN address) when the
+# reverse proxy that serves those users runs on another host, and firewall the range so only that proxy can reach it.
+EXTRA_BIND=127.0.0.1
 
 # --- Sessions
 SESSION_IDLE_HOURS=8

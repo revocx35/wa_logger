@@ -1,5 +1,14 @@
 import type {
+  AdminAuditEntry,
+  AdminOverview,
+  AdminUser,
   AppState,
+  ClaimResponse,
+  CreateUserRequest,
+  CreateUserResponse,
+  ResetUserRequest,
+  ResetUserResponse,
+  UpdateUserRequest,
   AuditEntry,
   CallInfo,
   ChatSummary,
@@ -47,7 +56,7 @@ export function setUnauthorizedHandler(fn: () => void): void {
   onUnauthorized = fn;
 }
 
-async function request<T>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', url: string, body?: unknown): Promise<T> {
+async function request<T>(method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', url: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json' };
   const init: RequestInit = { method, headers, credentials: 'same-origin', cache: 'no-store', redirect: 'error' };
   if (method !== 'GET') {
@@ -108,6 +117,8 @@ export const api = {
     request<SignupResponse>('POST', '/api/auth/signup', { setupToken, username, password }),
   login: (username: string, password: string, totp?: string) =>
     request<LoginResponse>('POST', '/api/auth/login', { username, password, ...(totp ? { totp } : {}) }),
+  claim: (username: string, password: string, newPassword: string, recoveryKey?: string) =>
+    request<ClaimResponse>('POST', '/api/auth/claim', { username, password, newPassword, ...(recoveryKey ? { recoveryKey } : {}) }),
   logout: () => request<{ ok: true }>('POST', '/api/auth/logout'),
   logoutAll: () => request<{ ok: true }>('POST', '/api/auth/logout-all'),
   recover: (username: string, recoveryKey: string, newPassword: string) =>
@@ -168,6 +179,15 @@ export const api = {
   settings: () => request<Settings>('GET', '/api/settings'),
   updateSettings: (patch: Partial<Settings>) => request<Settings>('PUT', '/api/settings', patch),
   audit: (before?: number) => request<AuditEntry[]>('GET', `/api/audit?limit=100${before ? `&before=${before}` : ''}`),
+  adminOverview: () => request<AdminOverview>('GET', '/api/admin/overview'),
+  adminCreateUser: (body: CreateUserRequest) => request<CreateUserResponse>('POST', '/api/admin/users', body),
+  adminUpdateUser: (id: number, body: UpdateUserRequest) => request<AdminUser>('PATCH', `/api/admin/users/${id}`, body),
+  adminResetUser: (id: number, body: ResetUserRequest) => request<ResetUserResponse>('POST', `/api/admin/users/${id}/reset`, body),
+  adminDeleteUser: (id: number, adminPassword: string, totp?: string) =>
+    request<{ ok: true }>('POST', `/api/admin/users/${id}/delete`, { adminPassword, ...(totp ? { totp } : {}) }),
+  adminPutPort: (port: number, origin: string | null) => request<{ ok: true }>('PUT', `/api/admin/ports/${port}`, { origin }),
+  adminDeletePort: (port: number) => request<{ ok: true }>('DELETE', `/api/admin/ports/${port}`),
+  adminAudit: () => request<AdminAuditEntry[]>('GET', '/api/admin/audit?limit=100'),
   wipe: (password: string, totp?: string) => request<{ ok: true }>('POST', '/api/data/wipe', { password, ...(totp ? { totp } : {}) }),
 };
 

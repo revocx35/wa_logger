@@ -26,7 +26,7 @@ COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY --from=manager-build /out/wal-chromium-manager /usr/local/bin/wal-chromium-manager
 # Tenant 1 (the first account) keeps the user of the single-user releases (uid 10002), so its WhatsApp session in
 # /data/profile is still readable after an upgrade. The manager creates the other users' directories on demand and
-# starts their browsers under uid 10100+<id> (it needs only CAP_SETUID/SETGID/CHOWN for that).
+# starts their browsers under uid 10100+<id> (it needs only CAP_SETUID/SETGID/CHOWN/KILL for that).
 RUN chmod 0644 /etc/chromium/policies/managed/wa_logger.json \
  && chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/wal-chromium-manager \
  && groupadd -g 10002 chrome \

@@ -69,7 +69,7 @@ data class AppState(
 @Serializable data class SignupRequest(val setupToken: String, val username: String, val password: String)
 @Serializable data class SignupResponse(val recoveryKey: String)
 @Serializable data class LoginRequest(val username: String, val password: String, val totp: String? = null)
-@Serializable data class LoginResponse(val ok: Boolean = false, val needTotp: Boolean? = null)
+@Serializable data class LoginResponse(val ok: Boolean = false, val needTotp: Boolean? = null, val mustChangePassword: Boolean? = null)
 @Serializable data class RecoverRequest(val username: String, val recoveryKey: String, val newPassword: String)
 @Serializable data class RecoverResponse(val recoveryKey: String)
 @Serializable data class ChangePasswordRequest(val currentPassword: String, val newPassword: String)

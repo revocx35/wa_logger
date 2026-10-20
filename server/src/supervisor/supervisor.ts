@@ -127,6 +127,9 @@ export class Supervisor {
 
   async start(): Promise<void> {
     const { runDir, usersDir, frontUid } = this.cfg;
+    // Worker socket directories are closed to everyone but their tenant and the front's group (0710). The supervisor
+    // joins that group so it can see when a worker is up; the processes it spawns drop all groups (setgid clears them).
+    if (this.cfg.dropPrivileges) process.setgroups?.([frontUid]);
     // /run/wal: root-owned, everyone may traverse (the front needs to reach the sockets), nobody may list or write.
     this.mkdir(runDir, 0o711, 0, 0);
     this.mkdir(path.join(runDir, 'ctl'), 0o750, 0, frontUid);
@@ -216,6 +219,8 @@ export class Supervisor {
     const env: NodeJS.ProcessEnv = { PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin' };
     for (const k of WORKER_ENV_PASSTHROUGH) if (this.cfg.env[k] !== undefined) env[k] = this.cfg.env[k];
     Object.assign(env, {
+      // A tenant's unix user has no passwd entry, and Node's os.homedir() throws without HOME.
+      HOME: this.dataDirFor(id),
       TENANT_ID: String(id),
       DATA_DIR: this.dataDirFor(id),
       SOCKET_PATH: this.socketPathFor(id),
