@@ -46,6 +46,8 @@ interface CallActions {
     fun toggleMute()
     fun toggleSpeaker()
     fun toggleCamera()
+    /** Starts or stops recording the call (the server records; see ARCHITECTURE "Call recording"). */
+    fun toggleRecording()
     fun setMinimized(minimized: Boolean)
     /** Where the other side's video is drawn / the camera preview goes (null when the view is gone). */
     fun setRemoteSurface(surface: android.view.Surface?)
@@ -78,7 +80,7 @@ private val END_TEXT = mapOf(
 )
 
 /** The status line of the call panel (same texts as the web). */
-fun callStatusText(c: CallInfo, now: Long): String = when (c.state) {
+fun callStatusText(c: CallInfo, now: Long, showRec: Boolean = true): String = (if (showRec && c.recording && c.live) "● REC · " else "") + when (c.state) {
     CallState.Incoming ->
         if (c.video) "Incoming video call" else if (c.group) "Incoming group call" else "Incoming voice call"
     CallState.Calling -> "Calling…"

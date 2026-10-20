@@ -339,10 +339,42 @@ speakers ◄─ AudioWorklet ◄──────── WS ◄─────�
   docs/wwebjs-notes.md "Calls"); end reasons from `callLogResult`, `peerBusy`, `wasEverConnected`, `userEndedCall`.
   A call first seen in a terminal state is ignored. The chat shown is the one we log (the call's LID or its phone-number
   id). SSE `call` events carry ids/states; `GET /api/calls/current` adds the decrypted name.
-* Not stored: call audio is never written anywhere or logged. WhatsApp's own call-log messages are logged as before.
+* Not stored unless recorded (see "Call recording" below): call audio is never written anywhere or logged. WhatsApp's own call-log messages are logged as before.
   Audit: `call_started`, `call_accepted`, `call_declined` (no ids). Cap: 30 started calls per hour on top of route limits.
 * Clients: the web UI and the Android client (§12 "Calls", same WebSockets and formats). wa_logger mobile can't have
   them (Android WebView pages are never cross-origin isolated, see docs/wwebjs-notes.md).
+
+### Call recording
+Calls can be recorded by the owner's choice only: the record button in the call panel (web and Android; also `POST
+/api/calls/:id/recording`), or the setting `recordCalls` (default **off**) which starts a recording when a call becomes
+active. A red **REC** sign shows in every client while it runs (`CallInfo.recording`).
+```
+page speaker tap ─► CallService.onPageAudio ─┐ peerAudio                          ┌─► ffmpeg (AAC 48 kbit/s mono; libx264 CRF 28,
+client mic ───────► CallService.audioIn ─────┤ ownAudio ─► AudioMixer (20 ms clock)│   ≤ 640 px, 15 fps) ─► fragmented MP4 on stdout
+page video tap ───► CallService.onPageVideo ─┘ peerVideo (H.264 → IVF on fd 3) ─────┘   ─► MediaFileWriter (encrypted) ─► media row
+```
+* `wa/recorder.ts` (`CallRecorder`) and `wa/recfmt.ts` (mixer, IVF, ffmpeg command line). The app holds only the owner's
+  *public* key, so recording works without a login and the plaintext never touches the disk: ffmpeg reads pipes and writes a
+  pipe (`-protocol_whitelist pipe`, started with the worker's minimal environment), the output goes through `MediaFileWriter`.
+* Audio: both sides mixed into one mono track, driven by the wall clock (silence is never sent to us, so gaps are filled; a
+  60 ms prebuffer smooths bursts). Video: only the **other side's** picture (our camera is not recorded), H.264 only (VP8 frames
+  are skipped); the file starts once the first key frame arrives (≤ 8 s, key frames are requested every 1.5 s, else audio only),
+  orientation and size come from that first frame, black is shown while the other camera is off. A voice call that becomes a
+  video call later stays audio only.
+* Keeping the bridge on: recording keeps audio/video flowing even when no client is attached (then only the other side is heard).
+* Limits: 6 h or 2 GiB per recording (then it stops by itself). One recording per call at a time; stopping and starting again makes a
+  second file. A crash or restart while recording loses that recording (the encrypted file was never finished): its row becomes
+  `failed` at the next start.
+* Results: `call_recordings` row + media row (kind `recording`, `video/mp4` or `audio/mp4`), listed by `GET /api/call-recordings`
+  (web page *Calls*, Android tab *Calls*) and played with the ordinary media route (Range). SSE `call_recording` after every change.
+  Audit: `call_recording_started` (auto/manual), `call_recording_deleted`. Deleting a recording removes row and file; "wipe" removes all.
+* Threat model: ffmpeg decodes H.264 from the other party (a hostile peer can feed it crafted frames), so it runs as the tenant's
+  own unprivileged user in the read-only, capability-less container, with no way to open files or sockets; a crash only ends the
+  recording. Consent to record is the owner's responsibility (stated in the settings text and on the Calls page).
+* Tests: `wa/recfmt.test.ts`, `api/recording.test.ts` (real ffmpeg: audio and video calls, auto, delete, encrypted at rest; skipped
+  where ffmpeg is missing). The Docker image builds its own **minimal ffmpeg** (Dockerfile stage `ffmpeg-build`, pinned source
+  tarball + SHA-256; only pipes, PCM/IVF/H.264 in, AAC + libx264 → MP4 out and a few filters; ~6 MB plus `libx264`), so the
+  image grows by ~12 MB and the attack surface stays small. If you add a filter/codec to the command line, enable it there too.
 
 ### Video
 Same idea as the audio: the call (and WhatsApp's video codec work) stays in the Chromium tab; frames travel.
@@ -520,7 +552,8 @@ admin who should not be able to read users' data.
   and only ever forwarded to the attached client as binary audio; nothing from the page is rendered as HTML.
 * The browser's microphone is opened only after a click on Call / Answer / Join audio and is released when the call
   ends. The Chromium container still has no microphone permission or device: WhatsApp Web only gets the virtual one.
-* No call audio or video is stored or logged; logs carry direction, reason and duration only.
+* No call audio or video is logged; logs carry direction, reason and duration only. It is stored only by an explicit recording
+  (below): encrypted like all media, never in plaintext on disk.
 * The camera is opened only after a click on Video call / Answer with video / camera on, and closed when it is
   switched off or the call ends. `Permissions-Policy` allows camera and microphone for our origin only.
 
@@ -590,7 +623,9 @@ messages(id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, sender_id TEXT, from_me INT
   INDEX messages(chat_id, ts), INDEX messages(deleted_at) WHERE deleted_at IS NOT NULL
 message_edits(id INTEGER PRIMARY KEY, message_id TEXT, body_enc BLOB, captured_at INTEGER)
 reactions(message_id TEXT, sender_id TEXT, emoji_enc BLOB, ts INTEGER, removed_at INTEGER, PRIMARY KEY(message_id, sender_id))
-media(id INTEGER PRIMARY KEY, path TEXT, key_id INTEGER, mime_enc BLOB, filename_enc BLOB, size INTEGER, created_at INTEGER)
+media(id INTEGER PRIMARY KEY, path TEXT, key_id INTEGER, mime_enc BLOB, filename_enc BLOB, size INTEGER, kind TEXT ('message'|'avatar'|'recording'), created_at INTEGER)
+call_recordings(id INTEGER PRIMARY KEY, call_id TEXT, chat_id TEXT, direction TEXT, video INTEGER, auto INTEGER, started_at INTEGER,
+         ended_at INTEGER, duration_ms INTEGER, status TEXT ('recording'|'processing'|'ready'|'failed'), media_id INTEGER → media)
 ```
 Tenant migration 5 adds `pending_claim(id=1, username, mode 'new'|'reset', salt, auth_hash, failed_logins, locked_until,
 created_at)`: the admin-issued temporary credential (a salted scrypt-derived auth hash, never the password).
@@ -650,6 +685,9 @@ AAD context `msgbody|<messageId>`, so an edit can move the old ciphertext into `
 | GET | /api/calls/current | ✓ | `CurrentCall` (`{call, available}`; the call with the decrypted name) |
 | POST | /api/chats/:chatId/call | ✓ | `{video?}` → `CallInfo` (call a one-to-one chat; 409 while another call is going on) |
 | POST | /api/calls/:callId/accept · reject · hangup | ✓ | answer (`{video?}`) / decline / end |
+| POST | /api/calls/:callId/recording | ✓ | `{on}`: start (call must be connected) / stop recording; the `CallInfo` answer carries `recording` |
+| GET | /api/call-recordings | ✓ | `?chatId&before&limit` → `CallRecordingPage` (newest first); the MP4 is `GET /api/media/:id` (Range) |
+| DELETE | /api/call-recordings/:id | ✓ | delete a finished recording (row, media row and file) |
 | WS | /api/calls/audio | ✓ | call audio both ways: binary 16 kHz mono s16le frames (`CallAudioHello` first) |
 | POST | /api/calls/:callId/video | ✓ | `{on}`: camera on/off (in a voice call: ask to switch to video) |
 | WS | /api/calls/video | ✓ | call video both ways: header + H.264/VP8 frame per message (`CallVideoHello` first, `{type:'keyframe'}`) |
@@ -737,7 +775,7 @@ Worker-only routes (`/internal/*`, unix socket, gateway token + scope header; ne
 A native client for the same API (no WebView, no server changes needed). Kotlin 2.4, Jetpack Compose,
 AGP 9.4 (built-in Kotlin), Gradle 9.8 (wrapper with pinned checksum), minSdk 26, compile/target SDK 37.
 Package `io.github.revocx35.walogger` (debug builds get the `.debug` suffix and install side by side).
-Current release: 0.9.0 (versionCode 10: multi-user — choose-your-own-password step after a temporary password, and the admin's *Users* tab: users, ports, admin log; `ui/screens/AdminScreen.kt`, `ApiClient.admin*`). 0.8.0 (versionCode 9: servers behind authentik forward auth, see `docs/authentik.md`). 0.7.0 (versionCode 8: video calls). 0.6.0 (versionCode 7: voice calls). 0.5.0 (versionCode 6: sending). 0.4.0 (versionCode 5:
+Current release: 0.10.0 (versionCode 11: call recording). 0.9.0 (versionCode 10: multi-user — choose-your-own-password step after a temporary password, and the admin's *Users* tab: users, ports, admin log; `ui/screens/AdminScreen.kt`, `ApiClient.admin*`). 0.8.0 (versionCode 9: servers behind authentik forward auth, see `docs/authentik.md`). 0.7.0 (versionCode 8: video calls). 0.6.0 (versionCode 7: voice calls). 0.5.0 (versionCode 6: sending). 0.4.0 (versionCode 5:
 multi-select photos/videos in a chat and save them to the gallery).
 0.3.0 (versionCode 4: auto-save with a disappearing-messages-only option, Android 17 local network
 permission). 0.1.1 (versionCode 2) was confirmed working by the owner on a Samsung, One UI 8.5 / Android 16,
@@ -832,6 +870,12 @@ API; wa_logger mobile implements the same interface locally), `ui/components/Com
 `MessageMenu`, `NewChatDialog`), `media/VoiceRecorder.kt` (MediaRecorder Ogg/Opus, Android 10+, `RECORD_AUDIO` asked on
 first use; the recording stays in the private cache and is deleted after sending). Files are streamed from their
 content URI (`RequestBody`), never loaded whole into memory.
+
+### Call recording (0.10.0)
+`CallInfo.recording`, `Settings.recordCalls`, `CallRecording`/`CallRecordingPage`, `ServerEvent.CallRecordingChanged`;
+ApiClient `setCallRecording`, `callRecordings`, `deleteCallRecording`. UI: record button + "REC" line in `CallPanel`/`VideoStage`
+(`CallController.toggleRecording`), the *Calls* tab (`ui/screens/RecordingsScreen.kt`: list, ExoPlayer dialog, delete) and the
+"record automatically" checkbox in Settings → Logging.
 
 ### Calls (0.6.0)
 * `core/CallAudio.kt`: `CallAudioSocket` (OkHttp WebSocket to `/api/calls/audio`; the cookie jar and Origin interceptor

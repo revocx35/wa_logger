@@ -222,6 +222,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
         endReason: null,
         audio: false,
         videoClient: false,
+        recording: false,
       });
       setMinimized(false);
       void api
@@ -268,6 +269,20 @@ export function CallProvider({ children }: { children: ReactNode }) {
         setNote(errorMessage(e));
       })
       .finally(() => setBusy(false));
+  };
+
+  const toggleRecording = () => {
+    const c = callRef.current;
+    if (!c || !c.id || c.state !== 'active') return;
+    const on = !c.recording;
+    setCall((prev) => (prev && prev.id === c.id ? { ...prev, recording: on } : prev));
+    void api
+      .setCallRecording(c.id, on)
+      .then((r) => setCall((prev) => (prev && prev.id === r.id ? { ...prev, recording: r.recording } : prev)))
+      .catch((e) => {
+        setNote(errorMessage(e));
+        setCall((prev) => (prev && prev.id === c.id ? { ...prev, recording: !on } : prev));
+      });
   };
 
   const toggleCamera = () => {
@@ -393,6 +408,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
     onHangup: hangup,
     onJoin: joinAudio,
     onMute: toggleMute,
+    onRecord: toggleRecording,
     onDismiss: () => setNote(null),
   };
 
@@ -448,6 +464,7 @@ interface PanelProps {
   onHangup(): void;
   onJoin(): void;
   onMute(): void;
+  onRecord(): void;
   onDismiss(): void;
 }
 
@@ -464,6 +481,29 @@ function MuteButton(p: { muted: boolean; onMute(): void }) {
     >
       <Icon name={p.muted ? 'micOff' : 'mic'} size={22} />
     </button>
+  );
+}
+
+/** Record / stop recording (only while the call is connected); a red dot shows while it is being recorded. */
+function RecordButton(p: { recording: boolean; onRecord(): void }) {
+  return (
+    <button
+      className={p.recording ? 'call-btn rec on' : 'call-btn rec'}
+      onClick={p.onRecord}
+      aria-pressed={p.recording}
+      aria-label={p.recording ? 'Stop recording' : 'Record call'}
+      title={p.recording ? 'Stop recording' : 'Record call'}
+    >
+      <Icon name="record" size={22} />
+    </button>
+  );
+}
+
+function RecBadge() {
+  return (
+    <span className="rec-badge" role="status">
+      <span className="rec-dot" /> REC
+    </span>
   );
 }
 
@@ -496,6 +536,7 @@ function CallPanel(p: PanelProps & { onExpand?: () => void }) {
         <div className="call-info">
           <div className="call-name">{name}</div>
           <div className="muted small" aria-live="polite">
+            {c.recording ? <RecBadge /> : null}
             {statusText(c)}
             {p.audio === 'starting' && c.state !== 'ended' ? ' · starting microphone' : ''}
           </div>
@@ -527,6 +568,7 @@ function CallPanel(p: PanelProps & { onExpand?: () => void }) {
                 <Icon name="expand" size={20} />
               </button>
             ) : null}
+            {c.state === 'active' ? <RecordButton recording={c.recording} onRecord={p.onRecord} /> : null}
             {ours ? <MuteButton muted={p.muted} onMute={p.onMute} /> : null}
             <button className="call-btn decline" onClick={p.onHangup} aria-label="Hang up" title="Hang up">
               <Icon name="callEnd" size={22} />
@@ -582,6 +624,7 @@ function VideoStage(
         <div>
           <div className="call-name">{name}</div>
           <div className="small" aria-live="polite">
+            {c.recording ? <RecBadge /> : null}
             {statusText(c)}
           </div>
         </div>
@@ -608,6 +651,7 @@ function VideoStage(
           >
             <Icon name={p.camera === 'off' ? 'videoOff' : 'video'} size={22} />
           </button>
+          {c.state === 'active' ? <RecordButton recording={c.recording} onRecord={p.onRecord} /> : null}
           {ours ? <MuteButton muted={p.muted} onMute={p.onMute} /> : null}
           <button className="call-btn decline" onClick={p.onHangup} aria-label="Hang up" title="Hang up">
             <Icon name="callEnd" size={22} />

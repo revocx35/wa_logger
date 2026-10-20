@@ -193,6 +193,7 @@ class ScreenshotTest {
         override fun start(chatId: String, name: String, video: Boolean) { calls += "start:$chatId:$video" }
         override fun accept(video: Boolean) { calls += "accept:$video" }
         override fun toggleCamera() { calls += "camera" }
+        override fun toggleRecording() { calls += "record" }
         override fun setMinimized(minimized: Boolean) { calls += "minimized:$minimized" }
         override fun setRemoteSurface(surface: android.view.Surface?) = Unit
         override fun setPreviewTexture(texture: android.graphics.SurfaceTexture?) = Unit
@@ -213,6 +214,23 @@ class ScreenshotTest {
     @Test
     fun phoneIncomingCall() = shot("phone_call_incoming") {
         val calls = FakeCalls(io.github.revocx35.walogger.ui.CallUi(call(io.github.revocx35.walogger.core.CallState.Incoming, true), available = true))
+        CompositionLocalProvider(io.github.revocx35.walogger.ui.LocalCalls provides calls) {
+            Box(Modifier.fillMaxSize()) {
+                ChatPane(FakeChat(aliSummary, SampleData.aliChat), {}, false, NoMessageActions, Modifier.fillMaxSize())
+                io.github.revocx35.walogger.ui.components.CallPanel(calls.ui.collectAsStateValue(), calls)
+            }
+        }
+    }
+
+    @Test
+    fun phoneRecordingCall() = shot("phone_call_recording") {
+        val calls = FakeCalls(
+            io.github.revocx35.walogger.ui.CallUi(
+                call(io.github.revocx35.walogger.core.CallState.Active, false).copy(recording = true),
+                available = true,
+                audio = io.github.revocx35.walogger.ui.CallAudioState.Live,
+            ),
+        )
         CompositionLocalProvider(io.github.revocx35.walogger.ui.LocalCalls provides calls) {
             Box(Modifier.fillMaxSize()) {
                 ChatPane(FakeChat(aliSummary, SampleData.aliChat), {}, false, NoMessageActions, Modifier.fillMaxSize())

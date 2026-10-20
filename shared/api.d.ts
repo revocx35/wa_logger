@@ -300,11 +300,46 @@ export interface CallInfo {
   audio: boolean;
   /** A browser or app is connected to the call video. */
   videoClient: boolean;
+  /** The call is being recorded right now (a clear "REC" sign must be shown wherever the call is shown). */
+  recording: boolean;
 }
 
 /** `POST /api/chats/:chatId/call` (`video`: a video call) and `POST /api/calls/:callId/accept` (`video`: answer with the camera). */
 export interface StartCallRequest { video?: boolean }
 export interface AcceptCallRequest { video?: boolean }
+/** `POST /api/calls/:callId/recording`: start or stop recording the call (the call must be connected to start). */
+export interface CallRecordingRequest { on: boolean }
+
+/**
+ * processing: the call is over and the recording is being turned into a file · failed: that did not work (the
+ * capture is gone) · recording: the call is still being recorded.
+ */
+export type CallRecordingStatus = 'recording' | 'processing' | 'ready' | 'failed';
+
+/**
+ * A recorded call. The file (`url`, MP4: AAC audio of both sides mixed, plus the other side's picture in video
+ * calls) is an ordinary encrypted media file: play it with `GET /api/media/:id` (Range supported).
+ */
+export interface CallRecording {
+  id: number;
+  chatId: string | null;
+  /** Display name and picture of the chat (like `CallInfo`). */
+  name: string | null;
+  avatarUrl: string | null;
+  direction: 'incoming' | 'outgoing';
+  /** The recording has a picture track. */
+  video: boolean;
+  /** Started by the "record calls automatically" setting rather than by the record button. */
+  auto: boolean;
+  startedAt: number;
+  durationMs: number | null;
+  status: CallRecordingStatus;
+  url: string | null;
+  size: number | null;
+}
+/** `GET /api/call-recordings?chatId=&before=&limit=`: newest first; `nextBefore` is the id to pass as `before`. */
+export interface CallRecordingPage { items: CallRecording[]; nextBefore: number | null }
+
 /** `POST /api/calls/:callId/video`: camera on/off. In a voice call, on asks the other side to switch to video. */
 export interface CallVideoRequest { on: boolean }
 
@@ -341,6 +376,8 @@ export type ServerEvent =
   | { type: 'sync_progress'; sync: WaStatus['sync'] }
   /** Every state change of a call (no names: fetch `GET /api/calls/current` for the display name). */
   | { type: 'call'; call: CallInfo }
+  /** A recording started, finished processing or was deleted (refetch `GET /api/call-recordings`). */
+  | { type: 'call_recording'; id: number; status: CallRecordingStatus | 'deleted' }
   | { type: 'session_revoked' };
 
 /* ---------------------------------------------------------------- settings */
@@ -352,6 +389,8 @@ export interface Settings {
   historyPerChat: number; // 0..5000
   /** Mark a chat as read on WhatsApp (blue ticks for the sender) when it is opened here. Default false. */
   readReceipts: boolean;
+  /** Record every call automatically once it is connected (audio, and the other side's picture). Default false. */
+  recordCalls: boolean;
 }
 
 export interface AuditEntry { id: number; ts: number; event: string; ip: string | null; detail: string | null }

@@ -40,6 +40,12 @@ docker-compose.yml    builds from source;  deploy/docker-compose.yml = prebuilt 
   Never run Gradle and a Docker stack build at the same time on the 4 GB dev LXC (it froze once).
 - Health of a live instance: `docker compose exec -T -u 10001 app node - < scripts/wa-diagnose.js` (user N: `-u $((10100+N)) -e TENANT=N`).
 
+## Call recording
+`server/src/wa/recorder.ts` + `recfmt.ts`: owner-triggered only (record button / `recordCalls` setting, default off). ffmpeg (a minimal build
+in the image, Dockerfile stage `ffmpeg-build`: enable new components there; `FFMPEG_PATH` overrides) mixes both sides' audio and the other side's H.264 picture into fragmented MP4 straight into an
+encrypted media file. Never write call media anywhere in plaintext, never log it, keep the REC sign on every client, and port any
+change of the recording UI to `android_client/` too. Tests need ffmpeg/ffprobe on the PATH (`apt install ffmpeg`), else they skip.
+
 ## Conventions
 - TypeScript ESM, strict; Fastify 5, zod on every body/query/param, better-sqlite3, vitest. Errors thrown as `AppError`
   (`errors.ts`); responses never contain internals. Comments explain *why*; match the surrounding density.

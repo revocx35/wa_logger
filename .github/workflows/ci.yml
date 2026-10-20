@@ -27,6 +27,8 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: server/package-lock.json
+      # The call-recording tests run the real ffmpeg/ffprobe (they skip when missing).
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - run: npm ci --no-audit --no-fund
         working-directory: server
       - run: npm run typecheck

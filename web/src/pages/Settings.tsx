@@ -318,6 +318,13 @@ function LoggingSection() {
       <label className="check">
         <input type="checkbox" checked={!!s.readReceipts} onChange={(e) => save({ readReceipts: e.target.checked })} /> Mark chats as read on WhatsApp when I open them here (senders see blue ticks)
       </label>
+      <label className="check">
+        <input type="checkbox" checked={!!s.recordCalls} onChange={(e) => save({ recordCalls: e.target.checked })} /> Record calls automatically once they are connected (voice, and the other side’s picture in video calls)
+      </label>
+      <p className="muted small">
+        Recordings are saved encrypted and listed under Calls; you can also start and stop recording with the record button during a call. Recording a call without the other person’s consent is not
+        allowed everywhere: tell them, or leave this off.
+      </p>
       <div className="form narrow">
         <label>
           Maximum media size to download (MB)

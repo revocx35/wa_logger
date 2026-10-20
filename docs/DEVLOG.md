@@ -374,3 +374,16 @@ model, and explicitly not in wa_logger mobile (Android WebView can't run WhatsAp
 - New rule in CLAUDE.md: every web UI change is ported to the Android client in the same work.
 - Checked: `:core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug`, Roborazzi render of the Users page.
   Not yet checked against a live multi-user stack or on the emulator.
+
+## 2026-10-21 — Call recording (server, web, Android 0.10.0)
+- Request: record bridged calls automatically or with a button, also video calls. Built as `wa/recorder.ts` + `wa/recfmt.ts`:
+  a wall-clock `AudioMixer` (peer + own voice, silence filled), IVF-framed H.264 from the page's video tap, ffmpeg → fragmented
+  MP4 → `MediaFileWriter` (encrypted). Settings `recordCalls` (off by default), `POST /api/calls/:id/recording`,
+  `GET/DELETE /api/call-recordings`, SSE `call_recording`, REC sign in `CallInfo.recording`.
+- Design decisions: (1) the app only holds the owner's *public* key, so a "capture now, convert later" design could not read its own
+  capture without a login; ffmpeg therefore runs live and its output is encrypted on the fly. (2) ffmpeg blocks while probing an
+  input without data, so in video calls it is started at the first peer key frame (audio is buffered meanwhile; `fps start_time=0`
+  pads the picture to the start). (3) An overlay-on-black design was dropped (framesync waits for both inputs); black frames are
+  fed instead while the other camera is off. (4) Only the other side's picture is recorded; VP8 is skipped.
+- Removed the old "never record" rules from CLAUDE.md in favour of the explicit-consent rules; the Dockerfile now installs ffmpeg.
+- Tests: `recfmt.test.ts`, `recording.test.ts` (real ffmpeg), web build, Android `ApiClientTest` + screenshot renders.

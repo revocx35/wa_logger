@@ -9,6 +9,7 @@ const NAV: { to: string; label: string; icon: IconName; end?: boolean }[] = [
   { to: '/', label: 'Chats', icon: 'chats', end: true },
   { to: '/deleted', label: 'Deleted', icon: 'deleted' },
   { to: '/search', label: 'Search', icon: 'search' },
+  { to: '/calls', label: 'Calls', icon: 'phone' },
   { to: '/wa-web', label: 'WA Web', icon: 'monitor' },
   { to: '/settings', label: 'Settings', icon: 'settings' },
 ];
@@ -35,7 +36,7 @@ export function MainLayout() {
       <div className={inChat ? 'app-shell in-chat' : 'app-shell'}>
         <nav className="rail" aria-label="Main">
           <div className="rail-top">
-            {(state?.role === 'admin' ? [...NAV.slice(0, 4), { to: '/admin', label: 'Users', icon: 'group' as IconName }, ...NAV.slice(4)] : NAV).map((n) => (
+            {(state?.role === 'admin' ? [...NAV.slice(0, 5), { to: '/admin', label: 'Users', icon: 'group' as IconName }, ...NAV.slice(5)] : NAV).map((n) => (
               <NavLink
                 key={n.to}
                 to={n.to}

@@ -35,7 +35,7 @@ _(Screenshots show generated demo data.)_
   Video calls get a full-screen view with your camera in the corner. The call runs in the linked WhatsApp Web session, with
   WhatsApp Web's own calling; your browser's microphone, speakers and camera are bridged to it over the authenticated
   connection. Needs HTTPS (browsers only allow the microphone and camera there); video needs a browser with WebCodecs
-  (current Chrome, Edge, Safari or Firefox). Calls are **not recorded**. Group calls can be answered but not started.
+  (current Chrome, Edge, Safari or Firefox). Calls are **not recorded unless you ask**: the record button in the call panel (or **Settings → Logging → Record calls automatically**, off by default) saves the call — both voices mixed, plus the other side's picture in video calls — as an encrypted MP4 listed under **Calls**. Make sure the other person agrees: recording without consent is not allowed everywhere. Group calls can be answered but not started.
 - **All message types** are logged except view-once media: text with WhatsApp formatting, photos, videos,
   GIFs, voice notes, audio, documents, stickers, locations, contact cards, polls, calls, group events, reactions,
   replies, forwards and status updates (optional).

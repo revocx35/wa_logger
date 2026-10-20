@@ -50,6 +50,8 @@ export interface WaCalls {
   accept(callId: string, video?: boolean): Promise<CallInfo>;
   /** Camera on/off during a call. */
   setVideo(callId: string, on: boolean): Promise<CallInfo>;
+  /** Starts (the call must be connected) or stops recording the call. */
+  setRecording(callId: string, on: boolean): Promise<CallInfo>;
   reject(callId: string): Promise<void>;
   hangup(callId: string): Promise<void>;
   /** Becomes the call's audio client (replacing another); returns the detach function, null when there is no call. */
@@ -147,6 +149,7 @@ export class NullWa implements WaController {
     attachAudio: () => null,
     audioIn: () => undefined,
     setVideo: notConnected,
+    setRecording: notConnected,
     attachVideo: () => null,
     videoIn: () => undefined,
     requestPeerKeyFrame: () => undefined,

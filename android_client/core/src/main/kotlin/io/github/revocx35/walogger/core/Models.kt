@@ -294,6 +294,10 @@ sealed class ServerEvent {
     @Serializable @SerialName("call")
     data class CallChanged(val call: CallInfo) : ServerEvent()
 
+    /** A recording started, finished or was deleted (status: recording | processing | ready | failed | deleted): reload the list. */
+    @Serializable @SerialName("call_recording")
+    data class CallRecordingChanged(val id: Int = 0, val status: String = "") : ServerEvent()
+
     @Serializable @SerialName("session_revoked")
     data object SessionRevoked : ServerEvent()
 }
@@ -307,6 +311,8 @@ data class Settings(
     val mediaMaxMb: Int = 100,
     val historyPerChat: Int = 200,
     val readReceipts: Boolean = false,
+    /** Record every call automatically once it is connected. */
+    val recordCalls: Boolean = false,
 )
 
 @Serializable
@@ -316,6 +322,7 @@ data class SettingsPatch(
     val mediaMaxMb: Int? = null,
     val historyPerChat: Int? = null,
     val readReceipts: Boolean? = null,
+    val recordCalls: Boolean? = null,
 )
 
 /* ----------------------------------------------------------------- sending */
@@ -380,10 +387,42 @@ data class CallInfo(
     /** Some client is connected to the call audio / video. */
     val audio: Boolean = false,
     val videoClient: Boolean = false,
+    /** The call is being recorded right now (a clear REC sign is shown wherever the call is shown). */
+    val recording: Boolean = false,
 ) {
     val incoming: Boolean get() = direction == "incoming"
     val live: Boolean get() = state != CallState.Ended
 }
+
+@Serializable data class CallRecordingRequest(val on: Boolean)
+
+@Serializable
+enum class CallRecordingStatus {
+    @SerialName("recording") Recording,
+    @SerialName("processing") Processing,
+    @SerialName("ready") Ready,
+    @SerialName("failed") Failed,
+}
+
+/** A recorded call. [url] (an encrypted media file, MP4) is set once [status] is ready. */
+@Serializable
+data class CallRecording(
+    val id: Int,
+    val chatId: String? = null,
+    val name: String? = null,
+    val avatarUrl: String? = null,
+    /** "incoming" | "outgoing" */
+    val direction: String = "incoming",
+    val video: Boolean = false,
+    val auto: Boolean = false,
+    val startedAt: Long = 0,
+    val durationMs: Long? = null,
+    val status: CallRecordingStatus = CallRecordingStatus.Failed,
+    val url: String? = null,
+    val size: Long? = null,
+)
+
+@Serializable data class CallRecordingPage(val items: List<CallRecording> = emptyList(), val nextBefore: Int? = null)
 
 @Serializable data class CallVideoFlag(val video: Boolean? = null)
 @Serializable data class CallVideoRequest(val on: Boolean)

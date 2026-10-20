@@ -64,8 +64,24 @@ export interface MediaRow {
   mime_enc: Buffer | null;
   filename_enc: Buffer | null;
   size: number;
-  kind: 'message' | 'avatar';
+  kind: 'message' | 'avatar' | 'recording';
   created_at: number;
+}
+
+export type RecordingStatus = 'recording' | 'processing' | 'ready' | 'failed';
+
+export interface RecordingRow {
+  id: number;
+  call_id: string;
+  chat_id: string | null;
+  direction: 'incoming' | 'outgoing';
+  video: number;
+  auto: number;
+  started_at: number;
+  ended_at: number | null;
+  duration_ms: number | null;
+  status: RecordingStatus;
+  media_id: number | null;
 }
 
 export interface ChatRow {
@@ -445,6 +461,55 @@ export class Repo implements DataKeyStore {
     return (this.db.prepare('SELECT path FROM media').all() as { path: string }[]).map((r) => r.path);
   }
 
+  /* ------------------------------------------------------- call recordings */
+
+  insertRecording(r: { call_id: string; chat_id: string | null; direction: 'incoming' | 'outgoing'; video: boolean; auto: boolean; started_at: number }): number {
+    const res = this.db
+      .prepare(
+        `INSERT INTO call_recordings (call_id, chat_id, direction, video, auto, started_at, status)
+         VALUES (@call_id, @chat_id, @direction, @video, @auto, @started_at, 'recording')`,
+      )
+      .run({ ...r, video: r.video ? 1 : 0, auto: r.auto ? 1 : 0 });
+    return Number(res.lastInsertRowid);
+  }
+
+  getRecording(id: number): RecordingRow | undefined {
+    return this.db.prepare('SELECT * FROM call_recordings WHERE id = ?').get(id) as RecordingRow | undefined;
+  }
+
+  /** Newest first; `before` is the id of the last row of the previous page. */
+  listRecordings(opts: { chatId?: string; before?: number; limit: number }): RecordingRow[] {
+    const where: string[] = [];
+    const args: unknown[] = [];
+    if (opts.chatId) {
+      where.push('chat_id = ?');
+      args.push(opts.chatId);
+    }
+    if (opts.before) {
+      where.push('id < ?');
+      args.push(opts.before);
+    }
+    return this.db
+      .prepare(`SELECT * FROM call_recordings ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY id DESC LIMIT ?`)
+      .all(...args, opts.limit) as RecordingRow[];
+  }
+
+  recordingsWithStatus(...status: RecordingStatus[]): RecordingRow[] {
+    return this.db
+      .prepare(`SELECT * FROM call_recordings WHERE status IN (${status.map(() => '?').join(',')}) ORDER BY id`)
+      .all(...status) as RecordingRow[];
+  }
+
+  updateRecording(id: number, patch: Partial<Pick<RecordingRow, 'status' | 'ended_at' | 'duration_ms' | 'media_id' | 'video'>>): void {
+    const keys = Object.keys(patch) as (keyof typeof patch)[];
+    if (!keys.length) return;
+    this.db.prepare(`UPDATE call_recordings SET ${keys.map((k) => `${k} = @${k}`).join(', ')} WHERE id = @id`).run({ ...patch, id });
+  }
+
+  deleteRecording(id: number): void {
+    this.db.prepare('DELETE FROM call_recordings WHERE id = ?').run(id);
+  }
+
   /* ------------------------------------------------------------ chats */
 
   getChat(id: string): ChatRow | undefined {
@@ -789,6 +854,7 @@ export class Repo implements DataKeyStore {
     return this.transaction(() => {
       const paths = this.allMediaPaths();
       this.db.exec(`
+        DELETE FROM call_recordings;
         DELETE FROM reactions;
         DELETE FROM message_edits;
         DELETE FROM messages;

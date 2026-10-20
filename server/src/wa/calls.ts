@@ -2,6 +2,7 @@ import type { CallEndReason, CallInfo, CallState } from '../../../shared/api.js'
 import type { AppContext, CallAudioClient, CallVideoClient, WaCalls } from '../context.js';
 import { AppError, Errors } from '../errors.js';
 import { parseRawCall, type CallBridge, type RawCall } from './callbridge.js';
+import { CallRecorder } from './recorder.js';
 import { toAppError } from './sender.js';
 import { PageOpError } from './walbridge.js';
 
@@ -78,7 +79,8 @@ const LIVE: ReadonlySet<CallState> = new Set(['incoming', 'calling', 'ringing', 
 /**
  * Voice calls of the linked account, through WhatsApp Web's own calling (callpage.ts in the page, callbridge.ts over
  * CDP). One call at a time, like WhatsApp Web itself. The audio of the current call is bridged to one client
- * (`WS /api/calls/audio`) while the call is being placed or is connected. Nothing is recorded or logged.
+ * (`WS /api/calls/audio`) while the call is being placed or is connected. Calls are recorded only when the owner asks
+ * (record button) or turned on "record calls" (recorder.ts); nothing is logged but outcomes.
  */
 export class CallService implements WaCalls {
   private readonly calls = new Map<string, { info: CallInfo; mapped: Mapped | null }>();
@@ -89,11 +91,17 @@ export class CallService implements WaCalls {
   private videoOn = false;
   private lastPeerKeyRequest = 0;
   private readonly started: number[] = [];
+  private readonly lastPeerVideo = new Map<string, boolean>();
+  private recorder: CallRecorder | null = null;
+  private recorderStarting = false;
 
   constructor(
     private readonly ctx: AppContext,
     private readonly bridge: () => CallBridge | null,
-  ) {}
+  ) {
+    // A recording that was still being written when the app stopped can't be finished: its file was never closed.
+    for (const r of ctx.repo.recordingsWithStatus('recording', 'processing')) ctx.repo.updateRecording(r.id, { status: 'failed' });
+  }
 
   available(): boolean {
     return this.bridge() !== null;
@@ -104,8 +112,12 @@ export class CallService implements WaCalls {
     return c ? this.view(c.info) : null;
   }
 
+  private recording(): boolean {
+    return !!this.recorder && !this.recorder.ending;
+  }
+
   private view(info: CallInfo): CallInfo {
-    return { ...info, audio: !!this.audio, videoClient: !!this.videoClient };
+    return { ...info, audio: !!this.audio, videoClient: !!this.videoClient, recording: this.recording() };
   }
 
   private page(): CallBridge {
@@ -142,6 +154,7 @@ export class CallService implements WaCalls {
           endReason: null,
           audio: false,
           videoClient: false,
+          recording: false,
         },
       };
       this.calls.set(c.id, rec);
@@ -162,10 +175,18 @@ export class CallService implements WaCalls {
     info.selfVideo = next === 'ended' ? false : c.selfVideo;
     info.peerVideo = next === 'ended' ? false : c.peerVideo;
     info.state = next;
-    if (next === 'active' && !info.connectedAt) info.connectedAt = Date.now();
+    if (info.peerVideo !== this.lastPeerVideo.get(info.id)) {
+      this.lastPeerVideo.set(info.id, info.peerVideo);
+      this.recorder?.peerVideoState(info.peerVideo);
+    }
+    const firstActive = next === 'active' && !info.connectedAt;
+    if (firstActive) info.connectedAt = Date.now();
+    if (firstActive && this.ctx.settings.get().recordCalls) void this.startRecording(info.id, true).catch((e) => this.ctx.log.warn({ err: (e as Error).message }, 'automatic call recording not started'));
     if (next === 'ended') {
       info.endedAt = Date.now();
       info.endReason = endReason(c, info, mapped);
+      this.lastPeerVideo.delete(info.id);
+      void this.recorder?.stop();
       this.ctx.log.info({ reason: info.endReason, seconds: info.connectedAt ? Math.round((info.endedAt - info.connectedAt) / 1000) : 0 }, 'call ended');
       const id = c.id;
       setTimeout(() => {
@@ -183,6 +204,7 @@ export class CallService implements WaCalls {
 
   /** WhatsApp disconnected or its tab is gone: whatever was going on is over. */
   onPageLost(): void {
+    void this.recorder?.stop();
     for (const rec of this.calls.values()) {
       if (rec.info.state === 'ended') continue;
       rec.info.state = 'ended';
@@ -215,7 +237,7 @@ export class CallService implements WaCalls {
   /** Audio flows while our call is being placed or is connected and a client listens. */
   private wantBridge(): boolean {
     const c = this.current();
-    if (!c || !this.audio) return false;
+    if (!c || (!this.audio && !this.recorder)) return false;
     return c.state === 'active' || c.state === 'connecting' || (c.direction === 'outgoing' && (c.state === 'calling' || c.state === 'ringing'));
   }
 
@@ -238,7 +260,7 @@ export class CallService implements WaCalls {
       if (b) void b.call('setBridge', { on: want }, 10_000).catch((e) => this.ctx.log.warn({ err: (e as Error).message }, 'call audio switch failed'));
     }
     // Video flows on the same terms, with a video client attached.
-    const wantVideo = !!(c && this.videoClient && (c.state === 'active' || c.state === 'connecting' || (c.direction === 'outgoing' && (c.state === 'calling' || c.state === 'ringing'))));
+    const wantVideo = !!(c && (this.videoClient || (this.recorder && c.video)) && (c.state === 'active' || c.state === 'connecting' || (c.direction === 'outgoing' && (c.state === 'calling' || c.state === 'ringing'))));
     if (wantVideo !== this.videoOn) {
       this.videoOn = wantVideo;
       if (b) {
@@ -252,7 +274,9 @@ export class CallService implements WaCalls {
 
   /** The other side's voice from the page. */
   onPageAudio(pcm: Buffer): void {
-    if (this.bridgeOn) this.audio?.send(pcm);
+    if (!this.bridgeOn) return;
+    this.audio?.send(pcm);
+    this.recorder?.peerAudio(pcm);
   }
 
   attachAudio(client: CallAudioClient): (() => void) | null {
@@ -276,7 +300,9 @@ export class CallService implements WaCalls {
 
   /** The other side's video from the page (header + H.264/VP8 frame). */
   onPageVideo(frame: Buffer): void {
-    if (this.videoOn) this.videoClient?.send(frame);
+    if (!this.videoOn) return;
+    this.videoClient?.send(frame);
+    this.recorder?.peerVideo(frame);
   }
 
   /** The page's virtual camera needs a key frame from the owner's camera (decoder (re)started or fell behind). */
@@ -321,6 +347,7 @@ export class CallService implements WaCalls {
   /** The owner's voice from the client (16 kHz s16le). */
   audioIn(client: CallAudioClient, pcm: Buffer): void {
     if (this.audio !== client || !this.bridgeOn) return;
+    this.recorder?.ownAudio(pcm);
     this.bridge()?.audioIn(pcm);
   }
 
@@ -404,6 +431,49 @@ export class CallService implements WaCalls {
     } catch (e) {
       throw callError(e);
     }
+  }
+
+  /* -------------------------------------------------------------------------------------- recording */
+
+  /** Starts recording the call (it must be connected). Idempotent while one is running. */
+  async startRecording(callId: string, auto = false): Promise<CallInfo> {
+    const c = this.known(callId);
+    if (this.recording() || this.recorderStarting) return this.view(c);
+    if (c.state !== 'active') throw Errors.conflict('The call is not connected yet.');
+    this.recorderStarting = true;
+    try {
+      const rec = await CallRecorder.start(
+        this.ctx,
+        { callId, chatId: c.chatId, direction: c.direction, video: c.video || c.peerVideo, auto },
+        {
+          requestKeyFrame: () => this.requestPeerKeyFrame(),
+          onEnd: () => {
+            if (this.recorder === rec) this.recorder = null;
+            const cur = this.calls.get(callId)?.info;
+            if (cur) this.emit(cur);
+            this.syncBridge();
+          },
+        },
+      );
+      this.recorder = rec;
+      if (c.video) rec.peerVideoState(c.peerVideo);
+      this.ctx.repo.audit('call_recording_started', null, auto ? 'auto' : 'manual');
+    } finally {
+      this.recorderStarting = false;
+    }
+    this.emit(c);
+    this.syncBridge();
+    return this.view(c);
+  }
+
+  async setRecording(callId: string, on: boolean): Promise<CallInfo> {
+    return on ? this.startRecording(callId) : this.stopRecording(callId);
+  }
+
+  async stopRecording(callId: string): Promise<CallInfo> {
+    const c = this.known(callId);
+    await this.recorder?.stop();
+    return this.view(this.calls.get(callId)?.info ?? c);
   }
 
   /** Aggregates only (for diagnostics): whether calling can work in the WhatsApp tab. */

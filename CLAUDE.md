@@ -34,9 +34,11 @@ Read these first, every session:
   Never put message text in URLs or logs: JSON bodies only (files: raw body on `/api/uploads`).
 - Calls go through `server/src/wa/callpage.ts` (WhatsApp Web's own calling; injected source text, self-contained like
   walpage.ts, tested in a bare `vm` by `callpage.test.ts`). Its audio hooks (virtual microphone, speaker tap) must stay
-  installed at document start. Never record, store or log call audio, and never send audio when `setBridge` is off.
+  installed at document start. Never log call audio, never send audio when `setBridge` is off, and never record unless the owner asked (record button) or switched on `recordCalls` (see "Call recording" in ARCHITECTURE §4).
   Re-check the audio/video paths in the real Chromium image with `scripts/dev/call-audio.mts` / `call-video.mts` after
-  touching it. Never record or store call video either.
+  touching it. Call recording (`server/src/wa/recorder.ts`, `recfmt.ts`) is the only place call media may be kept: ffmpeg writes straight into an
+  encrypted media file, nothing readable on disk, `recordCalls` stays off by default, the REC sign must show on every client, and
+  call media is still never logged.
 - DB migrations are append-only (`server/src/db/db.ts`). Encrypted columns are AAD-bound to their row id, so ids
   can't be changed after the fact.
 - **Push to `main` when a piece of work is finished, without waiting for the owner to ask** (standing permission, 2026-10-20,

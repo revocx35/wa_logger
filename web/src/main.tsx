@@ -7,6 +7,7 @@ import { Spinner } from './components/ui';
 import { AdminPage } from './pages/Admin';
 import { LoginPage, RecoverPage, SetupRecoveryPage, SignupPage } from './pages/Auth';
 import { MainLayout } from './pages/MainLayout';
+import { CallsPage } from './pages/Recordings';
 import { ChatsPage, DeletedPage, NotFoundPage, SearchPage, WaWebPage } from './pages/Pages';
 import { SettingsPage } from './pages/Settings';
 import { SetupLinkPage } from './pages/SetupLink';
@@ -68,6 +69,7 @@ const router = createBrowserRouter([
           { path: '/chat/:chatId', element: <ChatsPage /> },
           { path: '/deleted', element: <DeletedPage /> },
           { path: '/search', element: <SearchPage /> },
+          { path: '/calls', element: <CallsPage /> },
           { path: '/wa-web', element: <WaWebPage /> },
           { path: '/settings', element: <SettingsPage /> },
           { path: '/admin', element: <AdminPage /> },

@@ -334,6 +334,11 @@ private fun LoggingSection(d: SettingsDeps) {
         CheckRow(cur.logStatus, { save(SettingsPatch(logStatus = it)) }, "Log status updates (stories) of your contacts")
         CheckRow(cur.downloadHistoryMedia, { save(SettingsPatch(downloadHistoryMedia = it)) }, "Download media of imported history (not only new messages)")
         CheckRow(cur.readReceipts, { save(SettingsPatch(readReceipts = it)) }, "Mark chats as read on WhatsApp when I open them here (senders see blue ticks)")
+        CheckRow(cur.recordCalls, { save(SettingsPatch(recordCalls = it)) }, "Record calls automatically once they are connected (voice, and the other side’s picture in video calls)")
+        MutedText(
+            "Recordings are saved encrypted and listed under Calls; you can also start and stop recording with the record button during a call. Recording a call without the other person’s consent is not allowed everywhere: tell them, or leave this off.",
+            style = WaType.small,
+        )
         Column(Modifier.widthIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             NumberSetting("Maximum media size to download (MB)", cur.mediaMaxMb, 1..2000) { save(SettingsPatch(mediaMaxMb = it)) }
             NumberSetting("Messages to import per chat on first link", cur.historyPerChat, 0..5000) { save(SettingsPatch(historyPerChat = it)) }

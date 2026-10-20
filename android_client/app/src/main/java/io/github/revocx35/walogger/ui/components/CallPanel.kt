@@ -149,7 +149,7 @@ fun CallPanel(ui: CallUi, calls: CallActions, modifier: Modifier = Modifier) {
                 Avatar(call.chatId ?: call.id, name, call.avatarUrl, if (call.group) ChatKind.Group else ChatKind.User, 44.dp)
                 Column(Modifier.weight(1f)) {
                     Text(name, style = WaType.chatName.copy(fontWeight = FontWeight.SemiBold), color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    MutedText(callStatusText(call, now), style = WaType.small, maxLines = 1)
+                    MutedText(callStatusText(call, now, showRec = false), style = WaType.small, maxLines = 1)
                 }
                 when {
                     ringing -> {
@@ -159,6 +159,9 @@ fun CallPanel(ui: CallUi, calls: CallActions, modifier: Modifier = Modifier) {
                     }
                     call.state != CallState.Ended -> {
                         if (ui.hasVideo) CallBtn(WaIcons.zoomIn, "Show video", c.active, c.text, { calls.setMinimized(false) })
+                        if (call.state == CallState.Active) {
+                            CallBtn(WaIcons.record, if (call.recording) "Stop recording" else "Record call", if (call.recording) c.danger else c.active, if (call.recording) Color.White else c.danger, calls::toggleRecording)
+                        }
                         if (ui.audio == CallAudioState.Live) {
                             CallBtn(WaIcons.speaker, if (ui.speaker) "Earpiece" else "Speaker", if (ui.speaker) c.text else c.active, if (ui.speaker) c.panel else c.text, calls::toggleSpeaker)
                             CallBtn(if (ui.muted) WaIcons.micOff else WaIcons.mic, if (ui.muted) "Unmute" else "Mute", if (ui.muted) c.text else c.active, if (ui.muted) c.panel else c.text, calls::toggleMute)
@@ -166,6 +169,9 @@ fun CallPanel(ui: CallUi, calls: CallActions, modifier: Modifier = Modifier) {
                         CallBtn(WaIcons.callEnd, "Hang up", c.danger, Color.White, calls::hangup)
                     }
                 }
+            }
+            if (call.recording && call.live) {
+                Text("● REC · this call is being recorded", style = WaType.small.copy(fontWeight = FontWeight.SemiBold), color = c.danger)
             }
             val needsAudio = !ringing && ui.audio == CallAudioState.Off && (call.state == CallState.Active || call.state == CallState.Connecting)
             if (needsAudio) {
@@ -314,6 +320,9 @@ fun VideoStage(ui: CallUi, calls: CallActions) {
                     { if (camOff) withMic(true, calls::toggleCamera) else calls.toggleCamera() },
                     enabled = ours && ui.camera != CameraState.Starting,
                 )
+                if (call.state == CallState.Active) {
+                    CallBtn(WaIcons.record, if (call.recording) "Stop recording" else "Record call", if (call.recording) Color(0xFFEA0038) else chip, Color.White, calls::toggleRecording)
+                }
                 if (ours) {
                     CallBtn(WaIcons.speaker, if (ui.speaker) "Earpiece" else "Speaker", if (ui.speaker) Color.White else chip, if (ui.speaker) dark else Color.White, calls::toggleSpeaker)
                     CallBtn(if (ui.muted) WaIcons.micOff else WaIcons.mic, if (ui.muted) "Unmute" else "Mute", if (ui.muted) Color.White else chip, if (ui.muted) dark else Color.White, calls::toggleMute)

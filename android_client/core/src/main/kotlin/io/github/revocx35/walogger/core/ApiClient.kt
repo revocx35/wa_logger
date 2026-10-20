@@ -393,6 +393,10 @@ class ApiClient(baseClient: OkHttpClient, val baseUrl: HttpUrl) {
     suspend fun rejectCall(callId: String): OkResponse = post("/api/calls/${enc(callId)}/reject")
     suspend fun hangupCall(callId: String): OkResponse = post("/api/calls/${enc(callId)}/hangup")
 
+    suspend fun setCallRecording(callId: String, on: Boolean): CallInfo = send("POST", "/api/calls/${enc(callId)}/recording", CallRecordingRequest(on))
+    suspend fun callRecordings(before: Int? = null): CallRecordingPage = get("/api/call-recordings?limit=30" + (before?.let { "&before=$it" } ?: ""))
+    suspend fun deleteCallRecording(id: Int): OkResponse = request("DELETE", "/api/call-recordings/$id", null, null, OkResponse.serializer())
+
     suspend fun settings(): Settings = get("/api/settings")
     suspend fun updateSettings(patch: SettingsPatch): Settings = send("PUT", "/api/settings", patch)
     suspend fun audit(before: Long? = null): List<AuditEntry> =

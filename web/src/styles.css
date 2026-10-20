@@ -1973,3 +1973,51 @@ label.switch {
 .table.users td:nth-child(5) {
   white-space: nowrap;
 }
+
+/* Call recording */
+.call-btn.rec {
+  background: var(--active);
+  color: var(--danger);
+}
+.call-btn.rec.on {
+  background: var(--danger);
+  color: #fff;
+  animation: rec-pulse 1.4s ease-in-out infinite;
+}
+@keyframes rec-pulse {
+  50% {
+    opacity: 0.7;
+  }
+}
+.rec-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 8px;
+  font-weight: 700;
+  color: var(--danger);
+  letter-spacing: 0.04em;
+}
+.rec-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+.rec-live {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--danger);
+  font-weight: 600;
+}
+.rec-player {
+  width: 100%;
+  max-width: 560px;
+}
+.rec-player.video {
+  max-height: 60vh;
+  background: #000;
+  border-radius: 8px;
+}

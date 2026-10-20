@@ -8,6 +8,7 @@ export const SettingsSchema = z.object({
   mediaMaxMb: z.number().int().min(1).max(2000),
   historyPerChat: z.number().int().min(0).max(5000),
   readReceipts: z.boolean(),
+  recordCalls: z.boolean(),
 });
 
 const KEY = 'settings';
@@ -29,6 +30,7 @@ export class SettingsStore {
       mediaMaxMb: this.defaults.mediaMaxMb,
       historyPerChat: this.defaults.historyPerChat,
       readReceipts: false,
+      recordCalls: false,
     };
     const raw = this.repo.getState(KEY);
     let stored: Partial<Settings> = {};

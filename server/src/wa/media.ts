@@ -32,7 +32,7 @@ export async function beginMediaFile(ctx: AppContext): Promise<PendingMediaFile>
 export async function finishMediaFile(
   ctx: AppContext,
   f: PendingMediaFile,
-  kind: 'message' | 'avatar',
+  kind: 'message' | 'avatar' | 'recording',
   mime: string | null,
   filename: string | null,
 ): Promise<{ mediaId: number; size: number }> {

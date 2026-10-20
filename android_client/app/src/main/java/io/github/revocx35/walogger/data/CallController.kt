@@ -264,6 +264,22 @@ class CallController(
         }
     }
 
+    override fun toggleRecording() {
+        val c = _ui.value.call ?: return
+        if (c.id.isEmpty() || c.state != CallState.Active) return
+        val on = !c.recording
+        _ui.update { u -> if (u.call?.id == c.id) u.copy(call = u.call.copy(recording = on)) else u }
+        scope.launch {
+            try {
+                val r = api.setCallRecording(c.id, on)
+                _ui.update { u -> if (u.call?.id == r.id) u.copy(call = u.call.copy(recording = r.recording)) else u }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                _ui.update { u -> u.copy(note = e.userMessage(), call = if (u.call?.id == c.id) u.call.copy(recording = !on) else u.call) }
+            }
+        }
+    }
+
     override fun setMinimized(minimized: Boolean) {
         _ui.update { it.copy(minimized = minimized) }
     }

@@ -24,6 +24,7 @@ object WaIcons {
     val pushpin: ImageVector by lazy { icon("pushpin", "M14.5 2.5 21.5 9.5l-1.4 1.4-1.1-1.1-3.5 3.5.4 4.6-1.4 1.4-3.9-3.9-5.2 5.2-1.4-1.4 5.2-5.2-3.9-3.9 1.4-1.4 4.6.4 3.5-3.5-1.1-1.1 1.4-1.4z") }
     val user: ImageVector by lazy { icon("user", "M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10zm0 2c-4.4 0-8 2.2-8 5v3h16v-3c0-2.8-3.6-5-8-5z") }
     val group: ImageVector by lazy { icon("group", "M8 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm8 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM8 13c-3.3 0-6 1.8-6 4v3h12v-3c0-2.2-2.7-4-6-4zm8 0c-.6 0-1.1.1-1.7.2 1.1.9 1.7 2.1 1.7 3.8v3h6v-3c0-2.2-2.7-4-6-4z") }
+    val record: ImageVector by lazy { icon("record", "M12 5a7 7 0 1 1 0 14 7 7 0 0 1 0-14z") }
     val phone: ImageVector by lazy { icon("phone", "M6.6 10.8a15 15 0 0 0 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1A17 17 0 0 1 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1l-2.3 2.2z") }
     val video: ImageVector by lazy { icon("video", "M3 6h12a1 1 0 0 1 1 1v3.5l5-3.5v10l-5-3.5V17a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z") }
     val check: ImageVector by lazy { icon("check", "M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z") }

@@ -12,6 +12,7 @@ import type {
   AuditEntry,
   CallInfo,
   ChatSummary,
+  CallRecordingPage,
   CurrentCall,
   DeletedFeedPage,
   LoginResponse,
@@ -174,6 +175,9 @@ export const api = {
   acceptCall: (callId: string, video = false) => request<CallInfo>('POST', `/api/calls/${enc(callId)}/accept`, video ? { video } : {}),
   setCallVideo: (callId: string, on: boolean) => request<CallInfo>('POST', `/api/calls/${enc(callId)}/video`, { on }),
   rejectCall: (callId: string) => request<{ ok: true }>('POST', `/api/calls/${enc(callId)}/reject`),
+  setCallRecording: (callId: string, on: boolean) => request<CallInfo>('POST', `/api/calls/${enc(callId)}/recording`, { on }),
+  callRecordings: (before?: number | null) => request<CallRecordingPage>('GET', `/api/call-recordings?limit=30${before ? `&before=${before}` : ''}`),
+  deleteCallRecording: (id: number) => request<{ ok: true }>('DELETE', `/api/call-recordings/${id}`),
   hangupCall: (callId: string) => request<{ ok: true }>('POST', `/api/calls/${enc(callId)}/hangup`),
 
   settings: () => request<Settings>('GET', '/api/settings'),

@@ -82,6 +82,7 @@ import io.github.revocx35.walogger.ui.screens.ChatViewModel
 import io.github.revocx35.walogger.ui.screens.DeletedScreen
 import io.github.revocx35.walogger.ui.screens.DeletedViewModel
 import io.github.revocx35.walogger.ui.screens.NoChatSelected
+import io.github.revocx35.walogger.ui.screens.RecordingsScreen
 import io.github.revocx35.walogger.ui.screens.SearchScreen
 import io.github.revocx35.walogger.ui.screens.SearchViewModel
 import io.github.revocx35.walogger.ui.screens.SettingsDeps
@@ -98,11 +99,12 @@ import kotlinx.serialization.Serializable
 @Serializable object DeletedRoute
 @Serializable data class SearchRoute(val q: String = "")
 @Serializable object WaWebRoute
+@Serializable object CallsRoute
 @Serializable object UsersRoute
 @Serializable object SettingsRoute
 
 enum class Tab(val label: String, val icon: ImageVector) {
-    Chats("Chats", WaIcons.chats), Deleted("Deleted", WaIcons.deleted), Search("Search", WaIcons.search), WaWeb("WA Web", WaIcons.monitor), Users("Users", WaIcons.group), Settings("Settings", WaIcons.settings)
+    Chats("Chats", WaIcons.chats), Deleted("Deleted", WaIcons.deleted), Search("Search", WaIcons.search), Calls("Calls", WaIcons.phone), WaWeb("WA Web", WaIcons.monitor), Users("Users", WaIcons.group), Settings("Settings", WaIcons.settings)
 }
 
 /** The menu items: "Users" (user management) is the admin's only, like the web's rail. */
@@ -112,6 +114,7 @@ private fun tabRoute(t: Tab): Any = when (t) {
     Tab.Chats -> ChatsRoute
     Tab.Deleted -> DeletedRoute
     Tab.Search -> SearchRoute()
+    Tab.Calls -> CallsRoute
     Tab.WaWeb -> WaWebRoute
     Tab.Users -> UsersRoute
     Tab.Settings -> SettingsRoute
@@ -189,6 +192,7 @@ fun MainShell(graph: AppGraph, session: ServerSession, state: AppState, wa: WaSt
         dest.hasRoute<ChatsRoute>() || inChat -> Tab.Chats
         dest.hasRoute<DeletedRoute>() -> Tab.Deleted
         dest.hasRoute<SearchRoute>() -> Tab.Search
+        dest.hasRoute<CallsRoute>() -> Tab.Calls
         dest.hasRoute<WaWebRoute>() -> Tab.WaWeb
         dest.hasRoute<UsersRoute>() -> Tab.Users
         dest.hasRoute<SettingsRoute>() -> Tab.Settings
@@ -264,6 +268,7 @@ fun MainShell(graph: AppGraph, session: ServerSession, state: AppState, wa: WaSt
                             val vm: SearchViewModel = viewModel(key = "search:${session.id}:${r.q}") { SearchViewModel(session, r.q) }
                             SearchScreen(vm.query, { vm.query = it }, vm.result, vm.error, vm.busy, vm::run) { chatId, messageId -> openChat(chatId, messageId) }
                         }
+                        composable<CallsRoute> { RecordingsScreen(session) { openChat(it) } }
                         composable<WaWebRoute> { WaWebScreen(session.api, wa) }
                         composable<UsersRoute> {
                             if (admin) AdminScreen(AdminDeps(api = session.api, username = state.username, totpEnabled = state.totpEnabled == true))

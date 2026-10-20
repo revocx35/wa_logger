@@ -190,6 +190,27 @@ const MIGRATIONS: { id: number; name: string; sql: string }[] = [
       );
     `,
   },
+  {
+    id: 6,
+    name: 'call_recordings',
+    // Recorded calls: one row per recording; the MP4 is an encrypted media file (kind 'recording') written live while the call runs.
+    sql: `
+      CREATE TABLE call_recordings (
+        id INTEGER PRIMARY KEY,
+        call_id TEXT NOT NULL,
+        chat_id TEXT,
+        direction TEXT NOT NULL,
+        video INTEGER NOT NULL DEFAULT 0,
+        auto INTEGER NOT NULL DEFAULT 0,
+        started_at INTEGER NOT NULL,
+        ended_at INTEGER,
+        duration_ms INTEGER,
+        status TEXT NOT NULL CHECK (status IN ('recording', 'processing', 'ready', 'failed')),
+        media_id INTEGER REFERENCES media (id) ON DELETE SET NULL
+      );
+      CREATE INDEX call_recordings_started ON call_recordings (started_at);
+    `,
+  },
 ];
 
 export function openDb(file: string): DB {

@@ -230,4 +230,39 @@ class ApiClientTest {
         assertEquals(ResetOutcome.Wipe, reset.mode)
         assertEquals("""{"mode":"wipe","adminPassword":"admin-pass","totp":"123456"}""", server.takeRequest().body?.utf8())
     }
+
+    @Test
+    fun recordsCallsAndListsRecordings() = runBlocking {
+        api.csrfToken = "tok"
+        server.enqueue(json("""{"id":"C1","direction":"incoming","state":"active","recording":true}"""))
+        server.enqueue(json("""{"items":[{"id":7,"chatId":"905551112233@c.us","name":"Ali","direction":"outgoing","video":true,"auto":true,"startedAt":5,"durationMs":65000,"status":"ready","url":"/api/media/12","size":1000},{"id":8,"status":"processing"}],"nextBefore":8}"""))
+        server.enqueue(json("""{"ok":true}"""))
+        val call = api.setCallRecording("C1", true)
+        assertTrue(call.recording)
+        val post = server.takeRequest()
+        assertEquals("/api/calls/C1/recording", post.target)
+        assertEquals("""{"on":true}""", post.body?.utf8())
+        assertEquals("tok", post.headers["X-CSRF-Token"])
+
+        val page = api.callRecordings(before = 20)
+        assertEquals("/api/call-recordings?limit=30&before=20", server.takeRequest().target)
+        assertEquals(8, page.nextBefore)
+        assertEquals(CallRecordingStatus.Ready, page.items[0].status)
+        assertEquals("/api/media/12", page.items[0].url)
+        assertTrue(page.items[0].video && page.items[0].auto)
+        assertEquals(CallRecordingStatus.Processing, page.items[1].status)
+
+        api.deleteCallRecording(7)
+        val del = server.takeRequest()
+        assertEquals("DELETE", del.method)
+        assertEquals("/api/call-recordings/7", del.target)
+    }
+
+    @Test
+    fun parsesTheRecordingEventAndSetting() {
+        val ev = WaJson.decodeFromString(ServerEvent.serializer(), """{"type":"call_recording","id":3,"status":"ready"}""")
+        assertEquals(ServerEvent.CallRecordingChanged(3, "ready"), ev)
+        assertEquals(true, WaJson.decodeFromString(Settings.serializer(), """{"recordCalls":true}""").recordCalls)
+        assertEquals("""{"recordCalls":true}""", WaJson.encodeToString(SettingsPatch.serializer(), SettingsPatch(recordCalls = true)))
+    }
 }

@@ -1,11 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import type { CallAudioHello, CallInfo, CallVideoHello, CurrentCall } from '../../../shared/api.js';
+import type { CallAudioHello, CallInfo, CallRecording, CallRecordingPage, CallVideoHello, CurrentCall } from '../../../shared/api.js';
 import type { AppContext, CallAudioClient, CallVideoClient } from '../context.js';
+import type { RecordingRow } from '../db/repo.js';
 import { Errors } from '../errors.js';
 import { getReader, requireSession } from '../http/server.js';
 import { validVideoFrame, VIDEO_MAX_FRAME } from '../wa/callbridge.js';
 import { chatKind } from '../wa/mapper.js';
+import { deleteMediaFile } from '../wa/media.js';
 import { Presenter } from './view.js';
 
 const ChatIdParam = z.object({ chatId: z.string().min(3).max(200).regex(/^[^\s/?#]+@[a-z.]+$/i) });
@@ -63,6 +65,63 @@ export function registerCallRoutes(app: FastifyInstance, ctx: AppContext): void 
     const { callId } = CallIdParam.parse(req.params);
     const { on } = z.object({ on: z.boolean() }).strict().parse(req.body);
     return withName(req, await ctx.wa.calls.setVideo(callId, on));
+  });
+
+  app.post('/api/calls/:callId/recording', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req) => {
+    const { callId } = CallIdParam.parse(req.params);
+    const { on } = z.object({ on: z.boolean() }).strict().parse(req.body);
+    return withName(req, await ctx.wa.calls.setRecording(callId, on));
+  });
+
+  /* ------------------------------------------------------------------------------------ recordings */
+
+  const recordingView = (req: Parameters<typeof getReader>[1], r: RecordingRow): CallRecording => {
+    const p = new Presenter(ctx, getReader(ctx, req));
+    const chat = r.chat_id ? ctx.repo.getChat(r.chat_id) : undefined;
+    const media = r.media_id ? ctx.repo.getMedia(r.media_id) : undefined;
+    return {
+      id: r.id,
+      chatId: r.chat_id,
+      name: r.chat_id ? (chat ? p.chatName(chat) : p.contactName(r.chat_id)) : null,
+      avatarUrl: chat?.avatar_media_id ? `/api/media/${chat.avatar_media_id}` : null,
+      direction: r.direction,
+      video: !!r.video,
+      auto: !!r.auto,
+      startedAt: r.started_at,
+      durationMs: r.duration_ms,
+      status: r.status,
+      url: r.status === 'ready' && media ? `/api/media/${media.id}` : null,
+      size: r.status === 'ready' && media ? media.size : null,
+    };
+  };
+
+  app.get('/api/call-recordings', async (req): Promise<CallRecordingPage> => {
+    const q = z
+      .object({
+        chatId: z.string().min(3).max(200).regex(/^[^\s/?#]+@[a-z.]+$/i).optional(),
+        before: z.coerce.number().int().positive().optional(),
+        limit: z.coerce.number().int().min(1).max(100).default(30),
+      })
+      .parse(req.query);
+    const rows = ctx.repo.listRecordings({ ...(q.chatId ? { chatId: q.chatId } : {}), ...(q.before ? { before: q.before } : {}), limit: q.limit + 1 });
+    const page = rows.slice(0, q.limit);
+    return { items: page.map((r) => recordingView(req, r)), nextBefore: rows.length > q.limit ? page[page.length - 1]!.id : null };
+  });
+
+  app.delete('/api/call-recordings/:id', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req) => {
+    const { id } = z.object({ id: z.coerce.number().int().positive() }).parse(req.params);
+    const r = ctx.repo.getRecording(id);
+    if (!r) throw Errors.notFound('Recording');
+    if (r.status === 'recording' || r.status === 'processing') throw Errors.conflict('The recording is still being made.');
+    const media = r.media_id ? ctx.repo.getMedia(r.media_id) : undefined;
+    ctx.repo.deleteRecording(id);
+    if (media) {
+      ctx.repo.deleteMedia(media.id);
+      await deleteMediaFile(ctx, media.path).catch(() => undefined);
+    }
+    ctx.repo.audit('call_recording_deleted', null, null);
+    ctx.events.emit({ type: 'call_recording', id, status: 'deleted' });
+    return { ok: true };
   });
 
   app.post('/api/calls/:callId/reject', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req) => {
