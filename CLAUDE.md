@@ -21,6 +21,11 @@ Read these first, every session:
   (the gateway strips client `X-WAL-*`); the tenant cookie is only a hint. The two root processes have only
   `SETUID SETGID CHOWN KILL` and no DAC override: they create and chown top-level directories and do the rest *as the tenant's user*.
 - `shared/api.d.ts` is the server↔web contract. Change it deliberately and update both sides.
+- **Keep the mobile client in sync with the web UI.** Every user-facing change to the web UI (new page, section, setting,
+  login/onboarding step, admin feature) must be ported to `android_client/` in the same piece of work: models in
+  `core/Models.kt`, calls in `ApiClient`, screens in `app/.../ui/`, tests (`ApiClientTest`, a `ScreenshotTest` render) and
+  the version bump. If something can't be ported, say so explicitly and note it in AGENTS.md. (Learned 2026-10-20: the
+  multi-user Users page and the temporary-password step shipped web-only and the app only showed a hint.)
 - Never call `client.destroy()`/`logout()` on the whatsapp-web.js client: both close the remote Chromium.
 - Don't use whatsapp-web.js chat helpers (`getChats`, `getChatById`, `getProfilePicUrl`, `Chat.fetchMessages`).
   Use `server/src/wa/pageapi.ts`. Message ids come from `mapper.msgKey()`.

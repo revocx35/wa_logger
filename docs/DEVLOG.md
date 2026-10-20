@@ -363,3 +363,14 @@ model, and explicitly not in wa_logger mobile (Android WebView can't run WhatsAp
 - One flake seen once: a worker's first WhatsApp Web load failed with "Cannot read properties of null (reading 'info')"
   and kept failing for ~90 s while two others worked; it did not recur in 5 later runs (stack frames are now logged on
   "whatsapp connect failed"). Watch for it.
+
+## 2026-10-20 (later) — Android: multi-user parity (0.9.0, not released)
+- The multi-user work had left the app with only a login hint. Ported: the choose-your-own-password step (`LoginStep.Claim`,
+  with the recovery key after an admin reset → `ApiClient.claim`) and the admin *Users* tab (users with status/WhatsApp
+  state/port, add, enable/disable, reset, delete with password+2FA re-auth, ports, admin log). The tab only exists when
+  `AppState.role == admin`; on phones the rail items now share the bar width (7 items).
+- The server needs explicit JSON `null` for "default port" / "no fixed origin" (`WaJson` omits nulls), so the admin calls
+  build their bodies with `buildJsonObject`; `ApiClientTest` pins the exact bodies.
+- New rule in CLAUDE.md: every web UI change is ported to the Android client in the same work.
+- Checked: `:core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug`, Roborazzi render of the Users page.
+  Not yet checked against a live multi-user stack or on the emulator.

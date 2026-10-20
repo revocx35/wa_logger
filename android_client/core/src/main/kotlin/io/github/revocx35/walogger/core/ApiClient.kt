@@ -5,6 +5,11 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonObjectBuilder
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.serializer
 import okhttp3.Call
 import okhttp3.Callback
@@ -216,7 +221,7 @@ class ApiClient(baseClient: OkHttpClient, val baseUrl: HttpUrl) {
     /** `GET /api/state`, additionally checking that the answer really comes from a wa_logger server. */
     suspend fun probe(): AppState {
         val obj = request("GET", "/api/state", null, null, kotlinx.serialization.json.JsonObject.serializer())
-        if (obj["hasOwner"] !is kotlinx.serialization.json.JsonPrimitive || obj["authenticated"] !is kotlinx.serialization.json.JsonPrimitive) {
+        if (obj["hasOwner"] !is JsonPrimitive || obj["authenticated"] !is JsonPrimitive) {
             throw ApiException(200, ApiException.NOT_WA_LOGGER, "Unexpected response from the server. Is this a wa_logger server?")
         }
         return WaJson.decodeFromJsonElement(AppState.serializer(), obj)
@@ -227,6 +232,10 @@ class ApiClient(baseClient: OkHttpClient, val baseUrl: HttpUrl) {
 
     suspend fun login(username: String, password: String, totp: String?): LoginResponse =
         send("POST", "/api/auth/login", LoginRequest(username, password, totp?.takeIf { it.isNotEmpty() }))
+
+    /** Finishes a sign-in with an admin-issued temporary password: the user picks their own and gets a recovery key. */
+    suspend fun claim(username: String, password: String, newPassword: String, recoveryKey: String?): ClaimResponse =
+        send("POST", "/api/auth/claim", ClaimRequest(username, password, newPassword, recoveryKey?.takeIf { it.isNotBlank() }))
 
     suspend fun logout(): OkResponse = post("/api/auth/logout")
     suspend fun logoutAll(): OkResponse = post("/api/auth/logout-all")
@@ -244,6 +253,51 @@ class ApiClient(baseClient: OkHttpClient, val baseUrl: HttpUrl) {
     suspend fun totpDisable(password: String, code: String): OkResponse = send("POST", "/api/auth/totp/disable", TotpDisableRequest(password, code))
     suspend fun rotateRecoveryKey(password: String, totp: String?): RotateRecoveryKeyResponse =
         send("POST", "/api/auth/recovery-key/rotate", RotateRecoveryKeyRequest(password, totp?.takeIf { it.isNotEmpty() }))
+
+    /* ---------------------------------------------------- user management (admin) */
+    // The server wants explicit JSON nulls here ("default port", "no fixed origin"), which WaJson would drop, so these bodies are built by hand.
+
+    @Suppress("UNCHECKED_CAST")
+    private suspend inline fun <reified T> sendJson(method: String, path: String, build: JsonObjectBuilder.() -> Unit): T =
+        request(method, path, buildJsonObject(build), JsonObject.serializer() as KSerializer<Any>, serializer<T>())
+
+    suspend fun adminOverview(): AdminOverview = get("/api/admin/overview")
+
+    suspend fun adminCreateUser(username: String, password: String?, port: Int?): CreateUserResponse = sendJson("POST", "/api/admin/users") {
+        put("username", JsonPrimitive(username))
+        if (!password.isNullOrEmpty()) put("password", JsonPrimitive(password))
+        put("port", port?.let { JsonPrimitive(it) } ?: JsonNull)
+    }
+
+    suspend fun adminSetUserPort(id: Int, port: Int?): AdminUser = sendJson("PATCH", "/api/admin/users/$id") {
+        put("port", port?.let { JsonPrimitive(it) } ?: JsonNull)
+    }
+
+    suspend fun adminSetUserDisabled(id: Int, disabled: Boolean): AdminUser = sendJson("PATCH", "/api/admin/users/$id") {
+        put("disabled", JsonPrimitive(disabled))
+    }
+
+    suspend fun adminResetUser(id: Int, mode: ResetMode, customPassword: String?, adminPassword: String, totp: String?): ResetUserResponse =
+        sendJson("POST", "/api/admin/users/$id/reset") {
+            put("mode", JsonPrimitive(if (mode == ResetMode.Wipe) "wipe" else "recovery"))
+            if (!customPassword.isNullOrEmpty()) put("password", JsonPrimitive(customPassword))
+            put("adminPassword", JsonPrimitive(adminPassword))
+            if (!totp.isNullOrEmpty()) put("totp", JsonPrimitive(totp))
+        }
+
+    suspend fun adminDeleteUser(id: Int, adminPassword: String, totp: String?): OkResponse = sendJson("POST", "/api/admin/users/$id/delete") {
+        put("adminPassword", JsonPrimitive(adminPassword))
+        if (!totp.isNullOrEmpty()) put("totp", JsonPrimitive(totp))
+    }
+
+    suspend fun adminPutPort(port: Int, origin: String?): OkResponse = sendJson("PUT", "/api/admin/ports/$port") {
+        put("origin", origin?.let { JsonPrimitive(it) } ?: JsonNull)
+    }
+
+    suspend fun adminDeletePort(port: Int): OkResponse = request("DELETE", "/api/admin/ports/$port", null, null, OkResponse.serializer())
+
+    suspend fun adminAudit(limit: Int = 100): List<AdminAuditEntry> =
+        request("GET", "/api/admin/audit?limit=$limit", null, null, ListSerializer(AdminAuditEntry.serializer()))
 
     suspend fun waStatus(): WaStatus = get("/api/wa/status")
     suspend fun waRestart(): OkResponse = post("/api/wa/restart")

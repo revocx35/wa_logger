@@ -176,4 +176,58 @@ class ApiClientTest {
         val sync = WaJson.decodeFromString(ServerEvent.serializer(), """{"type":"sync_progress","sync":null}""")
         assertEquals(ServerEvent.SyncProgressChanged(null), sync)
     }
+
+    @Test
+    fun claimsATemporaryPasswordAndParsesTheLoginHint() = runBlocking {
+        api.csrfToken = "tok"
+        server.enqueue(json("""{"ok":false,"mustChangePassword":true,"needRecoveryKey":true}"""))
+        server.enqueue(json("""{"recoveryKey":"AAAA-BBBB"}"""))
+        val login = api.login("ali", "temp-password-123", null)
+        assertEquals(true, login.mustChangePassword)
+        assertEquals(true, login.needRecoveryKey)
+        server.takeRequest()
+        assertEquals("AAAA-BBBB", api.claim("ali", "temp-password-123", "my own passphrase", "KEY").recoveryKey)
+        val req = server.takeRequest()
+        assertEquals("/api/auth/claim", req.target)
+        assertEquals("""{"username":"ali","password":"temp-password-123","newPassword":"my own passphrase","recoveryKey":"KEY"}""", req.body?.utf8())
+    }
+
+    @Test
+    fun adminCallsSendExplicitNullsAndParseTheOverview() = runBlocking {
+        api.csrfToken = "tok"
+        server.enqueue(json("""{"currentUserId":1,"users":[{"id":1,"username":"owner","role":"admin","disabled":false,"port":null,"createdAt":1,"lastLoginAt":2,"status":"active","wa":"ready"},{"id":2,"username":"ali","role":"user","disabled":true,"port":8443,"createdAt":1,"lastLoginAt":null,"status":"pending","wa":null}],"defaultPort":443,"defaultOrigin":null,"ports":[{"port":8443,"origin":null,"usernames":["ali"]}],"availablePorts":[8443,8444],"maxUsers":10}"""))
+        server.enqueue(json("""{"user":{"id":3,"username":"bo","role":"user","disabled":false,"port":null,"createdAt":1,"lastLoginAt":null,"status":"pending","wa":null},"temporaryPassword":"abcde-fghjk-mnpqr-stuvw"}"""))
+        server.enqueue(json("""{"id":2,"username":"ali","role":"user","disabled":false,"port":null,"createdAt":1,"lastLoginAt":null,"status":"pending","wa":null}"""))
+        server.enqueue(json("""{"ok":true}"""))
+        server.enqueue(json("""{"temporaryPassword":"x-y","mode":"wipe"}"""))
+        val o = api.adminOverview()
+        assertEquals(WaState.Ready, o.users[0].wa)
+        assertEquals(UserRole.Admin, o.users[0].role)
+        assertEquals(UserStatus.Pending, o.users[1].status)
+        assertTrue(o.users[1].disabled)
+        assertEquals(listOf(8443, 8444), o.availablePorts)
+        assertEquals(listOf("ali"), o.ports[0].usernames)
+        assertEquals("/api/admin/overview", server.takeRequest().target)
+
+        val created = api.adminCreateUser("bo", null, null)
+        assertEquals("abcde-fghjk-mnpqr-stuvw", created.temporaryPassword)
+        val post = server.takeRequest()
+        assertEquals("""{"username":"bo","port":null}""", post.body?.utf8())
+        assertEquals("tok", post.headers["X-CSRF-Token"])
+
+        api.adminSetUserPort(2, null)
+        val patch = server.takeRequest()
+        assertEquals("PATCH", patch.method)
+        assertEquals("/api/admin/users/2", patch.target)
+        assertEquals("""{"port":null}""", patch.body?.utf8())
+
+        api.adminPutPort(8444, null)
+        val put = server.takeRequest()
+        assertEquals("PUT", put.method)
+        assertEquals("""{"origin":null}""", put.body?.utf8())
+
+        val reset = api.adminResetUser(2, ResetMode.Wipe, null, "admin-pass", "123456")
+        assertEquals(ResetOutcome.Wipe, reset.mode)
+        assertEquals("""{"mode":"wipe","adminPassword":"admin-pass","totp":"123456"}""", server.takeRequest().body?.utf8())
+    }
 }

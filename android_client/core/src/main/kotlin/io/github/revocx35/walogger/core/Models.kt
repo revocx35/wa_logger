@@ -62,14 +62,32 @@ data class AppState(
     val username: String? = null,
     val totpEnabled: Boolean? = null,
     val wa: WaStatus? = null,
+    /** Authenticated only. The admin (the first account) manages the other users. */
+    val role: UserRole = UserRole.User,
 )
+
+@Serializable
+enum class UserRole {
+    @SerialName("admin") Admin,
+    @SerialName("user") User,
+}
 
 /* -------------------------------------------------------------------- auth */
 
 @Serializable data class SignupRequest(val setupToken: String, val username: String, val password: String)
 @Serializable data class SignupResponse(val recoveryKey: String)
 @Serializable data class LoginRequest(val username: String, val password: String, val totp: String? = null)
-@Serializable data class LoginResponse(val ok: Boolean = false, val needTotp: Boolean? = null, val mustChangePassword: Boolean? = null)
+@Serializable
+data class LoginResponse(
+    val ok: Boolean = false,
+    val needTotp: Boolean? = null,
+    /** The password was the temporary one an admin issued: the user must choose their own ([ApiClient.claim]). */
+    val mustChangePassword: Boolean? = null,
+    /** With [mustChangePassword]: a reset of an existing account, so the claim needs its recovery key. */
+    val needRecoveryKey: Boolean? = null,
+)
+@Serializable data class ClaimRequest(val username: String, val password: String, val newPassword: String, val recoveryKey: String? = null)
+@Serializable data class ClaimResponse(val recoveryKey: String)
 @Serializable data class RecoverRequest(val username: String, val recoveryKey: String, val newPassword: String)
 @Serializable data class RecoverResponse(val recoveryKey: String)
 @Serializable data class ChangePasswordRequest(val currentPassword: String, val newPassword: String)
@@ -371,3 +389,79 @@ data class CallInfo(
 @Serializable data class CallVideoRequest(val on: Boolean)
 @Serializable data class CurrentCall(val call: CallInfo? = null, val available: Boolean = false)
 @Serializable data class CallAudioHello(val type: String = "", val sampleRate: Int = 0, val channels: Int = 0, val format: String = "", val callId: String = "")
+
+/* --------------------------------------------------------- user management */
+// Served by the gateway under /api/admin/* (admin only): names, status and ports, never anyone's messages.
+
+@Serializable
+enum class UserStatus {
+    @SerialName("pending") Pending,
+    @SerialName("reset") Reset,
+    @SerialName("active") Active,
+    @SerialName("unknown") Unknown,
+}
+
+@Serializable
+data class AdminUser(
+    val id: Int,
+    val username: String,
+    val role: UserRole = UserRole.User,
+    val disabled: Boolean = false,
+    /** Port the user signs in on; null = the default port. */
+    val port: Int? = null,
+    val createdAt: Long = 0,
+    val lastLoginAt: Long? = null,
+    val status: UserStatus = UserStatus.Unknown,
+    /** State of the user's WhatsApp link; null when the user's worker could not be asked. */
+    val wa: WaState? = null,
+)
+
+@Serializable
+data class AdminPort(
+    val port: Int,
+    /** The browser origin on this port; null = derived from the Host header. */
+    val origin: String? = null,
+    val usernames: List<String> = emptyList(),
+)
+
+@Serializable
+data class AdminOverview(
+    val currentUserId: Int,
+    val users: List<AdminUser> = emptyList(),
+    val defaultPort: Int = 0,
+    val defaultOrigin: String? = null,
+    val ports: List<AdminPort> = emptyList(),
+    val availablePorts: List<Int> = emptyList(),
+    val maxUsers: Int = 0,
+)
+
+@Serializable data class CreateUserResponse(val user: AdminUser, val temporaryPassword: String)
+
+@Serializable
+enum class ResetMode {
+    /** Keep the data: the user needs their recovery key. */
+    @SerialName("recovery") Recovery,
+    /** Delete everything of the account and start over. */
+    @SerialName("wipe") Wipe,
+}
+
+/** 'new' = the user had not signed in yet, so it was only a fresh temporary password. */
+@Serializable
+enum class ResetOutcome {
+    @SerialName("recovery") Recovery,
+    @SerialName("wipe") Wipe,
+    @SerialName("new") New,
+}
+
+@Serializable data class ResetUserResponse(val temporaryPassword: String, val mode: ResetOutcome = ResetOutcome.New)
+
+@Serializable
+data class AdminAuditEntry(
+    val id: Long = 0,
+    val ts: Long = 0,
+    val event: String = "",
+    val actor: String? = null,
+    val target: String? = null,
+    val ip: String? = null,
+    val detail: String? = null,
+)

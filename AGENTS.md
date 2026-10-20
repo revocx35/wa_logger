@@ -22,7 +22,8 @@ chromium/             image: Debian + Chromium + Xvfb + x11vnc; manager/ = Go pr
 caddy/                TLS front; extra-ports.sh generates one site per EXTRA_PORTS port
 web/src/              React SPA (pages/Admin.tsx = user management)
 shared/api.d.ts       server↔web contract (type-only)
-android_client/       native Android client (Kotlin/Compose); core/ mirrors shared/api.d.ts
+android_client/       native Android client (Kotlin/Compose); core/ mirrors shared/api.d.ts. **Must stay in sync with the web UI**
+                      (web page/setting/flow added or changed → port it to the app in the same change; see CLAUDE.md)
 scripts/              setup.sh (.env), smoke.sh (compose test), wa-diagnose.js, dev/ (browser + e2e scripts)
 docker-compose.yml    builds from source;  deploy/docker-compose.yml = prebuilt GHCR images (keep them in sync)
 ```

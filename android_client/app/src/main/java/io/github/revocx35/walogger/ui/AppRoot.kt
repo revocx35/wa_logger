@@ -30,6 +30,7 @@ import io.github.revocx35.walogger.ui.components.Spinner
 import io.github.revocx35.walogger.ui.screens.AuthActions
 import io.github.revocx35.walogger.ui.screens.CertificateDialog
 import io.github.revocx35.walogger.ui.screens.LoginScreen
+import io.github.revocx35.walogger.ui.screens.LoginStep
 import io.github.revocx35.walogger.ui.screens.RecoverScreen
 import io.github.revocx35.walogger.ui.screens.ServerScreen
 import io.github.revocx35.walogger.ui.screens.SetupLinkScreen
@@ -119,14 +120,19 @@ fun AppRoot(graph: AppGraph) {
                         login = { user, pw, totp ->
                             val res = s.api.login(user, pw, totp)
                             if (!res.ok && res.mustChangePassword == true) {
-                                // An admin-issued temporary password: choosing a new one happens on the server's web page.
-                                throw ApiException(401, "must_change_password", "This is a temporary password. Open the server's web page once, sign in there and choose your own password; then sign in here.")
+                                // An admin-issued temporary password: the user chooses their own right here.
+                                LoginStep.Claim(needRecoveryKey = res.needRecoveryKey == true)
                             } else if (!res.ok && res.needTotp == true) {
-                                true
+                                LoginStep.NeedTotp
                             } else {
                                 ctrl.refresh().join()
-                                false
+                                LoginStep.Done
                             }
+                        },
+                        claim = { user, pw, newPw, key ->
+                            val res = s.api.claim(user, pw, newPw, key)
+                            ctrl.pendingRecoveryKey.value = res.recoveryKey
+                            ctrl.refresh().join()
                         },
                         recover = { user, key, pw ->
                             val res = s.api.recover(user, key, pw)

@@ -109,10 +109,19 @@ private fun PasswordHints(password: String, username: String) {
     }
 }
 
+/** What a login attempt needs next. */
+sealed interface LoginStep {
+    data object Done : LoginStep
+    data object NeedTotp : LoginStep
+    /** Signed in with an admin's temporary password: choose your own ([needRecoveryKey] after a reset of an existing account). */
+    data class Claim(val needRecoveryKey: Boolean) : LoginStep
+}
+
 class AuthActions(
     val signup: suspend (token: String, user: String, password: String) -> Unit,
-    val login: suspend (user: String, password: String, totp: String?) -> Boolean, // true = TOTP needed
+    val login: suspend (user: String, password: String, totp: String?) -> LoginStep,
     val recover: suspend (user: String, key: String, password: String) -> Unit,
+    val claim: suspend (user: String, password: String, newPassword: String, recoveryKey: String?) -> Unit,
 )
 
 @Composable
@@ -160,21 +169,62 @@ fun LoginScreen(actions: AuthActions, onRecover: () -> Unit, onChangeServer: () 
     var password by remember { mutableStateOf("") }
     var totp by remember { mutableStateOf("") }
     var needTotp by remember { mutableStateOf(false) }
+    // Set after signing in with a temporary password an admin issued: the user must choose their own now.
+    var claim by remember { mutableStateOf<LoginStep.Claim?>(null) }
+    var newPassword by remember { mutableStateOf("") }
+    var confirm by remember { mutableStateOf("") }
+    var recoveryKey by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    val submit: () -> Unit = {
+    val submit: () -> Unit = submit@{
         error = null
+        val c = claim
+        if (c != null && newPassword != confirm) {
+            error = "Passwords do not match."
+            return@submit
+        }
         busy = true
         scope.launch {
             try {
-                if (actions.login(username.trim(), password, if (needTotp) totp.replace(" ", "") else null)) needTotp = true
+                if (c != null) {
+                    actions.claim(username.trim(), password, newPassword, if (c.needRecoveryKey) recoveryKey.trim() else null)
+                } else {
+                    when (val step = actions.login(username.trim(), password, if (needTotp) totp.replace(" ", "") else null)) {
+                        LoginStep.Done -> Unit
+                        LoginStep.NeedTotp -> needTotp = true
+                        is LoginStep.Claim -> claim = step
+                    }
+                }
             } catch (e: Exception) {
                 error = e.userMessage()
             } finally {
                 busy = false
             }
         }
+    }
+    val c = claim
+    if (c != null) {
+        androidx.activity.compose.BackHandler { claim = null; password = ""; newPassword = ""; confirm = ""; recoveryKey = ""; error = null }
+        AuthShell(
+            "Choose your own password",
+            if (c.needRecoveryKey) {
+                "The admin reset your password. Enter your recovery key and choose a new password: your logged messages stay readable only with it."
+            } else {
+                "You signed in with a temporary password from the admin. Choose one only you know — your data is encrypted with it, so neither the admin nor anyone else can read it or get it back for you."
+            },
+        ) {
+            if (c.needRecoveryKey) WaTextField(recoveryKey, { recoveryKey = it }, "Recovery key", mono = true, singleLine = false, minLines = 3)
+            WaTextField(newPassword, { newPassword = it }, "New password", password = true)
+            WaTextField(confirm, { confirm = it }, "Confirm new password", password = true, imeAction = ImeAction.Done, onIme = submit)
+            PasswordHints(newPassword, username)
+            ErrorNote(error)
+            WaButton("Set password and continue", submit, style = BtnStyle.Primary, block = true, busy = busy, enabled = newPassword.length >= 12 && (!c.needRecoveryKey || recoveryKey.isNotBlank()))
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                LinkButton("Back to login", { claim = null; password = ""; newPassword = ""; confirm = ""; recoveryKey = ""; error = null }, style = WaType.small)
+            }
+        }
+        return
     }
     AuthShell("Log in", "Unlock your encrypted WhatsApp log.") {
         WaTextField(username, { username = it }, "Username", enabled = !needTotp)

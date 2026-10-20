@@ -737,7 +737,7 @@ Worker-only routes (`/internal/*`, unix socket, gateway token + scope header; ne
 A native client for the same API (no WebView, no server changes needed). Kotlin 2.4, Jetpack Compose,
 AGP 9.4 (built-in Kotlin), Gradle 9.8 (wrapper with pinned checksum), minSdk 26, compile/target SDK 37.
 Package `io.github.revocx35.walogger` (debug builds get the `.debug` suffix and install side by side).
-Current release: 0.8.0 (versionCode 9: servers behind authentik forward auth, see `docs/authentik.md`). 0.7.0 (versionCode 8: video calls). 0.6.0 (versionCode 7: voice calls). 0.5.0 (versionCode 6: sending). 0.4.0 (versionCode 5:
+Current release: 0.9.0 (versionCode 10: multi-user — choose-your-own-password step after a temporary password, and the admin's *Users* tab: users, ports, admin log; `ui/screens/AdminScreen.kt`, `ApiClient.admin*`). 0.8.0 (versionCode 9: servers behind authentik forward auth, see `docs/authentik.md`). 0.7.0 (versionCode 8: video calls). 0.6.0 (versionCode 7: voice calls). 0.5.0 (versionCode 6: sending). 0.4.0 (versionCode 5:
 multi-select photos/videos in a chat and save them to the gallery).
 0.3.0 (versionCode 4: auto-save with a disappearing-messages-only option, Android 17 local network
 permission). 0.1.1 (versionCode 2) was confirmed working by the owner on a Samsung, One UI 8.5 / Android 16,

@@ -44,6 +44,7 @@ import io.github.revocx35.walogger.ui.screens.ChatState
 import io.github.revocx35.walogger.ui.screens.DeletedScreen
 import io.github.revocx35.walogger.ui.screens.DeletedState
 import io.github.revocx35.walogger.ui.screens.LoginScreen
+import io.github.revocx35.walogger.ui.screens.LoginStep
 import io.github.revocx35.walogger.ui.screens.SearchScreen
 import io.github.revocx35.walogger.ui.screens.SetupRecoveryScreen
 import io.github.revocx35.walogger.ui.screens.SignupScreen
@@ -102,7 +103,7 @@ class FakeSender : io.github.revocx35.walogger.ui.MessageSender {
     override suspend fun readReceipts(): Boolean = false
 }
 
-private val noAuth = AuthActions({ _, _, _ -> }, { _, _, _ -> false }, { _, _, _ -> })
+private val noAuth = AuthActions({ _, _, _ -> }, { _, _, _ -> LoginStep.Done }, { _, _, _ -> }, { _, _, _, _ -> })
 
 /**
  * Renders the main screens with sample data (JVM, Robolectric native graphics) so the design can be
@@ -306,6 +307,32 @@ class ScreenshotTest {
 
     @Test
     fun phoneRecoveryKey() = shot("phone_recovery_key") { SetupRecoveryScreen("ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ23-4567-ABCD-EFGH-IJKL-MNOP-QR") {} }
+
+    @Test
+    fun phoneAdminUsers() = shot("phone_users") {
+        val api = io.github.revocx35.walogger.core.ApiClient(okhttp3.OkHttpClient(), okhttp3.HttpUrl.Builder().scheme("https").host("walogger.example.com").build())
+        val user = { id: Int, name: String, port: Int?, status: io.github.revocx35.walogger.core.UserStatus, wa: io.github.revocx35.walogger.core.WaState?, disabled: Boolean ->
+            io.github.revocx35.walogger.core.AdminUser(id, name, if (id == 1) io.github.revocx35.walogger.core.UserRole.Admin else io.github.revocx35.walogger.core.UserRole.User, disabled, port, 1_700_000_000_000, 1_760_000_000_000, status, wa)
+        }
+        val overview = io.github.revocx35.walogger.core.AdminOverview(
+            currentUserId = 1,
+            users = listOf(
+                user(1, "owner", null, io.github.revocx35.walogger.core.UserStatus.Active, io.github.revocx35.walogger.core.WaState.Ready, false),
+                user(2, "ali", 8443, io.github.revocx35.walogger.core.UserStatus.Active, io.github.revocx35.walogger.core.WaState.Qr, false),
+                user(3, "ayse", 8443, io.github.revocx35.walogger.core.UserStatus.Pending, null, false),
+                user(4, "can", null, io.github.revocx35.walogger.core.UserStatus.Active, io.github.revocx35.walogger.core.WaState.Ready, true),
+            ),
+            defaultPort = 443,
+            ports = listOf(io.github.revocx35.walogger.core.AdminPort(8443, "https://friend.example.com", listOf("ali", "ayse"))),
+            availablePorts = listOf(8443, 8444, 8445),
+            maxUsers = 10,
+        )
+        val log = listOf(io.github.revocx35.walogger.core.AdminAuditEntry(1, 1_760_000_000_000, "user_created", "owner", "ayse", "192.0.2.10", "port 8443"))
+        Column(Modifier.fillMaxSize()) {
+            Box(Modifier.weight(1f)) { io.github.revocx35.walogger.ui.screens.AdminPage(io.github.revocx35.walogger.ui.screens.AdminDeps(api, "owner", false), overview, null, {}, log, null) }
+            BottomRail(Tab.Users, admin = true) {}
+        }
+    }
 
     @Config(qualifiers = "w1280dp-h800dp-mdpi")
     @Test

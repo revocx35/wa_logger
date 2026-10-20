@@ -61,6 +61,7 @@ import androidx.navigation.toRoute
 import io.github.revocx35.walogger.core.AppState
 import io.github.revocx35.walogger.core.Message
 import io.github.revocx35.walogger.core.MessageEdit
+import io.github.revocx35.walogger.core.UserRole
 import io.github.revocx35.walogger.core.WaState
 import io.github.revocx35.walogger.core.WaStatus
 import io.github.revocx35.walogger.data.AppGraph
@@ -72,6 +73,8 @@ import io.github.revocx35.walogger.ui.components.CallScreen
 import io.github.revocx35.walogger.ui.components.WaIcon
 import io.github.revocx35.walogger.ui.components.WaStatePill
 import io.github.revocx35.walogger.ui.components.WarnBanner
+import io.github.revocx35.walogger.ui.screens.AdminDeps
+import io.github.revocx35.walogger.ui.screens.AdminScreen
 import io.github.revocx35.walogger.ui.screens.ChatListPane
 import io.github.revocx35.walogger.ui.screens.ChatListViewModel
 import io.github.revocx35.walogger.ui.screens.ChatPane
@@ -95,17 +98,22 @@ import kotlinx.serialization.Serializable
 @Serializable object DeletedRoute
 @Serializable data class SearchRoute(val q: String = "")
 @Serializable object WaWebRoute
+@Serializable object UsersRoute
 @Serializable object SettingsRoute
 
 enum class Tab(val label: String, val icon: ImageVector) {
-    Chats("Chats", WaIcons.chats), Deleted("Deleted", WaIcons.deleted), Search("Search", WaIcons.search), WaWeb("WA Web", WaIcons.monitor), Settings("Settings", WaIcons.settings)
+    Chats("Chats", WaIcons.chats), Deleted("Deleted", WaIcons.deleted), Search("Search", WaIcons.search), WaWeb("WA Web", WaIcons.monitor), Users("Users", WaIcons.group), Settings("Settings", WaIcons.settings)
 }
+
+/** The menu items: "Users" (user management) is the admin's only, like the web's rail. */
+fun menuTabs(admin: Boolean): List<Tab> = if (admin) Tab.entries else Tab.entries.filter { it != Tab.Users }
 
 private fun tabRoute(t: Tab): Any = when (t) {
     Tab.Chats -> ChatsRoute
     Tab.Deleted -> DeletedRoute
     Tab.Search -> SearchRoute()
     Tab.WaWeb -> WaWebRoute
+    Tab.Users -> UsersRoute
     Tab.Settings -> SettingsRoute
 }
 
@@ -119,7 +127,8 @@ private fun NavHostController.goTab(t: Tab) = navigate(tabRoute(t)) {
 private fun RailItem(label: String, icon: ImageVector, active: Boolean, compact: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val c = Wa.colors
     Column(
-        modifier.width(if (compact) 58.dp else 60.dp).clip(RoundedCornerShape(12.dp)).background(if (active) c.active else androidx.compose.ui.graphics.Color.Transparent)
+        // On phones the items share the bar's width (up to seven of them), on wide screens they are fixed-size.
+        (if (compact) modifier else modifier.width(60.dp)).clip(RoundedCornerShape(12.dp)).background(if (active) c.active else androidx.compose.ui.graphics.Color.Transparent)
             .clickable(role = Role.Tab, onClickLabel = label, onClick = onClick).padding(vertical = if (compact) 4.dp else 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -181,11 +190,13 @@ fun MainShell(graph: AppGraph, session: ServerSession, state: AppState, wa: WaSt
         dest.hasRoute<DeletedRoute>() -> Tab.Deleted
         dest.hasRoute<SearchRoute>() -> Tab.Search
         dest.hasRoute<WaWebRoute>() -> Tab.WaWeb
+        dest.hasRoute<UsersRoute>() -> Tab.Users
         dest.hasRoute<SettingsRoute>() -> Tab.Settings
         else -> null
     }
     var viewing by remember { mutableStateOf<Message?>(null) }
     val (actions, save) = rememberMediaActions(session, context) { viewing = it }
+    val admin = state.role == UserRole.Admin
     val chatList: ChatListViewModel = viewModel(key = "chats:${session.id}") { ChatListViewModel(session) }
     val chatListState = rememberLazyListState()
     val needsAttention = wa?.state == WaState.Disconnected || wa?.state == WaState.Qr
@@ -254,6 +265,9 @@ fun MainShell(graph: AppGraph, session: ServerSession, state: AppState, wa: WaSt
                             SearchScreen(vm.query, { vm.query = it }, vm.result, vm.error, vm.busy, vm::run) { chatId, messageId -> openChat(chatId, messageId) }
                         }
                         composable<WaWebRoute> { WaWebScreen(session.api, wa) }
+                        composable<UsersRoute> {
+                            if (admin) AdminScreen(AdminDeps(api = session.api, username = state.username, totpEnabled = state.totpEnabled == true))
+                        }
                         composable<SettingsRoute> {
                             SettingsScreen(
                                 SettingsDeps(
@@ -274,13 +288,13 @@ fun MainShell(graph: AppGraph, session: ServerSession, state: AppState, wa: WaSt
 
         if (wide) {
             Row(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.ime.exclude(WindowInsets.navigationBars))) {
-                SideRail(activeTab, wa, { nav.goTab(it) }, onLogout)
+                SideRail(activeTab, wa, { nav.goTab(it) }, onLogout, admin)
                 Column(Modifier.weight(1f).fillMaxHeight(), content = content)
             }
         } else {
             Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.ime.exclude(WindowInsets.navigationBars))) {
                 content()
-                if (!inChat) BottomRail(activeTab) { if (it == null) onLogout() else nav.goTab(it) }
+                if (!inChat) BottomRail(activeTab, admin) { if (it == null) onLogout() else nav.goTab(it) }
             }
         }
     }
@@ -294,7 +308,7 @@ fun MainShell(graph: AppGraph, session: ServerSession, state: AppState, wa: WaSt
 
 /** The web's `.rail` on wide screens: menu items on top, WhatsApp status and log out at the bottom. */
 @Composable
-fun SideRail(active: Tab?, wa: WaStatus?, onTab: (Tab) -> Unit, onLogout: () -> Unit) {
+fun SideRail(active: Tab?, wa: WaStatus?, onTab: (Tab) -> Unit, onLogout: () -> Unit, admin: Boolean = false) {
     val c = Wa.colors
     Row(Modifier.fillMaxHeight()) {
         Column(
@@ -303,7 +317,7 @@ fun SideRail(active: Tab?, wa: WaStatus?, onTab: (Tab) -> Unit, onLogout: () -> 
             verticalArrangement = Arrangement.SpaceBetween,
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                for (t in Tab.entries) RailItem(t.label, t.icon, active == t, false, { onTab(t) })
+                for (t in menuTabs(admin)) RailItem(t.label, t.icon, active == t, false, { onTab(t) })
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Box(Modifier.clip(RoundedCornerShape(12.dp)).clickable { onTab(Tab.WaWeb) }.padding(6.dp)) { WaStatePill(wa, compact = true) }
@@ -316,7 +330,7 @@ fun SideRail(active: Tab?, wa: WaStatus?, onTab: (Tab) -> Unit, onLogout: () -> 
 
 /** The rail at the bottom on phones (hidden inside a chat). [onTab] gets null for "Log out". */
 @Composable
-fun BottomRail(active: Tab?, onTab: (Tab?) -> Unit) {
+fun BottomRail(active: Tab?, admin: Boolean = false, onTab: (Tab?) -> Unit) {
     val c = Wa.colors
     Column {
         Box(Modifier.fillMaxWidth().height(1.dp).background(c.border))
@@ -324,8 +338,8 @@ fun BottomRail(active: Tab?, onTab: (Tab?) -> Unit) {
             Modifier.fillMaxWidth().background(c.rail).navigationBarsPadding().padding(horizontal = 6.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
         ) {
-            for (t in Tab.entries) RailItem(t.label, t.icon, active == t, true, { onTab(t) })
-            RailItem("Log out", WaIcons.logout, false, true, { onTab(null) })
+            for (t in menuTabs(admin)) RailItem(t.label, t.icon, active == t, true, { onTab(t) }, Modifier.weight(1f))
+            RailItem("Log out", WaIcons.logout, false, true, { onTab(null) }, Modifier.weight(1f))
         }
     }
 }
