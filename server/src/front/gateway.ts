@@ -58,10 +58,6 @@ export function rawClientInfo(req: IncomingMessage, hops: number): ClientInfo {
   return { ip, proto: proto === 'https' ? 'https' : 'http', host };
 }
 
-export interface Identity {
-  user: UserRow;
-}
-
 /** What the gateway knows and does; the route modules (auth.ts, admin.ts) and the proxy hooks are built on it. */
 export class Gateway {
   readonly throttle = new Throttle(NO_LOCK_STORE);
@@ -252,6 +248,8 @@ export async function buildGateway(config: FrontConfig, repo: SystemRepo, pool: 
     requestIdHeader: false,
     routerOptions: { maxParamLength: 300 },
     return503OnClosing: true,
+    // The workers log every request they serve; the gateway only logs what goes wrong.
+    disableRequestLogging: true,
     // Extra ports are plain http.Servers around the same request handler.
     serverFactory: (h) => {
       handler = h;
@@ -296,7 +294,12 @@ export async function buildGateway(config: FrontConfig, repo: SystemRepo, pool: 
     }
     if (!(path.toLowerCase().startsWith('/api') || decoded.startsWith('/api'))) return;
     reply.hijack();
-    await forwardApi(gw, req, reply);
+    try {
+      await forwardApi(gw, req, reply);
+    } catch (err) {
+      req.log.error({ err }, 'forwarding failed');
+      reply.raw.destroy();
+    }
   });
 
   app.setErrorHandler((err: unknown, req, reply) => {

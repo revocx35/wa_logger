@@ -19,8 +19,14 @@ const Env = z.object({
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
 });
 
+const SETUP_HELP =
+  'The app container could not set up its directories or switch users. The compose file of this release is needed: ' +
+  'cap_add SETUID, SETGID, CHOWN and KILL, a tmpfs on /run/wal, and the app_users volume on /users (see README, "Upgrading from a ' +
+  'single-user release").';
+
 async function main(): Promise<void> {
-  const parsed = Env.safeParse(process.env);
+  // CONTROL_SECRET replaced VNC_PASSWORD (same strength, same two containers): older .env files keep working.
+  const parsed = Env.safeParse({ ...process.env, CONTROL_SECRET: process.env.CONTROL_SECRET || process.env.VNC_PASSWORD });
   if (!parsed.success) {
     console.error(`Invalid configuration:\n${parsed.error.issues.map((i) => `  - ${i.path.join('.')}: ${i.message}`).join('\n')}`);
     process.exit(1);
@@ -31,6 +37,7 @@ async function main(): Promise<void> {
   const dist = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
   const env = { ...process.env };
   delete env.CONTROL_SECRET; // never inherited by the front or a worker
+  delete env.VNC_PASSWORD;
   const cfg: SupervisorConfig = {
     controlSecret: e.CONTROL_SECRET,
     dataDir: e.DATA_DIR,
@@ -48,7 +55,13 @@ async function main(): Promise<void> {
   };
   if (!cfg.dropPrivileges) log.warn('not running as root: every process keeps this user (development only)');
   const sup = new Supervisor(cfg, log);
-  await sup.start();
+  try {
+    await sup.start();
+  } catch (err) {
+    const code = (err as { code?: string }).code;
+    if (code === 'EPERM' || code === 'EACCES' || code === 'EROFS' || code === 'ENOENT') log.fatal({ code }, SETUP_HELP);
+    throw err;
+  }
   const stop = () => void sup.shutdown().finally(() => process.exit(0));
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);

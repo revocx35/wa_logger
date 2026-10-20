@@ -157,7 +157,7 @@ UIDS="$(dc exec -T app sh -c 'for p in /proc/[0-9]*; do if tr "\0" " " < $p/cmdl
 CAPS="$(dc exec -T app sh -c 'for p in /proc/[0-9]*; do if tr "\0" " " < $p/cmdline 2>/dev/null | grep -q "dist/\(index\|front\)"; then awk "/^CapEff:/{print \$2}" $p/status; fi; done' | sort -u)"
 [[ "$CAPS" == "0000000000000000" ]] && ok "the gateway and the workers hold no capabilities" || bad "capabilities: $CAPS"
 
-SANDBOX="$(dc exec -T -u 10002 chromium bash -c 'for p in /proc/[0-9]*; do if grep -q -- "--type=renderer" $p/cmdline 2>/dev/null; then readlink $p/ns/pid; break; fi; done; readlink /proc/1/ns/pid' 2>/dev/null | sort -u | wc -l)"
+SANDBOX="$(dc exec -T -u 10002 chromium bash -c 'for p in /proc/[0-9]*; do if grep -q -- "--type=renderer" $p/cmdline 2>/dev/null; then readlink $p/ns/pid; break; fi; done; readlink /proc/self/ns/pid' 2>/dev/null | sort -u | wc -l)"
 [[ "$SANDBOX" == "2" ]] && ok "Chromium renderers run in a separate PID namespace (sandbox on)" || bad "Chromium sandbox check inconclusive"
 
 echo "== result: $PASS passed, $FAIL failed"

@@ -4,6 +4,7 @@ import WebSocket from 'ws';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AdminOverview, CreateUserResponse, ResetUserResponse } from '../../../shared/api.js';
 import { Browser, makeGateway, SETUP, type TestGateway } from './testutil.js';
+import { cleanApiPath, rawClientInfo } from './gateway.js';
 
 const ADMIN_PW = 'correct-horse-battery-staple-1';
 const FRIEND_PW = 'my-very-own-passphrase-1';
@@ -488,5 +489,26 @@ describe('gateway: multi-user', () => {
       for (let i = 0; i < 12; i++) lastKnown = (await known.req('POST', '/api/auth/login', { username: 'admin', password: `guess-${i}-xxxxxxxx` })).status;
       expect(lastKnown).toBe(429);
     });
+  });
+});
+
+describe('gateway helpers', () => {
+  const req = (remote: string, headers: Record<string, string>) => ({ socket: { remoteAddress: remote }, headers }) as never;
+
+  it('takes the client address like Fastify\'s trustProxy hop count (WebSocket upgrades use this)', () => {
+    const h = { 'x-forwarded-for': '6.6.6.6, 203.0.113.9, 10.0.0.5', 'x-forwarded-proto': 'https, http', 'x-forwarded-host': 'wa.example.com', host: 'internal' };
+    // No trusted proxy: the socket peer, headers ignored.
+    expect(rawClientInfo(req('172.18.0.2', h), 0)).toEqual({ ip: '172.18.0.2', proto: 'http', host: 'internal' });
+    // One hop (Caddy): the last X-Forwarded-For entry.
+    expect(rawClientInfo(req('172.18.0.2', h), 1)).toMatchObject({ ip: '10.0.0.5', proto: 'https', host: 'wa.example.com' });
+    // Two hops (Caddy + NPM): the one before it; the first entry a client could have forged is never used.
+    expect(rawClientInfo(req('::ffff:172.18.0.2', h), 2).ip).toBe('203.0.113.9');
+    expect(rawClientInfo(req('172.18.0.2', h), 5).ip).toBe('6.6.6.6');
+    expect(rawClientInfo(req('172.18.0.2', {}), 2).ip).toBe('172.18.0.2');
+  });
+
+  it('forwards only plain /api paths', () => {
+    for (const ok of ['/api', '/api/state', '/api/chats/123@c.us/messages?limit=60&before=x', '/api/media/12', '/api/messages/false_9055@c.us_ABC/edits']) expect(cleanApiPath(ok), ok).toBe(true);
+    for (const bad of ['/apix', '/api/../internal/info', '/api/%2e%2e/x', '/api//x', '/api/%2fx', '/api/x%00', '/api/\\x', '/internal/info', '/%61pi/x', '/api/%252e', '/api/x y']) expect(cleanApiPath(bad), bad).toBe(false);
   });
 });

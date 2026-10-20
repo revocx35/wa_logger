@@ -126,6 +126,20 @@ async function main() {
   fr.jar.set('wal_tenant', '1');
   check((await fr.req('GET', '/api/chats')).status === 401, 'friend\'s session cannot be pointed at the admin\'s worker');
 
+  // Wipe: everything of the account and its browser profile goes; it starts over like a new account (new keys, new QR code).
+  const otherId0 = ids.find((u) => u.username === 'e2e_other')!.id;
+  const wipe = await admin.req('POST', `/api/admin/users/${otherId0}/reset`, { mode: 'wipe', adminPassword: ADMIN_PW });
+  check(wipe.status === 200 && wipe.body.mode === 'wipe', 'admin wipes an account', JSON.stringify(wipe.body));
+  await sleep(1500);
+  check((await other.req('GET', '/api/chats', undefined, { port: EXTRA2 })).status === 401, 'the wiped user\'s session is gone');
+  check(sh(CHROMIUM, 'ls /data').split('\n').every((x) => x !== `u${otherId0}`), 'the wiped user\'s browser profile is gone');
+  const again = new Browser(EXTRA2);
+  const l2 = await again.req('POST', '/api/auth/login', { username: 'e2e_other', password: wipe.body.temporaryPassword });
+  check(l2.body?.mustChangePassword === true && l2.body?.needRecoveryKey === false, 'a wiped account asks for a new password (no recovery key)');
+  const c2 = await again.req('POST', '/api/auth/claim', { username: 'e2e_other', password: wipe.body.temporaryPassword, newPassword: 'yet-another-passphrase-456' });
+  check(c2.status === 200, 'the wiped account is claimed again', JSON.stringify(c2.body));
+  check((await waitWa(again, EXTRA2, ['qr', 'ready'], 'wiped account WhatsApp')) !== '', 'the wiped account gets a fresh QR code');
+
   // Processes and files: one unix user per account, nothing readable across.
   const procs = sh(APP, 'for p in /proc/[0-9]*; do u=$(awk \'/^Uid:/{print $2}\' $p/status 2>/dev/null); c=$(tr "\\0" " " < $p/cmdline 2>/dev/null | cut -c1-90); echo "$u $c"; done | grep "dist/" | sort -u');
   console.log(procs.split('\n').map((x) => `       ${x}`).join('\n'));

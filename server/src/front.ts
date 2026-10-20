@@ -35,9 +35,11 @@ export async function bootstrap(gw: Gateway, log: Logger): Promise<void> {
     await gw.listeners.open(l.port).catch((err: unknown) => log.warn({ port: l.port, err: err instanceof Error ? err.message : String(err) }, 'could not open a saved port'));
   }
   // Everyone's logger runs around the clock, signed in or not.
-  for (const u of gw.repo.listUsers()) {
-    await gw.pool.ensure(u.id).catch((err: unknown) => log.warn({ tenant: u.id, err: err instanceof Error ? err.message : String(err) }, 'worker did not start'));
-  }
+  await Promise.all(
+    gw.repo.listUsers().map((u) =>
+      gw.pool.ensure(u.id).catch((err: unknown) => log.warn({ tenant: u.id, err: err instanceof Error ? err.message : String(err) }, 'worker did not start')),
+    ),
+  );
 }
 
 async function main(): Promise<void> {

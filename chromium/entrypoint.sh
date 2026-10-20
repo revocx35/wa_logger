@@ -5,7 +5,11 @@ set -Eeuo pipefail
 
 log() { printf '[chromium-entrypoint] %s\n' "$*" >&2; }
 
+# CONTROL_SECRET replaced VNC_PASSWORD (older .env files / compose files only have the latter).
+CONTROL_SECRET="${CONTROL_SECRET:-${VNC_PASSWORD:-}}"
 : "${CONTROL_SECRET:?CONTROL_SECRET must be set}"
+export CONTROL_SECRET
+unset VNC_PASSWORD
 SCREEN="${SCREEN:-1280x800x24}"
 if [[ ! "$SCREEN" =~ ^([0-9]{3,4})x([0-9]{3,4})x(16|24)$ ]]; then
   log "invalid SCREEN '$SCREEN' (expected e.g. 1280x800x24)"; exit 1

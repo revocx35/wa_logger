@@ -194,8 +194,8 @@ Update this file whenever a step is completed.
       DevTools allowlist relay, VNC tunnel, on-link bind)
 - [x] Web: choose-your-own-password step, admin Users page (users, ports, reset/delete with re-auth, log)
 - [x] Compose/Caddy: capabilities, volumes, tmpfs, extra ports (`EXTRA_PORTS`/`EXTRA_BIND`), `CONTROL_SECRET` (falls back
-      to `VNC_PASSWORD`), caddy `extra-ports.sh`; `setup.sh`, `.env.example`, `smoke.sh` (35 checks), diagnose script
-- [x] Tests: worker (multiuser.test.ts), gateway (26), supervisor (5), Go manager; `scripts/dev/multiuser-e2e.mts` (32 checks on a
+      to `VNC_PASSWORD`), caddy `extra-ports.sh`; `setup.sh`, `.env.example`, `smoke.sh` (30 checks), diagnose script
+- [x] Tests: worker (multiuser.test.ts), gateway (28), supervisor (5), Go manager; `scripts/dev/multiuser-e2e.mts` (35 checks on a
       real stack); Playwright walkthrough of the new screens; upgrade test from a 0.8-era single-user volume pair
 - [ ] Owner: update the production VM (README "Upgrading from a single-user release"), create the friend's user and
       port, point the second proxy host at it (no authentik), scan the friend's QR code with their phone

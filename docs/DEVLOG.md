@@ -354,9 +354,12 @@ model, and explicitly not in wa_logger mobile (Android WebView can't run WhatsAp
 - Security review items fixed before release: the gateway's token alone would have opened `/internal/*` for any path a client
   could get forwarded (now: `X-WAL-Scope` the gateway never forwards, strict `/api/…` path check, all client `X-WAL-*` stripped);
   worker Node heap cap; origin per port overrides forwarded scheme/host.
-- Verified: server 190+ tests, Go tests, `multiuser-e2e.mts` 32/32 on compose (three unix users for workers and browsers,
+- Verified: server 187 tests, Go tests, `multiuser-e2e.mts` on compose (three unix users for workers and browsers,
   no capabilities in gateway/workers, sandbox on, cross-user file access denied, delete removes data/browser/processes),
   Playwright walkthrough (create user → claim → own QR + live view), upgrade from the old layout.
+- Also green: `scripts/smoke.sh` 30/30 (source and `--deploy` layouts), the existing 61-step UI walkthrough (`e2e-ui.mjs`) against a
+  seeded multi-user stack (every message/media/search/settings route now goes through the gateway), Playwright screenshots of
+  the new screens, Android `:core:test` + `:app:compileDebugKotlin` (the login hint for temporary passwords).
 - One flake seen once: a worker's first WhatsApp Web load failed with "Cannot read properties of null (reading 'info')"
   and kept failing for ~90 s while two others worked; it did not recur in 5 later runs (stack frames are now logged on
   "whatsapp connect failed"). Watch for it.

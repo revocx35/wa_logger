@@ -5,7 +5,7 @@ WhatsApp-only URL policy. The wa_logger chromium image works (the empty director
 
 ```bash
 mkdir -p /tmp/emptypol
-docker run -d --name uitest --network host --shm-size 512m \
+docker run -d --name uitest --network host --shm-size 512m -u 10002:10002 -e HOME=/tmp \
   --security-opt seccomp=chromium/seccomp-chromium.json \
   -v /tmp/emptypol:/etc/chromium/policies/managed:ro --entrypoint chromium \
   ghcr.io/revocx35/wa_logger-chromium:latest --headless=new --remote-debugging-port=9333 \
@@ -106,7 +106,7 @@ the manager's address is the chromium container's IP on the backend network, fou
 - Don't declare named helper functions inside `evaluate()` when running through `tsx`: esbuild wraps them with
   `__name`, which doesn't exist in the page. The production build (tsc) doesn't do this.
 
-## multiuser-e2e.mts — multi-user against a running stack (32 checks)
+## multiuser-e2e.mts — multi-user against a running stack (35 checks)
 
 Admin + two users on two extra ports against a real `docker compose` stack: first sign-in with the temporary password,
 port policy, a separate Chromium and QR code per user, VNC per user, forged tenant cookies, and what only a real

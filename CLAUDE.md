@@ -50,7 +50,7 @@ Read these first, every session:
 - Multi-user on a real stack: `scripts/dev/multiuser-e2e.mts` (command in its header; scratch compose project + `.env`, never the
   owner's deployment). Upgrade test: build an old commit's images in a `git worktree`, run it, seed it, then start the new
   compose on the same volumes (done 2026-10-20; it found the stale-`SingletonLock` bug).
-- Full stack from source: `scripts/smoke.sh` (35 checks). Standalone layout: `scripts/smoke.sh --deploy`.
+- Full stack from source: `scripts/smoke.sh` (30 checks). Standalone layout: `scripts/smoke.sh --deploy`.
 - UI/SSE browser tests: `scripts/dev/README.md` (`send-ui.mts`: sending end-to-end incl. a real voice recording;
   `call-ui.mts`: calls in the web UI; `call-audio.mts`: call audio inside the real Chromium image).
   Sample data: `server/src/testutil/seed.ts`.

@@ -685,14 +685,14 @@ Worker-only routes (`/internal/*`, unix socket, gateway token + scope header; ne
   (ordering, revoke, edit, reactions, states). `auth.test.ts` also covers encoded-path bypasses, parallel
   lockout races, TOTP replay races, WAL scrubbing and `COOKIE_SECURE=auto`.
 * Multi-user: `auth/multiuser.test.ts` (worker: internal token + scope, provision/claim/reset/wipe/revoke, temporary-password
-  throttle), `front/gateway.test.ts` (26: real in-process workers on unix sockets behind the real gateway on real ports: setup,
+  throttle), `front/gateway.test.ts` (28: real in-process workers on unix sockets behind the real gateway on real ports: setup,
   create/claim, isolation incl. every forged-cookie combination, port policy and origin per port, disable/reset/wipe/delete,
   forwarding-header policy, `/internal` unreachable, SSE and WebSocket tunnelling), `supervisor/supervisor.test.ts`
   (environments, token vectors shared with Go, crash restart, control protocol, removal), `chromium/manager/manager_test.go`
   (tokens, authorization, DevTools allowlist, VNC tunnel, layout, on-link choice; run in the image build).
-  `scripts/dev/multiuser-e2e.mts` (32 checks against a real compose stack: unix users, permissions, capabilities, one browser
+  `scripts/dev/multiuser-e2e.mts` (35 checks against a real compose stack: unix users, permissions, capabilities, one browser
   per user, port policy, deletion) and a Playwright walkthrough of the UI were run for the release.
-* `scripts/smoke.sh` (35 checks: TLS incl. no-SNI, headers, cookies, CSRF/Origin, signup, WA reaches `qr`, VNC
+* `scripts/smoke.sh` (30 checks: TLS incl. no-SNI, headers, cookies, CSRF/Origin, signup, WA reaches `qr`, VNC
   `RFB 003.00x`, no app egress, Chromium sandbox) and `scripts/smoke.sh --deploy` (the standalone layout).
 * Calls: `wa/callpage.test.ts` runs the injected source in a `vm` against fake WhatsApp modules and fake Web Audio,
   `api/calls.test.ts` covers the routes, the audio WebSocket and the call state machine. `scripts/dev/call-audio.mts`
