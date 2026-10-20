@@ -104,7 +104,7 @@ export function originAllowed(ctx: AppContext, req: FastifyRequest): boolean {
  * compromised page inside Chromium could otherwise send requests to the app. Requests whose TCP peer
  * is the Chromium container are refused outright. Loopback is never blocked (healthchecks).
  */
-class PeerGuard {
+export class PeerGuard {
   private blocked = new Set<string>();
   private readonly timer: NodeJS.Timeout;
 
@@ -131,6 +131,59 @@ class PeerGuard {
   stop(): void {
     clearInterval(this.timer);
   }
+}
+
+/** Hardening headers on every response (the CSP can be tightened per route, e.g. media responses use a sandbox policy). */
+export function registerSecurityHeaders(app: FastifyInstance, cookieSecure: boolean | 'auto'): void {
+  app.addHook('onSend', async (req, reply, payload) => {
+    // Routes may set a stricter CSP (e.g. media responses use a sandbox policy).
+    if (!reply.hasHeader('content-security-policy')) reply.header('Content-Security-Policy', CSP);
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.header('X-Frame-Options', 'DENY');
+    reply.header('Referrer-Policy', 'no-referrer');
+    reply.header('Permissions-Policy', PERMISSIONS_POLICY);
+    reply.header('Cross-Origin-Opener-Policy', 'same-origin');
+    reply.header('Cross-Origin-Resource-Policy', 'same-origin');
+    reply.header('Origin-Agent-Cluster', '?1');
+    reply.header('X-DNS-Prefetch-Control', 'off');
+    reply.header('X-Permitted-Cross-Domain-Policies', 'none');
+    if (isSecureRequest(cookieSecure, req)) reply.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    if (isApiRequest(req)) {
+      reply.header('Cache-Control', 'no-store');
+      reply.header('Pragma', 'no-cache');
+    }
+    reply.removeHeader('X-Powered-By');
+    return payload;
+  });
+}
+
+/** The built web UI (hashed assets cached for a year) and the single-page-app fallback for unknown GET routes. */
+export async function registerStaticUi(app: FastifyInstance, webDir: string | undefined): Promise<void> {
+  const indexHtml = webDir && fs.existsSync(path.join(webDir, 'index.html')) ? fs.readFileSync(path.join(webDir, 'index.html')) : null;
+  if (webDir && indexHtml) {
+    await app.register(fastifyStatic, {
+      root: webDir,
+      prefix: '/',
+      index: false,
+      wildcard: false,
+      dotfiles: 'deny',
+      setHeaders: (res, filePath) => {
+        if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+          res.header('Cache-Control', 'public, max-age=31536000, immutable');
+        } else {
+          res.header('Cache-Control', 'no-cache');
+        }
+      },
+    });
+  }
+
+  app.setNotFoundHandler((req, reply) => {
+    // Unknown API routes and missing build assets are real 404s; everything else is an SPA route.
+    if (isApiRequest(req) || req.url.startsWith('/assets/') || req.method !== 'GET' || !indexHtml) {
+      return sendError(reply, Errors.notFound('Route'));
+    }
+    return reply.code(200).type('text/html; charset=utf-8').header('Cache-Control', 'no-cache').send(indexHtml);
+  });
 }
 
 export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
@@ -169,30 +222,16 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
     errorResponseBuilder: (_req, ctx2) => Errors.rateLimited(Math.ceil(ctx2.ttl / 1000)),
   });
 
-  /* ------------------------------------------------ security headers */
-  app.addHook('onSend', async (req, reply, payload) => {
-    // Routes may set a stricter CSP (e.g. media responses use a sandbox policy).
-    if (!reply.hasHeader('content-security-policy')) reply.header('Content-Security-Policy', CSP);
-    reply.header('X-Content-Type-Options', 'nosniff');
-    reply.header('X-Frame-Options', 'DENY');
-    reply.header('Referrer-Policy', 'no-referrer');
-    reply.header('Permissions-Policy', PERMISSIONS_POLICY);
-    reply.header('Cross-Origin-Opener-Policy', 'same-origin');
-    reply.header('Cross-Origin-Resource-Policy', 'same-origin');
-    reply.header('Origin-Agent-Cluster', '?1');
-    reply.header('X-DNS-Prefetch-Control', 'off');
-    reply.header('X-Permitted-Cross-Domain-Policies', 'none');
-    if (isSecureRequest(config.cookieSecure, req)) reply.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-    if (isApiRequest(req)) {
-      reply.header('Cache-Control', 'no-store');
-      reply.header('Pragma', 'no-cache');
-    }
-    reply.removeHeader('X-Powered-By');
-    return payload;
-  });
+  registerSecurityHeaders(app, config.cookieSecure);
 
   /* ------------------------------------ origin, session, auth, CSRF */
   app.addHook('onRequest', async (req, reply) => {
+    // Tenant worker behind the gateway: nothing but the gateway (which holds this token) gets an answer. The socket's
+    // directory permissions already keep other users out; this is the second, independent lock.
+    if (config.internalToken) {
+      const t = req.headers['x-wal-internal'];
+      if (typeof t !== 'string' || !ctEqual(t, config.internalToken)) return sendError(reply, Errors.forbidden());
+    }
     if (peerGuard.isBlocked(req.socket.remoteAddress)) {
       return sendError(reply, Errors.forbidden());
     }
@@ -261,32 +300,7 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
   app.get('/healthz', { logLevel: 'silent', config: { public: true, rateLimit: false } }, async () => ({ ok: true }));
 
   /* ------------------------------------------------ static web UI */
-  const webDir = config.webDir;
-  const indexHtml = webDir && fs.existsSync(path.join(webDir, 'index.html')) ? fs.readFileSync(path.join(webDir, 'index.html')) : null;
-  if (webDir && indexHtml) {
-    await app.register(fastifyStatic, {
-      root: webDir,
-      prefix: '/',
-      index: false,
-      wildcard: false,
-      dotfiles: 'deny',
-      setHeaders: (res, filePath) => {
-        if (filePath.includes(`${path.sep}assets${path.sep}`)) {
-          res.header('Cache-Control', 'public, max-age=31536000, immutable');
-        } else {
-          res.header('Cache-Control', 'no-cache');
-        }
-      },
-    });
-  }
-
-  app.setNotFoundHandler((req, reply) => {
-    // Unknown API routes and missing build assets are real 404s; everything else is an SPA route.
-    if (isApiRequest(req) || req.url.startsWith('/assets/') || req.method !== 'GET' || !indexHtml) {
-      return sendError(reply, Errors.notFound('Route'));
-    }
-    return reply.code(200).type('text/html; charset=utf-8').header('Cache-Control', 'no-cache').send(indexHtml);
-  });
+  await registerStaticUi(app, config.webDir);
 
   return app;
 }

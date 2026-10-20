@@ -333,7 +333,7 @@ describe('route authorization coverage', () => {
   it('rejects anonymous access to every non-public /api route', async () => {
     const h = await makeHarness();
     try {
-      const PUBLIC = new Set(['GET /api/state', 'HEAD /api/state', 'POST /api/auth/signup', 'POST /api/auth/login', 'POST /api/auth/recover']);
+      const PUBLIC = new Set(['GET /api/state', 'HEAD /api/state', 'POST /api/auth/signup', 'POST /api/auth/login', 'POST /api/auth/recover', 'POST /api/auth/claim']);
       const routes = h.ctx.routeTable.filter((r) => r.url.startsWith('/api/'));
       expect(routes.length).toBeGreaterThan(10);
       for (const r of routes) {

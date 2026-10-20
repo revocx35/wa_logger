@@ -22,8 +22,22 @@ const EnvSchema = z.object({
     .optional()
     .transform((v) => (v ? v.replace(/\/+$/, '') : undefined))
     .refine((v) => v === undefined || /^https?:\/\/[^/\s]+$/.test(v), 'PUBLIC_ORIGIN must look like https://host[:port]'),
-  SETUP_TOKEN: z.string().min(16, 'SETUP_TOKEN must be at least 16 characters'),
-  VNC_PASSWORD: z.string().min(8, 'VNC_PASSWORD must be at least 8 characters'),
+  /** Single-process mode only (tests, development): enables POST /api/auth/signup. The gateway checks the setup token
+   *  itself and creates the admin through /internal/signup, so tenant workers run without it. */
+  SETUP_TOKEN: z.string().min(16, 'SETUP_TOKEN must be at least 16 characters').optional(),
+  /** Tenant worker: listen on this unix socket instead of HOST:PORT (the directory permissions decide who may connect). */
+  SOCKET_PATH: z.string().min(1).optional(),
+  /** Tenant worker: shared secret of the gateway. When set, every request must carry it (X-WAL-Internal) and the
+   *  /internal/* routes exist. */
+  INTERNAL_TOKEN: z.string().min(32).optional(),
+  /** Base URL of the chromium container's manager (it hosts one Chromium per user). */
+  CHROMIUM_URL: z
+    .string()
+    .default('http://chromium:9223')
+    .refine((v) => /^https?:\/\/[^/\s]+$/.test(v), 'CHROMIUM_URL must look like http://host:port'),
+  /** Which Chromium instance of the manager belongs to this tenant, and the bearer token that proves it. */
+  CHROMIUM_INSTANCE: int(1, 1, 1_000_000),
+  CHROMIUM_TOKEN: z.string().min(16).optional(),
   /** true: always Secure/__Host- cookies; auto: Secure only when the request arrived over HTTPS (TLS by an
    *  external reverse proxy, detected via the trusted X-Forwarded-Proto); false: never (local HTTP only). */
   COOKIE_SECURE: z
@@ -42,9 +56,6 @@ const EnvSchema = z.object({
   MEDIA_MAX_MB: int(100, 1, 2000),
   HISTORY_PER_CHAT: int(200, 0, 5000),
   RECONCILE_MINUTES: int(10, 1, 24 * 60),
-  CHROMIUM_HOST: z.string().default('chromium'),
-  CDP_PORT: int(9223, 1, 65535),
-  VNC_PORT: int(5900, 1, 65535),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   /** Disable the WhatsApp client entirely (tests / API-only development). */
   WA_ENABLED: bool(true),
@@ -75,7 +86,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     webDir: e.WEB_DIR ? path.resolve(e.WEB_DIR) : undefined,
     publicOrigin: e.PUBLIC_ORIGIN,
     setupToken: e.SETUP_TOKEN,
-    vncPassword: e.VNC_PASSWORD,
+    socketPath: e.SOCKET_PATH,
+    internalToken: e.INTERNAL_TOKEN,
     cookieSecure: e.COOKIE_SECURE,
     trustProxy: e.TRUST_PROXY,
     sessionIdleMs: e.SESSION_IDLE_HOURS * 3600_000,
@@ -85,9 +97,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
       historyPerChat: e.HISTORY_PER_CHAT,
     },
     reconcileMs: e.RECONCILE_MINUTES * 60_000,
-    chromiumHost: e.CHROMIUM_HOST,
-    cdpPort: e.CDP_PORT,
-    vncPort: e.VNC_PORT,
+    chromiumUrl: e.CHROMIUM_URL,
+    chromiumHost: new URL(e.CHROMIUM_URL).hostname,
+    chromiumInstance: e.CHROMIUM_INSTANCE,
+    chromiumToken: e.CHROMIUM_TOKEN,
     logLevel: e.LOG_LEVEL,
     waEnabled: e.WA_ENABLED,
     scryptLogN: e.SCRYPT_LOG_N,

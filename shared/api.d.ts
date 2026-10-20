@@ -53,7 +53,11 @@ export interface AppState {
   /** Whether TOTP two-factor authentication is enabled (authenticated only). */
   totpEnabled?: boolean;
   wa?: WaStatus;
+  /** Authenticated only. The admin (the first account) manages the other users. */
+  role?: UserRole;
 }
+
+export type UserRole = 'admin' | 'user';
 
 /* -------------------------------------------------------------------- auth */
 
@@ -62,7 +66,18 @@ export interface SignupResponse { recoveryKey: string }
 
 export interface LoginRequest { username: string; password: string; totp?: string }
 /** On success: `{ ok: true }`. If TOTP is enabled and missing/invalid: `{ ok: false, needTotp: true }`. */
-export interface LoginResponse { ok: boolean; needTotp?: boolean }
+export interface LoginResponse {
+  ok: boolean;
+  needTotp?: boolean;
+  /** The password was the temporary one an admin issued: the user must choose their own (POST /api/auth/claim). */
+  mustChangePassword?: boolean;
+  /** With `mustChangePassword`: this is a reset of an existing account, so the claim needs the account's recovery key. */
+  needRecoveryKey?: boolean;
+}
+
+export interface ClaimRequest { username: string; password: string; newPassword: string; recoveryKey?: string }
+/** Both outcomes (new account, password reset) hand out a fresh recovery key. */
+export interface ClaimResponse { recoveryKey: string }
 
 export interface RecoverRequest { username: string; recoveryKey: string; newPassword: string }
 export interface RecoverResponse { recoveryKey: string }
@@ -342,3 +357,86 @@ export interface Settings {
 export interface AuditEntry { id: number; ts: number; event: string; ip: string | null; detail: string | null }
 
 export interface WipeRequest { password: string; totp?: string }
+
+/* --------------------------------------------------------- user management */
+// Served by the gateway under /api/admin/* (admin only). Nothing here exposes a user's data: the admin sees names,
+// the port each user signs in on and whether their WhatsApp is linked, never chats, messages or contacts.
+
+export type UserStatus =
+  /** Created by the admin; waiting for the first sign-in with the temporary password. */
+  | 'pending'
+  /** The admin reset the password; the user must sign in with the new temporary password and their recovery key. */
+  | 'reset'
+  | 'active'
+  | 'unknown';
+
+export interface AdminUser {
+  id: number;
+  username: string;
+  role: UserRole;
+  disabled: boolean;
+  /** Port the user signs in on; null = the default port. */
+  port: number | null;
+  createdAt: number;
+  lastLoginAt: number | null;
+  status: UserStatus;
+  /** State of the user's WhatsApp link; null when the user's worker could not be asked. */
+  wa: WaState | null;
+}
+
+export interface AdminPort {
+  port: number;
+  /** The browser origin on this port (for the Origin check); null = derived from the Host header. */
+  origin: string | null;
+  usernames: string[];
+}
+
+export interface AdminOverview {
+  currentUserId: number;
+  users: AdminUser[];
+  /** The default port (the admin's). */
+  defaultPort: number;
+  /** Origin configured for the default port (PUBLIC_ORIGIN), if any. */
+  defaultOrigin: string | null;
+  /** Extra ports that are open for users. */
+  ports: AdminPort[];
+  /** Extra ports the admin may open (what the reverse proxy publishes: EXTRA_PORTS). */
+  availablePorts: number[];
+  maxUsers: number;
+}
+
+export interface CreateUserRequest {
+  username: string;
+  /** Temporary password; generated when omitted. */
+  password?: string;
+  port: number | null;
+}
+export interface CreateUserResponse { user: AdminUser; temporaryPassword: string }
+
+export interface UpdateUserRequest { port?: number | null; disabled?: boolean }
+
+/** 'recovery': keep the data, the user needs their recovery key. 'wipe': delete everything of the account and start over. */
+export type ResetMode = 'recovery' | 'wipe';
+export interface ResetUserRequest {
+  mode: ResetMode;
+  /** Temporary password; generated when omitted. */
+  password?: string;
+  /** The admin's own password (and 2FA code) — destructive actions ask for it again. */
+  adminPassword: string;
+  totp?: string;
+}
+export interface ResetUserResponse { temporaryPassword: string; mode: ResetMode | 'new' }
+
+export interface DeleteUserRequest { adminPassword: string; totp?: string }
+
+export interface PutPortRequest { origin: string | null }
+
+export interface AdminAuditEntry {
+  id: number;
+  ts: number;
+  event: string;
+  actor: string | null;
+  target: string | null;
+  ip: string | null;
+  detail: string | null;
+}

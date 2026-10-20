@@ -280,14 +280,27 @@ print(json.dumps([[i.filename, z.read(i).hex()] for i in z.infolist()]))`, zipFi
   });
 
   it('bridges VNC over an authenticated same-origin WebSocket', async () => {
-    const rfb = net.createServer((sock) => {
-      sock.write('RFB 003.008\n');
+    // A stand-in for the chromium manager: GET /i/<id>/vnc-password and an Upgrade: wal-tunnel that behaves like x11vnc.
+    const seen: { auth?: string; url?: string }[] = [];
+    const manager = http.createServer((req, res) => {
+      if (req.url === '/i/7/vnc-password' && req.headers.authorization === 'Bearer instance-token-0123456789') {
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ password: 'vncpw123' }));
+      } else {
+        res.statusCode = 401;
+        res.end('{}');
+      }
+    });
+    manager.on('upgrade', (req, sock: net.Socket) => {
+      seen.push({ auth: req.headers.authorization, url: req.url });
+      if (req.headers.upgrade !== 'wal-tunnel') return sock.destroy();
+      sock.write('HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: wal-tunnel\r\n\r\nRFB 003.008\n');
       sock.on('data', (d) => sock.write(Buffer.concat([Buffer.from('echo:'), d])));
     });
-    await new Promise<void>((r) => rfb.listen(0, '127.0.0.1', () => r()));
-    const vncPort = (rfb.address() as AddressInfo).port;
+    await new Promise<void>((r) => manager.listen(0, '127.0.0.1', () => r()));
+    const mgrPort = (manager.address() as AddressInfo).port;
     await h.close();
-    h = await makeHarness({ CHROMIUM_HOST: '127.0.0.1', VNC_PORT: String(vncPort) });
+    h = await makeHarness({ CHROMIUM_URL: `http://127.0.0.1:${mgrPort}`, CHROMIUM_INSTANCE: '7', CHROMIUM_TOKEN: 'instance-token-0123456789' });
     c = h.client();
     await c.signup();
     await h.app.listen({ port: 0, host: '127.0.0.1' });
@@ -304,16 +317,19 @@ print(json.dumps([[i.filename, z.read(i).hex()] for i in z.infolist()]))`, zipFi
 
     expect((await attempt({ origin: ORIGIN })).status).toBe(401);
     expect((await attempt({ origin: 'https://evil.test', cookie: c.cookie })).status).toBe(403);
+    expect(seen).toHaveLength(0);
     const good = await attempt({ origin: ORIGIN, cookie: c.cookie });
     expect(good.ok).toBe(true);
     expect(good.first!.toString()).toBe('RFB 003.008\n');
+    // The tunnel to the manager is this tenant's instance, opened with this tenant's token.
+    expect(seen[0]).toEqual({ auth: 'Bearer instance-token-0123456789', url: '/i/7/vnc' });
     const echoed = new Promise<string>((resolve) => good.ws!.once('message', (d: Buffer) => resolve(d.toString())));
     good.ws!.send(Buffer.from('RFB 003.008\n'));
     expect(await echoed).toBe('echo:RFB 003.008\n');
     good.ws!.close();
     const creds = await c.req('GET', '/api/vnc/credentials');
-    expect(creds.body).toEqual({ password: 'vnc-pass-123' });
-    rfb.close();
+    expect(creds.body).toEqual({ password: 'vncpw123' });
+    manager.close();
   });
 
   it('never stores plaintext message content in the database file', async () => {

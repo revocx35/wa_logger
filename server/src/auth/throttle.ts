@@ -1,4 +1,4 @@
-import type { Repo } from '../db/repo.js';
+import type { AuthLock } from '../db/repo.js';
 import { Errors } from '../errors.js';
 
 /*
@@ -37,10 +37,18 @@ function backoff(n: number, threshold: number, base: number, max: number): numbe
   return Math.min(base * 2 ** Math.max(0, n - threshold - 1), max);
 }
 
+/** Where the per-account counters live (the tenant's database; the gateway has none and passes a no-op store). */
+export interface AuthLockStore {
+  getAuthLock(): AuthLock | undefined;
+  updateAuthLock(patch: Partial<AuthLock>): void;
+}
+
+export const NO_LOCK_STORE: AuthLockStore = { getAuthLock: () => undefined, updateAuthLock: () => undefined };
+
 export class Throttle {
   private readonly ips = new Map<string, IpState>();
 
-  constructor(private readonly repo: Repo) {}
+  constructor(private readonly repo: AuthLockStore) {}
 
   /**
    * Charges one attempt. Throws a 429 AppError when the IP or (for `global`) the account is locked.
@@ -55,13 +63,13 @@ export class Throttle {
     if (st.lockedUntil > now) throw Errors.rateLimited((st.lockedUntil - now) / 1000);
 
     if (opts.global) {
-      const owner = this.repo.getOwner();
-      if (owner) {
-        if (owner.locked_until && owner.locked_until > now) throw Errors.rateLimited((owner.locked_until - now) / 1000);
-        const n = owner.failed_logins + 1;
-        this.repo.updateOwner({
+      const lock = this.repo.getAuthLock();
+      if (lock) {
+        if (lock.locked_until && lock.locked_until > now) throw Errors.rateLimited((lock.locked_until - now) / 1000);
+        const n = lock.failed_logins + 1;
+        this.repo.updateAuthLock({
           failed_logins: n,
-          locked_until: n > GLOBAL_THRESHOLD ? now + backoff(n, GLOBAL_THRESHOLD, GLOBAL_BASE_MS, GLOBAL_MAX_MS) : owner.locked_until,
+          locked_until: n > GLOBAL_THRESHOLD ? now + backoff(n, GLOBAL_THRESHOLD, GLOBAL_BASE_MS, GLOBAL_MAX_MS) : lock.locked_until,
         });
       }
     }
@@ -76,7 +84,7 @@ export class Throttle {
   /** Credentials were fully verified: clear the counters charged by this attempt. */
   success(a: Attempt): void {
     this.ips.delete(a.ip);
-    if (a.global) this.repo.updateOwner({ failed_logins: 0, locked_until: null });
+    if (a.global) this.repo.updateAuthLock({ failed_logins: 0, locked_until: null });
   }
 
   private prune(now: number): void {

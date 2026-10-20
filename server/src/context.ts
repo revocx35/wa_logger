@@ -110,6 +110,13 @@ export class AppContext {
     return this.writerInstance;
   }
 
+  /** Drops the cached encryptor (the account and its keys were reset). */
+  resetWriter(): void {
+    this.writerInstance?.dispose();
+    this.writerInstance = null;
+    this.settings.invalidate();
+  }
+
   mediaMaxBytes(): number {
     return this.settings.get().mediaMaxMb * 1024 * 1024;
   }

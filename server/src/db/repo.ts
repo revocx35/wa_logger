@@ -22,6 +22,23 @@ export interface OwnerRow {
   password_changed_at: number;
 }
 
+export interface PendingClaimRow {
+  id: 1;
+  username: string;
+  mode: 'new' | 'reset';
+  salt: Buffer;
+  auth_hash: Buffer;
+  failed_logins: number;
+  locked_until: number | null;
+  created_at: number;
+}
+
+/** The brute-force counters of whatever credential currently guards the account. */
+export interface AuthLock {
+  failed_logins: number;
+  locked_until: number | null;
+}
+
 export interface SessionRow {
   id_hash: Buffer;
   privkey_enc: Buffer;
@@ -278,6 +295,41 @@ export class Repo implements DataKeyStore {
     const { sets, values } = buildUpdate(OWNER_UPDATABLE, patch);
     if (!sets) return;
     this.db.prepare(`UPDATE owner SET ${sets} WHERE id = 1`).run(...values);
+  }
+
+  /* ---------------------------------------------------- pending claim */
+
+  getPendingClaim(): PendingClaimRow | undefined {
+    return this.db.prepare('SELECT * FROM pending_claim WHERE id = 1').get() as PendingClaimRow | undefined;
+  }
+
+  setPendingClaim(row: { username: string; mode: 'new' | 'reset'; salt: Buffer; auth_hash: Buffer }, now = Date.now()): void {
+    this.db
+      .prepare(
+        `INSERT INTO pending_claim (id, username, mode, salt, auth_hash, failed_logins, locked_until, created_at)
+         VALUES (1, @username, @mode, @salt, @auth_hash, 0, NULL, @now)
+         ON CONFLICT (id) DO UPDATE SET username = excluded.username, mode = excluded.mode, salt = excluded.salt,
+           auth_hash = excluded.auth_hash, failed_logins = 0, locked_until = NULL, created_at = excluded.created_at`,
+      )
+      .run({ ...row, now });
+  }
+
+  deletePendingClaim(): void {
+    this.db.prepare('DELETE FROM pending_claim WHERE id = 1').run();
+  }
+
+  /** While a temporary password is pending it guards the account (the old password does not work), else the owner's. */
+  getAuthLock(): AuthLock | undefined {
+    return this.getPendingClaim() ?? this.getOwner();
+  }
+
+  updateAuthLock(patch: Partial<AuthLock>): void {
+    if (this.getPendingClaim()) {
+      const sets = Object.keys(patch).map((k) => `${k} = @${k}`).join(', ');
+      if (sets) this.db.prepare(`UPDATE pending_claim SET ${sets} WHERE id = 1`).run(patch);
+    } else {
+      this.updateOwner(patch);
+    }
   }
 
   /**
@@ -713,6 +765,24 @@ export class Repo implements DataKeyStore {
   }
 
   /* ------------------------------------------------------------- wipe */
+
+  /**
+   * Deletes everything of this account: the logged data AND the owner, sessions and key material, so the next person
+   * starts from scratch with new keys (the audit log stays). Returns media paths to unlink.
+   */
+  resetAccount(): string[] {
+    return this.transaction(() => {
+      const paths = this.wipeLoggedData();
+      this.db.exec(`
+        DELETE FROM sessions;
+        DELETE FROM data_keys;
+        DELETE FROM owner;
+        DELETE FROM app_state;
+        DELETE FROM pending_claim;
+      `);
+      return paths;
+    });
+  }
 
   /** Deletes all logged WhatsApp data (keeps owner, sessions, audit, settings). Returns media paths to unlink. */
   wipeLoggedData(): string[] {

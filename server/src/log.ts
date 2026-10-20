@@ -21,6 +21,7 @@ const REDACT = [
   'req.headers.cookie',
   'req.headers.authorization',
   'req.headers["x-csrf-token"]',
+  'req.headers["x-wal-internal"]',
   'res.headers["set-cookie"]',
   '*.password',
   '*.newPassword',
@@ -38,7 +39,8 @@ export function loggerOptions(level: string): LoggerOptions {
   return {
     level,
     redact: { paths: REDACT, censor: '[redacted]' },
-    base: undefined,
+    // Under the supervisor every tenant worker tags its lines with its tenant id (a number, not a name).
+    base: process.env.TENANT_ID && /^\d{1,6}$/.test(process.env.TENANT_ID) ? { tenant: Number(process.env.TENANT_ID) } : undefined,
     timestamp: pino.stdTimeFunctions.isoTime,
     serializers: {
       req(req: { method?: string; url?: string; id?: string }) {

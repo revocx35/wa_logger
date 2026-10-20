@@ -1,23 +1,5 @@
-import dns from 'node:dns/promises';
 import puppeteer, { type Browser, type Page } from 'puppeteer';
-
-/**
- * Chromium runs in its own container. Chrome refuses CDP HTTP requests whose Host header is not an
- * IP address or "localhost", so the hostname is resolved to an IP first.
- */
-export async function resolveBrowserUrl(host: string, port: number): Promise<string> {
-  const { address } = await dns.lookup(host, { family: 4 });
-  return `http://${address}:${port}`;
-}
-
-export async function cdpReachable(browserURL: string, timeoutMs = 3000): Promise<boolean> {
-  try {
-    const r = await fetch(`${browserURL}/json/version`, { signal: AbortSignal.timeout(timeoutMs) });
-    return r.ok;
-  } catch {
-    return false;
-  }
-}
+import type { ChromiumLink } from './chromium.js';
 
 const isWaUrl = (u: string) => /^https:\/\/web\.whatsapp\.com\//.test(u);
 
@@ -25,8 +7,8 @@ const isWaUrl = (u: string) => /^https:\/\/web\.whatsapp\.com\//.test(u);
  * Closes leftover WhatsApp tabs from a previous app run (two WA tabs would fight over the session)
  * while keeping at least one tab open so Chromium does not exit.
  */
-export async function cleanupTabs(browserURL: string): Promise<void> {
-  const browser = await puppeteer.connect({ browserURL, defaultViewport: null });
+export async function cleanupTabs(link: ChromiumLink): Promise<void> {
+  const browser = await puppeteer.connect({ ...(await link.connectOptions()), defaultViewport: null });
   try {
     const pages = await browser.pages();
     const wa = pages.filter((p) => isWaUrl(p.url()));

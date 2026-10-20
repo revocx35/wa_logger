@@ -97,7 +97,7 @@ export async function verifyOwnerSecret(
   return { ok: true, kek: keys.kek };
 }
 
-export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void {
+export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext) {
   const { repo, config } = ctx;
   /** Pending TOTP enrollments, keyed by session id hash (hex). Never persisted. */
   const pendingTotp = new Map<string, { secret: Buffer; expires: number }>();
@@ -112,53 +112,88 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     pendingTotp.clear();
   }
 
-  /* ------------------------------------------------------------ signup */
-  app.post('/api/auth/signup', { config: { public: true, skipCsrf: true, ...AUTH_LIMIT } }, async (req, reply) => {
-    const body = z.object({ setupToken: z.string().max(512), username: Username, password: Password }).parse(req.body);
-    if (repo.hasOwner()) throw Errors.conflict('This instance is already set up. Please log in.');
-    const attempt = ctx.throttle.begin(req.ip, { global: false });
-    if (!ctEqual(body.setupToken.trim(), config.setupToken)) {
-      repo.audit('signup_bad_token', req.ip);
-      throw new AppError(401, 'invalid_setup_token', 'Invalid setup token. Find SETUP_TOKEN in your .env file.');
-    }
-    ctx.throttle.success(attempt);
-    const policy = passwordPolicyError(body.password, body.username);
+  /** Creates the account (keys, recovery key), starts its first session and the WhatsApp client. */
+  async function createAccount(req: FastifyRequest, reply: FastifyReply, username: string, password: string): Promise<SignupResponse> {
+    const policy = passwordPolicyError(password, username);
     if (policy) throw Errors.validation(policy);
 
     const now = Date.now();
     const pwSalt = newSalt();
-    const pw = await derivePasswordKeys(body.password, pwSalt, config.scryptLogN);
+    const pw = await derivePasswordKeys(password, pwSalt, config.scryptLogN);
     const kp = generateX25519();
     const recovery = generateRecoveryKey();
     const recoverySalt = newSalt();
     const rk = deriveRecoveryKeys(recovery.bytes, recoverySalt);
 
-    const created = repo.createOwner({
-      username: body.username,
-      pw_salt: pwSalt,
-      pw_auth_hash: pw.authHash,
-      public_key: kp.publicRaw,
-      privkey_pw: wrapPrivateKey(pw.kek, kp.privatePkcs8, PRIVKEY_AAD.password),
-      privkey_recovery: wrapPrivateKey(rk.kek, kp.privatePkcs8, PRIVKEY_AAD.recovery),
-      recovery_salt: recoverySalt,
-      recovery_auth_hash: rk.authHash,
-      created_at: now,
-      password_changed_at: now,
+    const created = repo.transaction(() => {
+      const ok = repo.createOwner({
+        username,
+        pw_salt: pwSalt,
+        pw_auth_hash: pw.authHash,
+        public_key: kp.publicRaw,
+        privkey_pw: wrapPrivateKey(pw.kek, kp.privatePkcs8, PRIVKEY_AAD.password),
+        privkey_recovery: wrapPrivateKey(rk.kek, kp.privatePkcs8, PRIVKEY_AAD.recovery),
+        recovery_salt: recoverySalt,
+        recovery_auth_hash: rk.authHash,
+        created_at: now,
+        password_changed_at: now,
+      });
+      if (ok) repo.deletePendingClaim();
+      return ok;
     });
-    if (!created) throw Errors.conflict('This instance is already set up. Please log in.');
-    repo.audit('signup', req.ip);
+    if (!created) {
+      kp.privatePkcs8.fill(0);
+      pw.kek.fill(0);
+      rk.kek.fill(0);
+      throw Errors.conflict('This instance is already set up. Please log in.');
+    }
+    repo.scrub();
     startSession(req, reply, kp.privatePkcs8);
     kp.privatePkcs8.fill(0);
     pw.kek.fill(0);
     rk.kek.fill(0);
     void ctx.wa.start().catch((err) => req.log.error({ err }, 'failed to start WhatsApp client'));
-    const res: SignupResponse = { recoveryKey: recovery.display };
-    return res;
-  });
+    return { recoveryKey: recovery.display };
+  }
+
+  /* ------------------------------------------------------------ signup */
+  // Single-process mode (tests, development). Under the gateway the setup token is checked there and the admin account
+  // is created through /internal/signup, so tenant workers have no SETUP_TOKEN and no public signup.
+  if (config.setupToken) {
+    app.post('/api/auth/signup', { config: { public: true, skipCsrf: true, ...AUTH_LIMIT } }, async (req, reply) => {
+      const body = z.object({ setupToken: z.string().max(512), username: Username, password: Password }).parse(req.body);
+      if (repo.hasOwner()) throw Errors.conflict('This instance is already set up. Please log in.');
+      const attempt = ctx.throttle.begin(req.ip, { global: false });
+      if (!ctEqual(body.setupToken.trim(), config.setupToken!)) {
+        repo.audit('signup_bad_token', req.ip);
+        throw new AppError(401, 'invalid_setup_token', 'Invalid setup token. Find SETUP_TOKEN in your .env file.');
+      }
+      ctx.throttle.success(attempt);
+      const res = await createAccount(req, reply, body.username, body.password);
+      repo.audit('signup', req.ip);
+      return res;
+    });
+  }
 
   /* ------------------------------------------------------------- login */
   app.post('/api/auth/login', { config: { public: true, skipCsrf: true, ...AUTH_LIMIT } }, async (req, reply) => {
     const body = z.object({ username: z.string().max(64), password: Password, totp: TotpCode.optional() }).parse(req.body);
+    const pending = repo.getPendingClaim();
+    if (pending) {
+      // An admin-issued temporary password guards the account: the user must set their own before getting a session.
+      // The attempt stays charged until the claim completes.
+      const pendingAttempt = ctx.throttle.begin(req.ip, { global: true });
+      const tmp = await derivePasswordKeys(body.password, pending.salt, config.scryptLogN);
+      tmp.kek.fill(0);
+      const nameOk = ctEqual(body.username.trim().toLowerCase(), pending.username.toLowerCase());
+      if (!ctEqual(tmp.authHash, pending.auth_hash) || !nameOk) {
+        repo.audit('login_failed', req.ip);
+        throw Errors.invalidCredentials();
+      }
+      void pendingAttempt;
+      const res: LoginResponse = { ok: false, mustChangePassword: true, needRecoveryKey: pending.mode === 'reset' };
+      return res;
+    }
     const owner = repo.getOwner();
     if (!owner) throw Errors.invalidCredentials();
     // Charged before scrypt; parallel guesses cannot race past the lock.
@@ -221,6 +256,58 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     return { ok: true };
   });
 
+  /** Resets the password with a verified recovery key: re-wraps the private key, rotates the recovery key, disables 2FA. */
+  async function performRecovery(
+    req: FastifyRequest,
+    reply: FastifyReply,
+    owner: OwnerRow,
+    rk: { kek: Buffer },
+    newPassword: string,
+  ): Promise<RecoverResponse> {
+    let privatePkcs8: Buffer;
+    try {
+      privatePkcs8 = unwrapPrivateKey(rk.kek, owner.privkey_recovery, PRIVKEY_AAD.recovery);
+    } catch (e) {
+      if (e instanceof CryptoError) throw new AppError(500, 'internal', 'Recovery data is corrupted.');
+      throw e;
+    }
+    const now = Date.now();
+    const pwSalt = newSalt();
+    const pw = await derivePasswordKeys(newPassword, pwSalt, config.scryptLogN);
+    const recovery = generateRecoveryKey();
+    const recoverySalt = newSalt();
+    const newRk = deriveRecoveryKeys(recovery.bytes, recoverySalt);
+    repo.transaction(() => {
+      repo.updateOwner({
+        pw_salt: pwSalt,
+        pw_auth_hash: pw.authHash,
+        privkey_pw: wrapPrivateKey(pw.kek, privatePkcs8, PRIVKEY_AAD.password),
+        privkey_recovery: wrapPrivateKey(newRk.kek, privatePkcs8, PRIVKEY_AAD.recovery),
+        recovery_salt: recoverySalt,
+        recovery_auth_hash: newRk.authHash,
+        totp_enabled: 0,
+        totp_secret_enc: null,
+        totp_last_step: null,
+        failed_logins: 0,
+        locked_until: null,
+        password_changed_at: now,
+      });
+      repo.deleteAllSessions();
+      repo.deletePendingClaim();
+    });
+    repo.scrub();
+    pw.kek.fill(0);
+    rk.kek.fill(0);
+    newRk.kek.fill(0);
+    clearPendingTotp();
+    repo.audit('recovered', req.ip, 'password reset with recovery key; 2FA disabled; all sessions revoked');
+    ctx.events.emit({ type: 'session_revoked' });
+    startSession(req, reply, privatePkcs8);
+    privatePkcs8.fill(0);
+    const res: RecoverResponse = { recoveryKey: recovery.display };
+    return res;
+  }
+
   /* ---------------------------------------------------------- recovery */
   app.post('/api/auth/recover', { config: { public: true, skipCsrf: true, ...AUTH_LIMIT } }, async (req, reply) => {
     const body = z.object({ username: z.string().max(64), recoveryKey: z.string().max(200), newPassword: Password }).parse(req.body);
@@ -241,46 +328,50 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     if (policy) throw Errors.validation(policy);
     ctx.throttle.success(attempt);
 
-    let privatePkcs8: Buffer;
-    try {
-      privatePkcs8 = unwrapPrivateKey(rk.kek, owner.privkey_recovery, PRIVKEY_AAD.recovery);
-    } catch (e) {
-      if (e instanceof CryptoError) throw new AppError(500, 'internal', 'Recovery data is corrupted.');
-      throw e;
+    return performRecovery(req, reply, owner, rk, body.newPassword);
+  });
+
+  /* ------------------------------------------------------------- claim */
+  // The first sign-in with an admin-issued temporary password: the user chooses their own password. A new account
+  // gets its keys now (so the admin, who knew the temporary password, never held the key material); a password reset
+  // of an existing account needs the account's recovery key, because the data is encrypted under the old password.
+  app.post('/api/auth/claim', { config: { public: true, skipCsrf: true, ...AUTH_LIMIT } }, async (req, reply) => {
+    const body = z
+      .object({ username: z.string().max(64), password: Password, newPassword: Password, recoveryKey: z.string().max(200).optional() })
+      .parse(req.body);
+    const pending = repo.getPendingClaim();
+    if (!pending) throw Errors.invalidCredentials();
+    const attempt = ctx.throttle.begin(req.ip, { global: true });
+    const tmp = await derivePasswordKeys(body.password, pending.salt, config.scryptLogN);
+    tmp.kek.fill(0);
+    const nameOk = ctEqual(body.username.trim().toLowerCase(), pending.username.toLowerCase());
+    if (!ctEqual(tmp.authHash, pending.auth_hash) || !nameOk) {
+      repo.audit('claim_failed', req.ip);
+      throw Errors.invalidCredentials();
     }
-    const now = Date.now();
-    const pwSalt = newSalt();
-    const pw = await derivePasswordKeys(body.newPassword, pwSalt, config.scryptLogN);
-    const recovery = generateRecoveryKey();
-    const recoverySalt = newSalt();
-    const newRk = deriveRecoveryKeys(recovery.bytes, recoverySalt);
-    repo.transaction(() => {
-      repo.updateOwner({
-        pw_salt: pwSalt,
-        pw_auth_hash: pw.authHash,
-        privkey_pw: wrapPrivateKey(pw.kek, privatePkcs8, PRIVKEY_AAD.password),
-        privkey_recovery: wrapPrivateKey(newRk.kek, privatePkcs8, PRIVKEY_AAD.recovery),
-        recovery_salt: recoverySalt,
-        recovery_auth_hash: newRk.authHash,
-        totp_enabled: 0,
-        totp_secret_enc: null,
-        totp_last_step: null,
-        failed_logins: 0,
-        locked_until: null,
-        password_changed_at: now,
-      });
-      repo.deleteAllSessions();
-    });
-    repo.scrub();
-    pw.kek.fill(0);
-    rk.kek.fill(0);
-    newRk.kek.fill(0);
-    clearPendingTotp();
-    repo.audit('recovered', req.ip, 'password reset with recovery key; 2FA disabled; all sessions revoked');
-    ctx.events.emit({ type: 'session_revoked' });
-    startSession(req, reply, privatePkcs8);
-    privatePkcs8.fill(0);
-    const res: RecoverResponse = { recoveryKey: recovery.display };
+    const policy = passwordPolicyError(body.newPassword, pending.username);
+    if (policy) throw Errors.validation(policy);
+    if (body.newPassword === body.password) throw Errors.validation('Choose a password different from the temporary one.');
+
+    if (pending.mode === 'new') {
+      const res = await createAccount(req, reply, pending.username, body.newPassword);
+      ctx.throttle.success(attempt);
+      repo.audit('account_claimed', req.ip);
+      return res;
+    }
+
+    const owner = repo.getOwner();
+    if (!owner) throw Errors.conflict('This account has no data to recover.');
+    const bytes = body.recoveryKey ? parseRecoveryKey(body.recoveryKey) : null;
+    const rk = bytes ? deriveRecoveryKeys(bytes, owner.recovery_salt) : null;
+    if (!rk || !ctEqual(rk.authHash, owner.recovery_auth_hash)) {
+      rk?.kek.fill(0);
+      repo.audit('claim_failed_recovery', req.ip);
+      throw new AppError(401, 'invalid_recovery', 'Invalid recovery key.');
+    }
+    ctx.throttle.success(attempt);
+    const res = await performRecovery(req, reply, owner, rk, body.newPassword);
+    repo.audit('account_claimed', req.ip, 'after an admin password reset');
     return res;
   });
 
@@ -318,6 +409,27 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     pw.kek.fill(0);
     repo.audit('password_changed', req.ip, 'other sessions revoked');
     ctx.events.emit({ type: 'session_revoked' });
+    return { ok: true };
+  });
+
+  /* ------------------------------------------------- session checks */
+  // Used by the gateway to authorize its own (admin) routes: the worker's hooks have already validated the session
+  // and, for the POST, the CSRF token and Origin by the time these handlers run.
+  app.get('/api/auth/whoami', async () => ({ ok: true, username: repo.getOwner()?.username ?? null }));
+  app.post('/api/auth/ping', async () => ({ ok: true }));
+
+  // Password (+ 2FA code) re-entry for destructive admin actions.
+  app.post('/api/auth/verify', { config: SENSITIVE_LIMIT }, async (req) => {
+    const s = requireSession(req);
+    const body = z.object({ password: Password, totp: TotpCode.optional() }).parse(req.body);
+    const owner = repo.getOwner();
+    if (!owner) throw Errors.unauthorized();
+    const check = await verifyOwnerSecret(ctx, req, owner, body.password, body.totp, () => sessionPrivateKey(s));
+    check.kek?.fill(0);
+    if (!check.ok) {
+      repo.audit('verify_failed', req.ip);
+      throw new AppError(401, 'invalid_password', owner.totp_enabled ? 'Invalid password or authentication code.' : 'Password is incorrect.');
+    }
     return { ok: true };
   });
 
@@ -443,4 +555,6 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     const res: RotateRecoveryKeyResponse = { recoveryKey: recovery.display };
     return res;
   });
+
+  return { createAccount };
 }

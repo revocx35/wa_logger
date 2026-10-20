@@ -1,25 +1,27 @@
-import dns from 'node:dns/promises';
-import net from 'node:net';
 import type { FastifyInstance } from 'fastify';
+import type net from 'node:net';
 import type { VncCredentials } from '../../../shared/api.js';
 import type { AppContext } from '../context.js';
+import { Errors } from '../errors.js';
 import { requireSession } from '../http/server.js';
+import { ChromiumLink } from '../wa/chromium.js';
 
 const MAX_SESSIONS = 3;
 const REVALIDATE_MS = 30_000;
 const HIGH_WATER = 8 * 1024 * 1024;
 
 /**
- * Authenticated WebSocket ↔ TCP bridge to x11vnc inside the chromium container. The VNC port is only
- * reachable on the internal backend network; this bridge is the only way in, and it requires a valid
- * session plus a same-origin Origin header (enforced by the global onRequest hook).
+ * Authenticated WebSocket ↔ WebSocket bridge to this tenant's x11vnc inside the chromium container. The chromium
+ * manager only opens that tunnel for this tenant's bearer token; this bridge is the only way in from the browser, and
+ * it requires a valid session plus a same-origin Origin header (enforced by the global onRequest hook).
  */
-export function registerVncRoutes(app: FastifyInstance, ctx: AppContext): void {
+export function registerVncRoutes(app: FastifyInstance, ctx: AppContext, link = ChromiumLink.fromConfig(ctx.config)): void {
   let open = 0;
   const lastAudit = new Map<string, number>();
 
+  // The password is random per browser start and only this tenant's token can read it from the manager.
   app.get('/api/vnc/credentials', async () => {
-    const res: VncCredentials = { password: ctx.config.vncPassword };
+    const res: VncCredentials = { password: await link.vncPassword().catch(() => { throw Errors.unavailable('The browser is not running yet.'); }) };
     return res;
   });
 
@@ -37,7 +39,7 @@ export function registerVncRoutes(app: FastifyInstance, ctx: AppContext): void {
       ctx.repo.audit('vnc_opened', req.ip);
     }
 
-    let tcp: net.Socket | null = null;
+    let tunnel: net.Socket | null = null;
     let closed = false;
     const close = (code = 1000, reason = '') => {
       if (closed) return;
@@ -45,7 +47,7 @@ export function registerVncRoutes(app: FastifyInstance, ctx: AppContext): void {
       open--;
       clearInterval(revalidate);
       unsubscribe();
-      tcp?.destroy();
+      tunnel?.destroy();
       try {
         socket.close(code, reason);
       } catch {
@@ -67,33 +69,39 @@ export function registerVncRoutes(app: FastifyInstance, ctx: AppContext): void {
     socket.on('close', () => close());
     socket.on('error', () => close(1011));
 
-    dns
-      .lookup(ctx.config.chromiumHost, { family: 4 })
-      .then(({ address }) => {
-        if (closed) return;
-        tcp = net.connect({ host: address, port: ctx.config.vncPort });
+    const early: Buffer[] = [];
+    socket.on('message', (data: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
+      if (!isBinary) return; // RFB is binary-only
+      const buf = Array.isArray(data) ? Buffer.concat(data) : Buffer.isBuffer(data) ? data : Buffer.from(data);
+      if (tunnel && !tunnel.destroyed) tunnel.write(buf);
+      else if (!tunnel && early.length < 64) early.push(buf);
+    });
+
+    link
+      .openVncTunnel()
+      .then((tcp) => {
+        if (closed) {
+          tcp.destroy();
+          return;
+        }
+        tunnel = tcp;
         tcp.setNoDelay(true);
+        for (const b of early.splice(0)) tcp.write(b);
         tcp.on('data', (chunk) => {
           if (socket.readyState !== socket.OPEN) return;
           socket.send(chunk, { binary: true });
           if (socket.bufferedAmount > HIGH_WATER) {
-            tcp?.pause();
+            tcp.pause();
             const resume = setInterval(() => {
               if (closed || socket.bufferedAmount < HIGH_WATER / 2) {
                 clearInterval(resume);
-                tcp?.resume();
+                tcp.resume();
               }
             }, 50);
           }
         });
         tcp.on('close', () => close(1011, 'VNC server closed the connection'));
         tcp.on('error', () => close(1011, 'VNC server unavailable'));
-        socket.on('message', (data: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
-          if (!tcp || tcp.destroyed) return;
-          if (!isBinary) return; // RFB is binary-only
-          const buf = Array.isArray(data) ? Buffer.concat(data) : Buffer.isBuffer(data) ? data : Buffer.from(data);
-          tcp.write(buf);
-        });
       })
       .catch(() => close(1011, 'VNC server unavailable'));
   });

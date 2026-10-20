@@ -3,6 +3,7 @@ import { registerAdminRoutes } from './api/admin.js';
 import { registerCallRoutes } from './api/calls.js';
 import { registerChatRoutes } from './api/chats.js';
 import { registerEventRoutes } from './api/events.js';
+import { registerInternalRoutes } from './api/internal.js';
 import { registerMediaRoutes } from './api/media.js';
 import { registerSendRoutes } from './api/send.js';
 import { registerStateRoutes } from './api/state.js';
@@ -34,7 +35,8 @@ export async function createApp(
   if (opts.wa) ctx.wa = opts.wa(ctx);
   const app = await buildServer(ctx);
   registerStateRoutes(app, ctx);
-  registerAuthRoutes(app, ctx);
+  const auth = registerAuthRoutes(app, ctx);
+  registerInternalRoutes(app, ctx, auth);
   registerChatRoutes(app, ctx);
   registerMediaRoutes(app, ctx);
   registerSendRoutes(app, ctx);

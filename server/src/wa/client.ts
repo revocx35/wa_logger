@@ -5,7 +5,8 @@ import type { AppContext, WaController } from '../context.js';
 import { refreshAvatars } from './avatars.js';
 import { CallBridge } from './callbridge.js';
 import { CallService } from './calls.js';
-import { cdpReachable, cleanupTabs, focusWaTab, resolveBrowserUrl } from './browser.js';
+import { cleanupTabs, focusWaTab } from './browser.js';
+import { ChromiumLink } from './chromium.js';
 import { Ingest, type WaApi } from './ingest.js';
 import { jid, phoneOf, type RawMsg } from './mapper.js';
 import { MediaQueue } from './media.js';
@@ -70,10 +71,12 @@ export class WaService implements WaController {
   readonly sync: Sync;
   readonly sender: Sender;
   readonly calls: CallService;
+  readonly chromium: ChromiumLink;
   private wal: WalPage | null = null;
   private callBridge: CallBridge | null = null;
 
   constructor(private readonly ctx: AppContext) {
+    this.chromium = ChromiumLink.fromConfig(ctx.config);
     this.media = new MediaQueue(ctx, () => this.page());
     // Chat/contact/history reads go straight to WhatsApp Web's models (see pageapi.ts): the
     // whatsapp-web.js chat helpers throw on current WhatsApp Web builds.
@@ -159,11 +162,12 @@ export class WaService implements WaController {
     const gen = ++this.generation;
     this.setState('starting', 'Connecting to Chromium…');
     try {
-      const browserURL = await resolveBrowserUrl(this.ctx.config.chromiumHost, this.ctx.config.cdpPort);
-      if (!(await cdpReachable(browserURL))) throw new Error('Chromium is not reachable yet');
-      await cleanupTabs(browserURL);
+      // Starts this tenant's Chromium in the chromium container when it is not running yet.
+      await this.chromium.ensure();
+      if (!(await this.chromium.reachable())) throw new Error('Chromium is not reachable yet');
+      await cleanupTabs(this.chromium);
       const client = new ConnectedClient({
-        puppeteer: { browserURL, defaultViewport: null, protocolTimeout: 300_000 } as never,
+        puppeteer: { ...(await this.chromium.connectOptions()), defaultViewport: null, protocolTimeout: 300_000 } as never,
         authStrategy: new NoAuth(),
         webVersionCache: { type: 'none' },
         takeoverOnConflict: true,

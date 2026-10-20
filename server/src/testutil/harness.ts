@@ -24,7 +24,10 @@ export class TestClient {
   cookie = '';
   csrf = '';
 
-  constructor(private readonly app: FastifyInstance) {}
+  constructor(
+    private readonly app: FastifyInstance,
+    private readonly defaultHeaders: Record<string, string> = {},
+  ) {}
 
   async req(
     method: string,
@@ -32,7 +35,7 @@ export class TestClient {
     body?: unknown,
     opts: { origin?: string | null; csrf?: string | null; headers?: Record<string, string> } = {},
   ): Promise<Res> {
-    const headers: Record<string, string> = { ...(opts.headers ?? {}) };
+    const headers: Record<string, string> = { ...this.defaultHeaders, ...(opts.headers ?? {}) };
     if (opts.origin !== null) headers.origin = opts.origin ?? ORIGIN;
     if (this.cookie) headers.cookie = this.cookie;
     const csrf = opts.csrf === undefined ? this.csrf : opts.csrf;
@@ -85,7 +88,7 @@ export interface Harness {
   app: FastifyInstance;
   ctx: AppContext;
   dir: string;
-  client: () => TestClient;
+  client: (defaultHeaders?: Record<string, string>) => TestClient;
   close: () => Promise<void>;
 }
 
@@ -94,24 +97,27 @@ export async function makeHarness(
   opts: { wa?: (ctx: AppContext) => WaController; routes?: (app: FastifyInstance, ctx: AppContext) => void } = {},
 ): Promise<Harness> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wal-test-'));
-  const config = loadConfig({
-    NODE_ENV: 'test',
+  const config = loadConfig(
+    Object.fromEntries(
+      Object.entries({
+      NODE_ENV: 'test',
     DATA_DIR: dir,
     SETUP_TOKEN,
-    VNC_PASSWORD: 'vnc-pass-123',
     SCRYPT_LOG_N: '10',
     WA_ENABLED: 'false',
     PUBLIC_ORIGIN: ORIGIN,
     LOG_LEVEL: 'silent',
     ...env,
-  });
+      }).filter(([, v]) => v !== ''), // an empty value unsets the variable
+    ),
+  );
   const { app, ctx } = await createApp(config, createLogger('silent'), opts);
   await app.ready();
   return {
     app,
     ctx,
     dir,
-    client: () => new TestClient(app),
+    client: (defaultHeaders) => new TestClient(app, defaultHeaders),
     close: async () => {
       await app.close();
       await fs.rm(dir, { recursive: true, force: true });

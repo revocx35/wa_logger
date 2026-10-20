@@ -51,6 +51,11 @@ export class SettingsStore {
     return next;
   }
 
+  /** Forget the cached value (the account's state was reset underneath). */
+  invalidate(): void {
+    this.cache = null;
+  }
+
   onChange(fn: (s: Settings) => void): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
