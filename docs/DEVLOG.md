@@ -318,3 +318,17 @@ model, and explicitly not in wa_logger mobile (Android WebView can't run WhatsAp
 - Verified on the emulator: picture fitted and upright, the phone's frames upright after their rotation (saved and
   compared with the preview), camera off/on, background with the camera+microphone service, incoming video answered.
 
+
+
+## 2026-10-20 — Android client 0.8.0: servers behind authentik
+
+- The owner put the server behind authentik forward auth on Nginx Proxy Manager. The client now detects authentik's
+  sign-in redirect, logs in with OAuth 2 + PKCE in a Custom Tab against a public client (`walogger-android`), stores the
+  refresh token Keystore-encrypted and sends a bearer token the outpost checks by introspection (`core/Authentik.kt`,
+  same file in insta_logger, web-ip-phone and RWR). Setup and design: `docs/authentik.md`.
+- Learned: authentik 2026.8's outpost (now Rust) checks `Authorization: Bearer` with token introspection, which accepts a
+  token of provider A for proxy provider B only if **A lists B** in `jwt_federation_providers`. The proxy's Basic auth
+  path with the account password is refused (only app passwords work there).
+- Verified: `AuthentikTest` (7, fake proxy/outpost/authentik), and on the emulator against a real authentik + NPM:
+  detection, Custom Tab login, redirect back, wa_logger's login reached through authentik, restart keeps the sign-in,
+  revoking the tokens in authentik brings the sign-in screen back.

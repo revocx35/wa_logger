@@ -22,8 +22,8 @@ android {
         applicationId = "io.github.revocx35.walogger"
         minSdk = 26
         targetSdk = 37
-        versionCode = 8
-        versionName = "0.7.0"
+        versionCode = 9
+        versionName = "0.8.0"
         // On-device tests (app/src/androidTest): ./gradlew :app:connectedDebugAndroidTest with an emulator running.
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

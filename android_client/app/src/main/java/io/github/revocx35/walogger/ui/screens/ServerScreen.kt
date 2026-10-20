@@ -98,6 +98,8 @@ fun ServerScreen(graph: AppGraph, onConnected: (HttpUrl, Boolean) -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var reviewCert by remember { mutableStateOf<Pair<HttpUrl, X509Certificate>?>(null) }
+    /** The server answered with authentik's sign-in redirect (target, where it redirected to). */
+    var authentikAt by remember { mutableStateOf<Pair<HttpUrl, HttpUrl?>?>(null) }
     val scope = rememberCoroutineScope()
     val url = parseServerUrl(address)
     val insecure = url != null && !url.isHttps
@@ -106,6 +108,7 @@ fun ServerScreen(graph: AppGraph, onConnected: (HttpUrl, Boolean) -> Unit) {
     fun probeNow(target: HttpUrl) {
         busy = true
         error = null
+        authentikAt = null
         graph.trust.serverHost = target.host
         scope.launch {
             try {
@@ -113,7 +116,9 @@ fun ServerScreen(graph: AppGraph, onConnected: (HttpUrl, Boolean) -> Unit) {
                 onConnected(target, insecure)
             } catch (e: ApiException) {
                 val rejected = graph.trust.lastRejected
-                if (e.code == ApiException.TLS_UNTRUSTED && rejected != null && rejected.isNotEmpty()) {
+                if (e.code == ApiException.AUTHENTIK) {
+                    authentikAt = target to e.authentikLocation()
+                } else if (e.code == ApiException.TLS_UNTRUSTED && rejected != null && rejected.isNotEmpty()) {
                     reviewCert = target to rejected.last()
                 } else if (e.code == ApiException.NETWORK && LocalNetwork.missing(context)) {
                     // A hostname can resolve to a private address too (local DNS).
@@ -179,6 +184,9 @@ fun ServerScreen(graph: AppGraph, onConnected: (HttpUrl, Boolean) -> Unit) {
             CheckRow(allowHttp, { allowHttp = it }, "I understand — connect over HTTP anyway")
         }
         ErrorNote(error)
+        authentikAt?.let { (target, location) ->
+            if (target == url) AuthentikPanel(graph, target, location) { probe(target) }
+        }
         if (error?.contains(LocalNetwork.HELP) == true && url != null && LocalNetwork.missing(context)) {
             WaButton("Allow local network access", { pending = url; askLocalNetwork() }, block = true)
         }

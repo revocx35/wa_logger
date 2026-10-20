@@ -35,8 +35,16 @@ class AppGraph(val context: Context, val diagnostics: Diagnostics) {
 
     private val userAgent = "wa_logger-android/${BuildConfig.VERSION_NAME} (Android ${Build.VERSION.RELEASE}; ${Build.MANUFACTURER} ${Build.MODEL})"
 
+    /** authentik sign-in for a server behind authentik forward auth (core/Authentik.kt); its own plain client. */
+    val authentik = io.github.revocx35.walogger.core.Authentik(
+        KeystoreAuthentikStore(context),
+        OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).followRedirects(false).build(),
+    )
+
     val baseClient: OkHttpClient = OkHttpClient.Builder()
         .cookieJar(cookies)
+        .addInterceptor(authentik.interceptor)
+        .addNetworkInterceptor(authentik.networkInterceptor)
         .sslSocketFactory(trust.socketFactory, trust)
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)

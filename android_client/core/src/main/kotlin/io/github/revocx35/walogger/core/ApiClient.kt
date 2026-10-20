@@ -41,6 +41,8 @@ class ApiException(
         const val TLS_UNTRUSTED = "tls_untrusted"
         const val TLS = "tls"
         const val REDIRECT = "redirect"
+        /** The server sits behind authentik and the app has no valid authentik sign-in ([cause] is [AuthentikRequiredException]). */
+        const val AUTHENTIK = "authentik"
         const val NOT_WA_LOGGER = "not_wa_logger"
     }
 }
@@ -102,6 +104,7 @@ suspend fun Call.await(): Response = suspendCancellableCoroutine { cont ->
 /** Maps transport failures to user-facing [ApiException]s. */
 fun mapTransportError(e: Throwable): ApiException = when {
     e is ApiException -> e
+    e is AuthentikRequiredException -> ApiException(0, ApiException.AUTHENTIK, e.message ?: "Sign in with authentik.", cause = e)
     e.isUntrustedCertificate() -> ApiException(0, ApiException.TLS_UNTRUSTED, "The server's certificate is not trusted.", cause = e)
     e is SSLException -> ApiException(0, ApiException.TLS, "Secure connection failed.", cause = e)
     else -> ApiException(0, ApiException.NETWORK, "Cannot reach the server. Check your connection.", cause = e)

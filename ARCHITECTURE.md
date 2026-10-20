@@ -571,7 +571,7 @@ AAD context `msgbody|<messageId>`, so an edit can move the old ciphertext into `
 A native client for the same API (no WebView, no server changes needed). Kotlin 2.4, Jetpack Compose,
 AGP 9.4 (built-in Kotlin), Gradle 9.8 (wrapper with pinned checksum), minSdk 26, compile/target SDK 37.
 Package `io.github.revocx35.walogger` (debug builds get the `.debug` suffix and install side by side).
-Current release: 0.7.0 (versionCode 8: video calls). 0.6.0 (versionCode 7: voice calls). 0.5.0 (versionCode 6: sending). 0.4.0 (versionCode 5:
+Current release: 0.8.0 (versionCode 9: servers behind authentik forward auth, see `docs/authentik.md`). 0.7.0 (versionCode 8: video calls). 0.6.0 (versionCode 7: voice calls). 0.5.0 (versionCode 6: sending). 0.4.0 (versionCode 5:
 multi-select photos/videos in a chat and save them to the gallery).
 0.3.0 (versionCode 4: auto-save with a disappearing-messages-only option, Android 17 local network
 permission). 0.1.1 (versionCode 2) was confirmed working by the owner on a Samsung, One UI 8.5 / Android 16,
@@ -584,10 +584,17 @@ server in HTTP mode.
   * `ApiClient` — OkHttp + kotlinx.serialization. Adds the browser-equivalent `Origin` header to requests
     for the configured server (the server's Origin/CSRF checks apply unchanged), `X-CSRF-Token` on non-GET,
     never follows redirects (a 3xx becomes an error that names the target), maps transport errors to
-    `ApiException` codes (`network`, `tls_untrusted`, `tls`, `redirect`, `not_wa_logger`). `probe()` checks
+    `ApiException` codes (`network`, `tls_untrusted`, `tls`, `redirect`, `not_wa_logger`, `authentik`). `probe()` checks
     that `/api/state` really comes from wa_logger. **The whole request (send, body read, JSON decode) runs
     in `withContext(Dispatchers.IO)`**: callers are on Android's main thread, where socket reads throw
     `NetworkOnMainThreadException` (the 0.1.0 bug, see DEVLOG). `MainThreadNetworkTest` enforces this.
+  * `Authentik` — authentik forward-auth support (identical file in insta_logger, web-ip-phone and RWR; design and
+    setup in `docs/authentik.md`): application interceptor adds `Authorization: Bearer <access token>` for the
+    signed-in server only (an app's own `Authorization` moves to `X-App-Authorization`), refreshes a minute before
+    expiry and once more when the proxy still asks; network interceptor turns authentik's sign-in redirect into
+    `AuthentikRequiredException` (an IOException, so safe on OkHttp threads) and keeps the outpost's
+    `authentik_proxy_*` cookie out of the jar. PKCE (S256) + `state`; dead refresh token → tokens cleared and
+    `onSignInRequired`. `AuthentikTest` runs it against a fake proxy/outpost/authentik on MockWebServer.
   * `EventStream` — SSE (`/api/events`) with backoff 3 s→30 s, 65 s read timeout (server heartbeat 20 s),
     stops on 401; `reopened` fires after a reconnect so screens reload what they missed.
   * `WaText` (1:1 port of `web/src/lib/waText.tsx`, same test cases, same linear-time guarantees, UTF-16
@@ -608,7 +615,9 @@ server in HTTP mode.
     image loader, shared audio player), `AppController` (the web's route guard: server → signup →
     login/recover → recovery key → link → main; events run only in the foreground while logged in),
     `SecureCookieJar` (session cookie AES-GCM-encrypted with a non-exportable Android Keystore key in
-    `noBackupFilesDir`, loaded lazily on a network thread, never throws on OkHttp threads), `ServerTrust`
+    `noBackupFilesDir`, loaded lazily on a network thread, never throws on OkHttp threads), `AuthentikSignIn`
+    (Custom Tab login, `AuthentikRedirectActivity` receives `<applicationId>:/authentik`, `KeystoreAuthentikStore`
+    encrypts the tokens like the cookie; UI in `ui/screens/AuthentikScreens.kt`), `ServerTrust`
     (system CAs first; certificates the owner imports or confirms by SHA-256 fingerprint are trusted only
     for the configured server host; hostname verification unchanged), `Prefs`, `Diagnostics`.
   * `media/` — one shared ExoPlayer for voice notes, full-screen viewer (zoomable photos, streamed

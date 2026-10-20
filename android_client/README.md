@@ -159,6 +159,13 @@ The call screen shows the other side full size with your camera in a corner, and
 hang up and minimize (the call goes on in the small panel; **Show video** brings the screen back). The app asks for the
 camera the first time. Needs a server with video calls (wa_logger from 2026-10-17 on).
 
+## authentik (0.8.0)
+
+If your reverse proxy puts wa_logger behind [authentik](https://goauthentik.io) forward auth, the app shows
+**Sign in with authentik** on the connect screen: you log in once in the browser, and the app keeps a revocable,
+encrypted refresh token. Setup (authentik client `walogger-android`, proxy provider, Nginx Proxy Manager config):
+[docs/authentik.md](../docs/authentik.md).
+
 ## Not included (yet)
 
 - Push notifications (the server only offers a foreground event stream, and sessions expire after 8 h idle), so

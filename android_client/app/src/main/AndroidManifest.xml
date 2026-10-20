@@ -46,6 +46,21 @@
             </intent-filter>
         </activity>
 
+        <!-- authentik sign-in: the browser comes back to <applicationId>:/authentik (data/AuthentikSignIn.kt). -->
+        <activity
+            android:name=".data.AuthentikRedirectActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="${applicationId}" />
+            </intent-filter>
+        </activity>
+
         <!-- Holds an ongoing call in the foreground (microphone); see media/CallForegroundService.kt. -->
         <service
             android:name=".media.CallForegroundService"
