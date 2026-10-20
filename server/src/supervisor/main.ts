@@ -14,6 +14,8 @@ const Env = z.object({
   LEGACY_UID: z.coerce.number().int().min(1000).default(10001),
   UID_BASE: z.coerce.number().int().min(1000).default(10100),
   CHROMIUM_URL: z.string().default('http://chromium:9223'),
+  /** Node heap cap per tenant worker: a runaway one is stopped (and restarted) instead of taking the container's memory. */
+  WORKER_HEAP_MB: z.coerce.number().int().min(128).max(8192).default(768),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
 });
 
@@ -39,7 +41,7 @@ async function main(): Promise<void> {
     uidBase: e.UID_BASE,
     chromiumUrl: e.CHROMIUM_URL,
     dropPrivileges: process.getuid?.() === 0,
-    workerCommand: [process.execPath, '--disable-proto=delete', path.join(dist, 'index.js')],
+    workerCommand: [process.execPath, '--disable-proto=delete', `--max-old-space-size=${e.WORKER_HEAP_MB}`, path.join(dist, 'index.js')],
     frontCommand: [process.execPath, '--disable-proto=delete', path.join(dist, 'front.js')],
     env,
     workerReadyTimeoutMs: 30_000,

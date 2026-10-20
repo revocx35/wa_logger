@@ -3,7 +3,8 @@
 # End-to-end smoke test in an ISOLATED compose project (own volumes, secrets and ports) — never
 # touches your real deployment. Builds the images, starts the stack and checks:
 #   health, security headers, cookie flags, signup, WhatsApp reaching the QR state, the VNC
-#   bridge (RFB handshake), cross-origin rejection, and that the app container has no internet.
+#   bridge (RFB handshake), cross-origin rejection, that the app container has no internet, and the multi-user parts:
+#   the admin API (and nobody else's access to it), a second user whose worker and browser run as their own unix users.
 #
 #   scripts/smoke.sh                 # source build (docker-compose.yml), test, tear down (volumes removed)
 #   scripts/smoke.sh --deploy        # the standalone deploy/docker-compose.yml (prebuilt-image layout),
@@ -104,7 +105,7 @@ SIGNUP_HDRS="$("${C[@]}" -D - -o "$WORK/signup.json" -H "Origin: $PUBLIC_ORIGIN"
   -d "{\"setupToken\":\"$SETUP_TOKEN\",\"username\":\"owner\",\"password\":\"correct-horse-battery-staple\"}" "$BASE/api/auth/signup")"
 grep -q '"recoveryKey"' "$WORK/signup.json" && ok "signup returns a recovery key" || bad "signup failed: $(cat "$WORK/signup.json")"
 COOKIE_LINE="$(grep -i '^set-cookie:' <<<"$SIGNUP_HDRS" || true)"
-for f in "__Host-wal_session=" "HttpOnly" "Secure" "SameSite=Strict"; do
+for f in "__Host-wal_session=" "__Host-wal_tenant=" "HttpOnly" "Secure" "SameSite=Strict"; do
   grep -qi "$f" <<<"$COOKIE_LINE" && ok "cookie flag: $f" || bad "cookie flag missing: $f"
 done
 
@@ -140,7 +141,23 @@ CODE="$(timeout 8 curl -sk --http1.1 -o /dev/null -w '%{http_code}' -H "Origin: 
 EGRESS="$(dc exec -T app node -e "fetch('https://web.whatsapp.com',{signal:AbortSignal.timeout(5000)}).then(()=>console.log('open')).catch(()=>console.log('blocked'))" 2>/dev/null || echo error)"
 [[ "$EGRESS" == "blocked" ]] && ok "app container has no internet access" || bad "app container egress: $EGRESS"
 
-SANDBOX="$(dc exec -T chromium bash -c 'for p in /proc/[0-9]*; do if grep -q -- "--type=renderer" $p/cmdline 2>/dev/null; then readlink $p/ns/pid; break; fi; done; readlink /proc/1/ns/pid' 2>/dev/null | sort -u | wc -l)"
+# Multi-user: the admin API, a created user, and process separation (unix users) in both containers.
+CSRF="$("${C[@]}" "$BASE/api/state" | sed -n 's/.*"csrfToken":"\([^"]*\)".*/\1/p')"
+CODE="$(curl -sk --max-time 15 -o /dev/null -w '%{http_code}' "$BASE/api/admin/overview")"
+[[ "$CODE" == "401" ]] && ok "admin API refuses anonymous requests" || bad "anonymous admin API got $CODE"
+CODE="$("${C[@]}" -o "$WORK/overview.json" -w '%{http_code}' "$BASE/api/admin/overview")"
+[[ "$CODE" == "200" ]] && grep -q '"role":"admin"' "$WORK/overview.json" && ok "admin sees the user overview" || bad "admin overview got $CODE"
+CODE="$("${C[@]}" -o "$WORK/newuser.json" -w '%{http_code}' -H "Origin: $PUBLIC_ORIGIN" -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
+  -d '{"username":"smoke_friend","port":null}' "$BASE/api/admin/users")"
+[[ "$CODE" == "200" ]] && grep -q '"temporaryPassword"' "$WORK/newuser.json" && ok "admin creates a user with a temporary password" || bad "create user got $CODE: $(cat "$WORK/newuser.json")"
+CODE="$(curl -sk --max-time 15 -o /dev/null -w '%{http_code}' "$BASE/internal/info")"
+[[ "$CODE" == "200" || "$CODE" == "404" ]] && ! grep -q hasOwner <<<"$(curl -sk --max-time 15 "$BASE/internal/info")" && ok "the workers' /internal routes are not reachable from outside" || bad "/internal/info got $CODE"
+UIDS="$(dc exec -T app sh -c 'for p in /proc/[0-9]*; do if tr "\0" " " < $p/cmdline 2>/dev/null | grep -q "dist/\(index\|front\)"; then awk "/^Uid:/{print \$2}" $p/status; fi; done' | sort -u | wc -l)"
+[[ "$UIDS" -ge 2 ]] && ok "the gateway and the workers run as different unix users" || bad "process separation: $UIDS unix users"
+CAPS="$(dc exec -T app sh -c 'for p in /proc/[0-9]*; do if tr "\0" " " < $p/cmdline 2>/dev/null | grep -q "dist/\(index\|front\)"; then awk "/^CapEff:/{print \$2}" $p/status; fi; done' | sort -u)"
+[[ "$CAPS" == "0000000000000000" ]] && ok "the gateway and the workers hold no capabilities" || bad "capabilities: $CAPS"
+
+SANDBOX="$(dc exec -T -u 10002 chromium bash -c 'for p in /proc/[0-9]*; do if grep -q -- "--type=renderer" $p/cmdline 2>/dev/null; then readlink $p/ns/pid; break; fi; done; readlink /proc/1/ns/pid' 2>/dev/null | sort -u | wc -l)"
 [[ "$SANDBOX" == "2" ]] && ok "Chromium renderers run in a separate PID namespace (sandbox on)" || bad "Chromium sandbox check inconclusive"
 
 echo "== result: $PASS passed, $FAIL failed"

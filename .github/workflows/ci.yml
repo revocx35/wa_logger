@@ -147,7 +147,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Shellcheck scripts
-        run: shellcheck scripts/*.sh chromium/entrypoint.sh
+        run: shellcheck scripts/*.sh chromium/entrypoint.sh caddy/extra-ports.sh
       - name: Validate compose files
         run: |
           printf 'SITE_ADDRESS=example.test\nVNC_PASSWORD=xxxxxxxxxxxx\nSETUP_TOKEN=xxxxxxxxxxxxxxxxxxxx\n' > .env

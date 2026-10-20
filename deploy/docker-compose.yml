@@ -77,7 +77,7 @@ services:
       CHROMIUM_URL: http://chromium:9223
       # Shared with the chromium container only; the supervisor derives each user's browser token from it. (Releases
       # before user management used VNC_PASSWORD for the VNC server: it is the fallback so existing .env files work.)
-      CONTROL_SECRET: ${CONTROL_SECRET:-${VNC_PASSWORD:?run scripts/setup.sh first}}
+      CONTROL_SECRET: ${CONTROL_SECRET:-${VNC_PASSWORD:?create .env first (bash setup.sh)}}
       EXTRA_PORTS: ${EXTRA_PORTS:-8101-8110}
       # 1 = only the bundled Caddy; 2 = Caddy + your own reverse proxy in front (HTTP mode).
       TRUST_PROXY: ${TRUST_PROXY:-1}

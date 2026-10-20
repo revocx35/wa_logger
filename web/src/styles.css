@@ -1967,3 +1967,9 @@ label.switch {
   flex: 1;
   min-width: 200px;
 }
+.settings-section:has(.table.users) {
+  max-width: 1100px;
+}
+.table.users td:nth-child(5) {
+  white-space: nowrap;
+}

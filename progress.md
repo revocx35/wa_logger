@@ -183,6 +183,25 @@ Update this file whenever a step is completed.
 - [x] Android client 0.7.0 video (Camera2 → MediaCodec H.264, MediaCodec decoder with fallback, video screen);
       tested on the emulator against `call-ui.mts` (`SERVE=1`, real H.264 from the test browser)
 
+## Phase 17 — Multiple users (2026-10-20)
+- [x] Design: gateway + one worker per user (own unix user, own DB/keys) + root supervisor; Go manager in the chromium
+      container with one Xvfb/Chromium/x11vnc per user under its own unix user and per-instance bearer tokens
+- [x] Worker: unix socket + gateway token/scope, `/internal/*`, temporary-password claim flow (new account / reset with
+      recovery key / wipe), `pending_claim` migration, throttle on the pending credential, `verify`/`ping`/`whoami`
+- [x] Gateway: system DB (users, ports, admin log), listeners per port, port + tenant-cookie policy, streaming proxy and
+      WebSocket tunnel, forwarding-header policy, admin API (users, ports, reset, delete, audit), legacy account adoption
+- [x] Supervisor (spawn/stop/remove/reset-browser over a control socket) and Chromium manager (Go; ensure/restart/delete,
+      DevTools allowlist relay, VNC tunnel, on-link bind)
+- [x] Web: choose-your-own-password step, admin Users page (users, ports, reset/delete with re-auth, log)
+- [x] Compose/Caddy: capabilities, volumes, tmpfs, extra ports (`EXTRA_PORTS`/`EXTRA_BIND`), `CONTROL_SECRET` (falls back
+      to `VNC_PASSWORD`), caddy `extra-ports.sh`; `setup.sh`, `.env.example`, `smoke.sh` (35 checks), diagnose script
+- [x] Tests: worker (multiuser.test.ts), gateway (26), supervisor (5), Go manager; `scripts/dev/multiuser-e2e.mts` (32 checks on a
+      real stack); Playwright walkthrough of the new screens; upgrade test from a 0.8-era single-user volume pair
+- [ ] Owner: update the production VM (README "Upgrading from a single-user release"), create the friend's user and
+      port, point the second proxy host at it (no authentik), scan the friend's QR code with their phone
+- [ ] Android: sign-in after a temporary password is only possible in the web UI (the app shows a hint); a native
+      choose-your-password screen is not built
+
 ## Next ideas (not started)
 - Android: push notifications for deletions (needs a server-side push channel; SSE only runs in the foreground)
 - Retry expired history media via WhatsApp's phone re-upload ("media retry") instead of marking it unavailable

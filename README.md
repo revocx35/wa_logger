@@ -43,6 +43,11 @@ _(Screenshots show generated demo data.)_
   supports seeking (HTTP Range).
 - **Search** across all decrypted messages, globally or per chat.
 - **WA Web** menu item shows the live background browser (noVNC), view-only by default.
+- **Multiple users:** the first account is the admin and adds more users (**Users** menu). Each person gets their own WhatsApp
+  link and QR code, their own encrypted data and keys, and their own browser; the admin sees names and status, never
+  messages. A new user signs in with a temporary password and must choose their own. The admin can put each user on a
+  **different port**, so your address can sit behind a login proxy such as authentik while a friend's address doesn't.
+  See [Multiple users](#multiple-users).
 - **Live updates** (Server-Sent Events), light and dark themes, and a mobile layout.
 
 **View-once photos and videos are not logged, by design.** They appear only as a placeholder.
@@ -56,17 +61,22 @@ and [ARCHITECTURE.md](ARCHITECTURE.md) for details.
   (AES-256-GCM) under data keys that are wrapped to an X25519 key pair. The private key itself is encrypted with
   your password (scrypt). The logger can *write* while you are logged out, but a stolen database, media folder
   or backup **cannot be read** without your password or recovery key.
-- **Single owner.** Signup needs the one-time `SETUP_TOKEN` from `.env`, and signup closes after the first account.
-  Optional **TOTP 2FA**, a recovery key, per-account lockout, rate limits and an audit log are included.
+- **Accounts.** The first signup needs the one-time `SETUP_TOKEN` from `.env` and creates the admin; signup then closes.
+  Other users are created by the admin and choose their own password at their first sign-in. Optional **TOTP 2FA**, a
+  recovery key, per-account lockout, rate limits and an audit log are included.
+- **Isolation between users.** Every user is a separate tenant: own database and keys, own worker process and own Chromium,
+  each under a **different unix user** in `0700` directories, with no way to reach each other's files, sockets or
+  browsers. A stolen password or a compromised account opens that one account only. See SECURITY.md.
 - **Hardened sessions.** `__Host-` cookies (`Secure`, `HttpOnly`, `SameSite=Strict`) plus Origin and CSRF-token
   checks, with idle and absolute expiry. Sessions can be listed and revoked, including "log out everywhere".
 - **Strict CSP** (no inline scripts, no third-party resources). Message content is never rendered as HTML.
   Attacker-sent files are served with a sandbox CSP and as downloads unless they are safe image, audio or video types.
 - **Isolated containers.** The app container has **no internet access**. Only Chromium can reach WhatsApp, and its
-  remote-debugging and VNC ports are reachable only on an internal Docker network. Chromium keeps its **sandbox on**
-  (through a custom seccomp profile) and a policy blocks navigation to any site except WhatsApp, as well as
-  downloads, uploads and extensions. All containers run non-root with read-only root filesystems, `cap_drop: ALL`
-  and `no-new-privileges`.
+  remote-debugging and VNC ports are never exposed: the only way to a browser is a token-checked manager on an internal
+  Docker network. Chromium keeps its **sandbox on** (through a custom seccomp profile) and a policy blocks navigation
+  to any site except WhatsApp, as well as downloads, uploads and extensions. All containers have read-only root
+  filesystems, `cap_drop: ALL` and `no-new-privileges`; the two that start one process per user (app and chromium) keep
+  four capabilities (`SETUID SETGID CHOWN KILL`) in a small root supervisor that hands nothing on.
 
 > ⚠️ wa_logger uses an unofficial WhatsApp Web client (`whatsapp-web.js`). Automating WhatsApp may break its Terms of
 > Service and could get the account restricted. Use it only for your own account and at your own risk. Laws about
@@ -148,11 +158,18 @@ services:
     <<: *hardening
     cap_add: [NET_BIND_SERVICE]
     ports:
-      - "${HTTP_PORT:-80}:80"
-      - "${HTTPS_PORT:-443}:443"
+      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-80}:80"
+      - "${HTTPS_BIND:-0.0.0.0}:${HTTPS_PORT:-443}:443"
+      # Extra ports for users the admin keeps off the default port (user management). Closed to the network by default:
+      # set EXTRA_BIND=0.0.0.0 (or your LAN address) when the reverse proxy for those users runs on another host.
+      - "${EXTRA_BIND:-127.0.0.1}:${EXTRA_PORTS:-8101-8110}:${EXTRA_PORTS:-8101-8110}"
+    # Caddyfile = HTTPS (Let's Encrypt / internal CA); Caddyfile.http = plain HTTP behind your own TLS proxy.
+    command: ["caddy", "run", "--config", "/etc/caddy/${CADDY_CONFIG:-Caddyfile}", "--adapter", "caddyfile"]
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:?create .env first (bash setup.sh)}
       CADDY_TLS: ${CADDY_TLS:-internal}
+      CADDY_CONFIG: ${CADDY_CONFIG:-Caddyfile}
+      EXTRA_PORTS: ${EXTRA_PORTS:-8101-8110}
     volumes:
       - caddy_data:/data
       - caddy_config:/config
@@ -169,30 +186,47 @@ services:
     image: ghcr.io/revocx35/wa_logger-app:${WAL_VERSION:-latest}
     restart: unless-stopped
     <<: *hardening
+    # The supervisor (PID 1's child) starts the gateway and one worker per user under their own unix users: it needs
+    # exactly these capabilities (KILL: to stop a worker that runs as another user), everything else stays dropped. The
+    # processes it starts hold none.
+    cap_add: [SETUID, SETGID, CHOWN, KILL]
     env_file:
       - .env
     environment:
       DATA_DIR: /data
+      USERS_DIR: /users
       PORT: "8080"
       HOST: 0.0.0.0
-      CHROMIUM_HOST: chromium
-      TRUST_PROXY: "true"
+      CHROMIUM_URL: http://chromium:9223
+      # Shared with the chromium container only; the supervisor derives each user's browser token from it. (Releases
+      # before user management used VNC_PASSWORD for the VNC server: it is the fallback so existing .env files work.)
+      CONTROL_SECRET: ${CONTROL_SECRET:-${VNC_PASSWORD:?create .env first (bash setup.sh)}}
+      EXTRA_PORTS: ${EXTRA_PORTS:-8101-8110}
+      # 1 = only the bundled Caddy; 2 = Caddy + your own reverse proxy in front (HTTP mode).
+      TRUST_PROXY: ${TRUST_PROXY:-1}
     volumes:
       - app_data:/data
+      - app_users:/users
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
+      # Control socket and one socket directory per user worker.
+      - /run/wal:rw,noexec,nosuid,nodev,size=4m,mode=0711
     networks: [edge, backend]
     depends_on:
       chromium:
         condition: service_healthy
-    mem_limit: 1g
-    pids_limit: 256
+    # One Node worker per user (about 200 MB each, more while they download media).
+    mem_limit: ${APP_MEM_LIMIT:-2g}
+    pids_limit: 1024
 
   chromium:
     image: ghcr.io/revocx35/wa_logger-chromium:${WAL_VERSION:-latest}
     restart: unless-stopped
     read_only: true
     cap_drop: [ALL]
+    # The manager (root) starts every user's browser under that user's own unix user and stops it again: only these four
+    # are needed (KILL: to signal a browser that runs as another user).
+    cap_add: [SETUID, SETGID, CHOWN, KILL]
     security_opt:
       - no-new-privileges:true
       # Docker's default profile + the syscalls Chromium's namespace sandbox needs (sandbox stays ON).
@@ -200,18 +234,23 @@ services:
       - seccomp=./seccomp-chromium.json
     logging: *logging
     environment:
-      VNC_PASSWORD: ${VNC_PASSWORD:?create .env first (bash setup.sh)}
+      CONTROL_SECRET: ${CONTROL_SECRET:-${VNC_PASSWORD:?create .env first (bash setup.sh)}}
+      MAX_INSTANCES: ${MAX_USERS:-10}
       SCREEN: ${SCREEN:-1280x800x24}
       BACKEND_PEER: app
     volumes:
       - chromium_profile:/data
     tmpfs:
       - /tmp:rw,nosuid,nodev,size=512m
-      - /home/chrome:rw,nosuid,nodev,size=256m,uid=10002,gid=10002,mode=0700
-    shm_size: 1gb
+      # One home directory per user below here (the manager creates them 0700 for the right unix user).
+      - /home/chrome:rw,nosuid,nodev,size=512m,mode=0711
+      # Per-user X authority cookie and VNC password.
+      - /run/wal:rw,noexec,nosuid,nodev,size=8m,mode=0711
+    shm_size: ${CHROMIUM_SHM:-2gb}
     networks: [backend, egress]
-    mem_limit: 2500m
-    pids_limit: 1024
+    # Every active user runs a Chromium of about 1.5 GB: raise this with MAX_USERS.
+    mem_limit: ${CHROMIUM_MEM_LIMIT:-6g}
+    pids_limit: 4096
     stop_grace_period: 20s
 
 
@@ -225,6 +264,8 @@ networks:
 
 volumes:
   app_data: {}
+  # Every user but the first (the first account's data stays in app_data).
+  app_users: {}
   chromium_profile: {}
   caddy_data: {}
   caddy_config: {}
@@ -240,8 +281,11 @@ CADDY_TLS=internal                   # "internal" (self-signed, LAN) or your e-m
 HTTPS_PORT=443
 HTTP_PORT=80
 PUBLIC_ORIGIN=https://192.168.1.50   # exact browser origin (add :port if not 443)
-SETUP_TOKEN=<32 random characters>   # asked once on the signup page
-VNC_PASSWORD=<24 random characters>
+SETUP_TOKEN=<32 random characters>   # asked once on the signup page (creates the admin)
+CONTROL_SECRET=<32 random characters> # app <-> chromium only (older .env files: VNC_PASSWORD works too)
+MAX_USERS=10                         # users (and browsers); see "Multiple users" for sizing
+EXTRA_PORTS=8101-8110                # ports the admin can give to other users (published by caddy)
+EXTRA_BIND=127.0.0.1                 # 0.0.0.0 / LAN address if their reverse proxy is on another host
 # WAL_VERSION=1.0.0                  # pin a release instead of "latest"
 ```
 
@@ -318,7 +362,8 @@ For a home setup, the safest option is to **keep it on your LAN or VPN** (for ex
 1. Open the address that `setup.sh` printed (for example `https://192.168.1.50`). With `internal` TLS your browser shows a
    certificate warning once. You can trust Caddy's root certificate instead:
    `docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt`
-2. **Sign up.** Enter the *setup token* (it is in `.env`), a username and a strong password (12+ characters).
+2. **Sign up** (this creates the admin). Enter the *setup token* (it is in `.env`), a username and a strong password
+   (12+ characters).
 3. **Save the recovery key.** It is shown once and is the only way back in if you forget your password.
    Without both the password and the recovery key, the encrypted log is unrecoverable, by design.
 4. **Link WhatsApp.** The page shows the live WhatsApp Web screen. On your phone, open
@@ -336,10 +381,43 @@ are imported from WhatsApp Web as well.
 | **Deleted** | Every message that was deleted after it was logged, newest first, with a link into its chat |
 | **Search** | Full-text search over decrypted messages, captions, polls, locations and contact names |
 | **WA Web** | Live view of the background WhatsApp Web (view-only toggle, restart, unlink) |
+| **Users** | (admin only) add and manage users, ports and the admin log. See [Multiple users](#multiple-users) |
 | **Settings** | Password, 2FA, recovery key, sessions, logging options, security log, wipe data |
 
 In a chat, deleted messages have a **red frame** and the time they were deleted. Edited messages show an
 **Edited** link that opens the edit history. Media that could not be downloaded shows the reason and a **Retry** button.
+
+## Multiple users
+
+The first account is the **admin**. Under **Users** the admin can:
+
+1. **Add a user**: a username, optionally a temporary password (otherwise one is generated and shown once) and a port. Give
+   the person the temporary password and the address of their port.
+2. The user signs in with it and is **asked to choose their own password**, saves their own recovery key and scans the QR code
+   with **their own** WhatsApp (their own background browser). From there it is the normal wa_logger for them. The admin never
+   sees their messages, names or media, and doesn't know their password.
+3. **Reset** a forgotten password: *recovery* (keeps the data; the user needs their recovery key) or *wipe* (deletes the
+   account's data and unlinks its WhatsApp; use it when the recovery key is gone too). **Disable** (ends sessions, blocks
+   sign-in, logging continues), **move** to another port or **delete** (everything, including the browser profile).
+   Reset and delete ask for the admin's password again.
+
+**Ports.** The default port (`HTTP_PORT`, 80/443) is the admin's: the admin account can only sign in there. Under *Ports* the
+admin opens extra ports (the compose file publishes the range `EXTRA_PORTS`, `8101-8110` by default, on `EXTRA_BIND`) and assigns
+users to them; a user can sign in **only on their own port** and their session is useless on any other. Point a reverse-proxy
+host at each port (for example a Nginx Proxy Manager host for the friend's domain forwarding to `http://<server>:8101`,
+without authentik, while your own host keeps authentik in front of the default port), enter that domain's origin
+(`https://friend.example.com`) next to the port, and give the friend the address. The extra ports are published on
+`127.0.0.1` only unless you set `EXTRA_BIND=0.0.0.0` (or your LAN address) in `.env`; do that when the proxy runs on another
+machine and firewall the range so only the proxy reaches it. In HTTPS mode (no external proxy) the extra ports serve the same
+certificate on their own port.
+
+**Sizing.** Every active user runs their own Chromium (about 1.5 GB RAM) and worker (about 0.2 GB): raise `CHROMIUM_MEM_LIMIT`
+(default 6g) and `APP_MEM_LIMIT` (default 2g) together with `MAX_USERS` (default 10, also the cap on browsers). Backups cover
+three volumes now (below).
+
+**Upgrading from a single-user release.** Replace the compose file and run `docker compose pull && docker compose up -d`; `.env`
+stays as it is. Your existing account becomes the admin with all its data and its WhatsApp session in place; sign in once more.
+In `.env` you may add `MAX_USERS`, `EXTRA_PORTS` and `EXTRA_BIND`.
 
 ## What gets logged, and the limits
 
@@ -366,10 +444,11 @@ docker compose down               # stop (data stays in Docker volumes)
 
 **Backups.** Back up the Docker volumes:
 
-- `wa_logger_app_data`: database and media. **Encrypted.** Useless without your password or recovery key.
-- `wa_logger_chromium_profile`: **the live WhatsApp session.** Anyone holding it can use your WhatsApp account.
-  Protect it like a password, or skip it and relink after a restore.
-- `.env`: secrets (setup token, VNC password).
+- `wa_logger_app_data`: the first account's database and media. **Encrypted.** Useless without the password or recovery key.
+- `wa_logger_app_users`: the user list and every other user's database and media. **Encrypted** the same way.
+- `wa_logger_chromium_profile`: **the live WhatsApp sessions of all users.** Anyone holding it can use those WhatsApp
+  accounts. Protect it like a password, or skip it and relink after a restore.
+- `.env`: secrets (setup token, control secret).
 
 ```bash
 docker run --rm -v wa_logger_app_data:/data -v "$PWD":/backup debian:trixie-slim \
@@ -387,8 +466,9 @@ docker run --rm -v wa_logger_app_data:/data -v "$PWD":/backup debian:trixie-slim
 | Chromium unhealthy, logs mention "No usable sandbox" | Your Docker ignores the seccomp profile, or user namespaces are disabled on the host (`sysctl kernel.unprivileged_userns_clone=1`). As a last resort only: `CHROMIUM_NO_SANDBOX=1` (not recommended). |
 | Status stuck at "Starting" | `docker compose logs chromium app`; check that the chromium container can reach `web.whatsapp.com`. |
 | WhatsApp says "open in another window" | wa_logger takes the session over automatically. If it persists, press **Restart** on the WA Web page. |
-| Lost password | Use **Forgot your password?** on the login page with your recovery key. |
-| Call button greyed out, or "can’t call from this account" | WhatsApp must be connected (status pill). Calling has to be enabled for the account by WhatsApp: `docker compose exec -T app node - < scripts/wa-diagnose.js` shows `enable_web_calling` and `unsupportedReason` under `calls`. |
+| Lost password | Use **Forgot your password?** on the login page with your recovery key. A user of yours: the admin resets it under **Users**. |
+| A user can't sign in | They must use **their own** port and address; the admin account only works on the default port. A wrong `https://…` origin next to the port makes every request from it fail ("Cross-origin request rejected"). |
+| Call button greyed out, or "can’t call from this account" | WhatsApp must be connected (status pill). Calling has to be enabled for the account by WhatsApp: `docker compose exec -T -u 10001 app node - < scripts/wa-diagnose.js` shows `enable_web_calling` and `unsupportedReason` under `calls`. |
 | Call connects but no sound | Open wa_logger over HTTPS and allow the microphone. If the call panel says "Join audio", the audio is not in this tab yet: press it. |
 | Custom reverse-proxy settings | Mount your own Caddyfile: `volumes: [./Caddyfile:/etc/caddy/Caddyfile:ro]` on the `caddy` service. |
 

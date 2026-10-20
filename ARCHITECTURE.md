@@ -5,8 +5,8 @@
 
 ## 1. What it is
 
-A self-hosted, single-owner, Docker-based **WhatsApp message logger**. A real Chromium runs
-WhatsApp Web in a background container. The app watches WhatsApp Web through the Chrome
+A self-hosted, Docker-based **WhatsApp message logger** for one person or a few (since 2026-10: multi-user, §3 and §6
+"Multi-user isolation"). A real Chromium runs WhatsApp Web in a background container, one per user. The app watches WhatsApp Web through the Chrome
 DevTools Protocol (via `whatsapp-web.js`) and records **every message, edit, reaction and media file**
 the owner's account sends or receives, encrypted at rest. When someone deletes a message
 ("deleted for everyone"), the logged copy stays viewable and is flagged as deleted.
@@ -16,8 +16,13 @@ The web UI looks like WhatsApp: chat list, chat view, media. Since 2026-10 it ca
 take **voice and video calls** from the browser (§4 "Calls", "Video").
 The live Chromium screen can be opened from the menu ("WA Web") through an in-browser VNC client.
 
-Out of scope on purpose: call recording, starting group calls, screen sharing, multiple WhatsApp accounts or tenants, and
-**view-once media** (it is logged only as a placeholder and never downloaded).
+**Multi-user:** the first account is the admin; the admin creates more users in the web UI (name + temporary password) and
+can give each their own port. Every user is a separate tenant: their own WhatsApp link (own Chromium, own QR code), own
+encrypted database, own keys, own unix user. A user's data is invisible to the admin and to everyone else. The admin sees
+names, status, ports and an admin log, never content.
+
+Out of scope on purpose: call recording, starting group calls, screen sharing, **several WhatsApp accounts for one
+user**, and **view-once media** (it is logged only as a placeholder and never downloaded).
 
 ## 2. User flow
 
@@ -35,81 +40,137 @@ Out of scope on purpose: call recording, starting group calls, screen sharing, m
 5. Later visits: go to `/login` (or `/signup` if no owner exists), then `/`
    (or `/setup/link` if onboarding is not complete).
 
+**Other users.** The admin opens *Users*, adds a user (username, optional temporary password, port) and hands over the
+temporary password (shown once) and the address of that port. The user signs in with it, is **forced to choose their own
+password** (`/api/auth/claim`; their keys are generated at that moment, so the admin, who knew the temporary password,
+never held key material), saves their own recovery key, scans the QR code of **their own** WhatsApp Web, and from there
+it is the normal experience. A forgotten password is reset by the admin in one of two ways: *recovery* (new temporary
+password; the user proves they hold the recovery key; the data stays) or *wipe* (all of the account's data, keys and
+browser profile are deleted and it starts over). The admin can also disable, move to another port and delete users.
+
 ## 3. Containers & networks
 
 ```
                 internet
                    │
-          ┌────────┴────────┐   network: public (bridge)      ports 80/443 published
-          │      caddy      │   TLS termination (ACME or internal CA), HTTP→HTTPS
+          ┌────────┴────────┐   network: public (bridge)      ports 80/443 + EXTRA_PORTS published
+          │      caddy      │   TLS termination (ACME or internal CA), HTTP→HTTPS; one site per extra port
           └────────┬────────┘
-                   │ network: edge (internal: true)
+                   │ network: edge (internal: true)           port 8080 = default; EXTRA_PORTS 8101-8110 = user ports
           ┌────────┴────────┐
-          │       app       │   Node 24 · Fastify · whatsapp-web.js · SQLite · serves built web UI
-          │  (no internet)  │   volume app_data:/data  (db + encrypted media)
-          └────────┬────────┘
-                   │ network: backend (internal: true)
-                   │   tcp 9223 → CDP (socat → 127.0.0.1:9222)   tcp 5900 → x11vnc
+          │       app       │   supervisor (root, 4 caps) ─┬─ gateway  "front"  (uid 10003)   the only listener
+          │  (no internet)  │                              └─ worker per user   (uid 10001 for the first account,
+          │                 │   Node 24 · Fastify · whatsapp-web.js · SQLite             10100+id for the others)
+          └────────┬────────┘   volumes app_data:/data (first account) · app_users:/users (gateway DB + the others)
+                   │ network: backend (internal: true)   tcp 9223 → chromium manager (bearer token per user)
           ┌────────┴────────┐
-          │    chromium     │   Debian trixie · Chromium (headful, sandbox ON via seccomp profile)
-          │                 │   Xvfb :99 · x11vnc · socat · volume chromium_profile:/data
+          │    chromium     │   manager (Go, root, 4 caps) ─ per user: Xvfb · Chromium (sandbox ON) · x11vnc,
+          │                 │   each under that user's own unix user · volume chromium_profile:/data
           └────────┬────────┘
                    │ network: egress (bridge) → web.whatsapp.com / WA CDNs
                 internet
 ```
 
-* Two compose files: `docker-compose.yml` builds all three images from source (`Dockerfile`, `chromium/`, `caddy/`),
-  and `deploy/docker-compose.yml` uses the images CI publishes to GHCR (`ghcr.io/revocx35/wa_logger-{app,chromium,caddy}`).
-  The standalone variant only needs `seccomp-chromium.json` and `.env` next to it. The Caddyfile is baked into the
-  caddy image so Caddy keeps a read-only root filesystem (compose `configs.content` cannot be used with `read_only`).
+### app container: supervisor, gateway, workers
+* **Supervisor** (`server/src/supervisor/`, the container's only root process; capabilities `SETUID SETGID CHOWN KILL`,
+  nothing else, no network listener). It creates the directories, starts the gateway and one worker per tenant under that
+  tenant's unix user (`spawn` with `uid`/`gid`, supplementary groups cleared), restarts them with backoff, and serves a
+  one-line-JSON control protocol on `/run/wal/ctl/ctl.sock` (directory `root:front 0750`): `spawn`, `stop`, `remove`,
+  `reset-browser`, `status`. Workers get a **minimal environment built from scratch** (no setup token, no control secret):
+  their data directory, socket path, a random per-worker internal token, the Chromium manager URL and *their own* browser
+  token. `remove` deletes a tenant's directories (emptied as that tenant: root has no DAC override) and asks the manager to
+  delete its browser profile.
+* **Gateway / front** (`server/src/front/`, uid 10003, `server/src/front.ts`): the only process that listens on the network.
+  It owns the **system database** (`/users/system/system.db`: users, ports, admin log — no credentials, no data), serves the
+  web UI, answers the routes that need to know *who is asking before there is a session* (`/api/state`, signup, login, claim,
+  recover: it picks the worker by username) and the **admin API** (`/api/admin/*`), and forwards every other `/api` request
+  and WebSocket upgrade to the signed-in user's worker over a unix socket. Which worker is decided by the **tenant cookie**
+  (`__Host-wal_tenant`, a number set when the worker answers a sign-in with a session cookie). The tenant cookie is not a
+  credential: pointing it at another tenant just makes that tenant's worker fail to find the session. It sets
+  `X-Forwarded-For/-Proto/-Host` itself (client address by the `TRUST_PROXY` hop count, scheme/host from the configured origin of
+  that port when there is one), drops every client `X-Forwarded-*`/`Forwarded`/`X-WAL-*` header, only forwards plain
+  `/api/…` paths (no dot segments, doubled/encoded slashes, backslashes) and adds the worker's secret token.
+* **Worker** (`server/src/index.ts` with `SOCKET_PATH`, one per tenant, uid per tenant): the former single-user app, unchanged
+  in what it does — own SQLite database and media directory, own key ring, own whatsapp-web.js client, own sessions,
+  throttle and rate limits — listening on a unix socket `/run/wal/w/<id>/s.sock`. The socket's directory is owned by the
+  tenant with group `front`, mode `0710`: only the tenant and the gateway can even reach it, and every request must carry the
+  worker's token (`X-WAL-Internal`, constant-time compare, before anything else). The `/internal/*` routes (provision, claim
+  state, reset, revoke sessions, unlink, info, admin signup) additionally need `X-WAL-Scope: internal`, which only the
+  gateway's own calls carry. Workers have no `SETUP_TOKEN` and no public signup route.
+* **Tenant 1** is the first account. Its data stays where the single-user releases kept it (`/data/wa_logger.db`,
+  `/data/media`, uid 10001) and its browser profile stays `/data/profile` (uid 10002), so an upgrade finds everything in
+  place: at startup the gateway asks worker 1 whether an owner exists and **adopts** it as the admin (`admin_adopted` in the
+  admin log). Everyone else lives in `/users/<id>` (uid `10100+id`) and `/data/u<id>/profile` in the chromium volume.
+  Ids come from an AUTOINCREMENT column and are never reused, so a deleted user's unix user and paths are never inherited.
+* **Ports.** The default listener is `PORT` (8080). The admin opens extra ports (from `EXTRA_PORTS`, e.g. `8101-8110`,
+  published by the caddy container, each forwarded 1:1 to the same port of the app) and assigns each user to one. Each port is
+  its own `http.Server` around the same request handler; **the port a connection arrived on decides who may sign in**:
+  a user signs in only on their port (users without one: the default port), the admin only on the default port, and a
+  session is useless on any other port (checked on every request and upgrade, using the tenant cookie's user). Each extra port
+  can carry the exact browser origin people use there (checked on state-changing requests and WebSocket upgrades; empty = derived
+  from `Host`). This is how the admin's address can sit behind a login proxy such as authentik while a friend gets a
+  separate address without one.
+* Request flow for a signed-in user: browser → caddy → gateway (rate limit, Origin, port policy, tenant cookie) → worker
+  (its own session, CSRF, throttle, as before) → its Chromium through the manager.
+
+* Compose files: `docker-compose.yml` builds all three images from source (`Dockerfile`, `chromium/`, `caddy/`), and
+  `deploy/docker-compose.yml` uses the images CI publishes to GHCR (`ghcr.io/revocx35/wa_logger-{app,chromium,caddy}`).
+  The standalone variant only needs `seccomp-chromium.json` and `.env` next to it. The Caddyfiles are baked into the caddy
+  image (compose `configs.content` cannot be used with `read_only`); the image's entrypoint (`caddy/extra-ports.sh`) writes
+  one site per `EXTRA_PORTS` port to `/tmp/extra-ports.caddy`, which the Caddyfiles import.
 * HTTP mode (`CADDY_CONFIG=Caddyfile.http`, `setup.sh --http-only`): Caddy serves plain HTTP behind the user's own
   TLS reverse proxy and trusts X-Forwarded-* from private ranges. The app uses `TRUST_PROXY=2` and
   `COOKIE_SECURE=auto`: `Secure`/`__Host-` cookies and HSTS whenever the request arrived over HTTPS.
   * Client IP (used by the login throttle): Nginx Proxy Manager *appends* the address it saw to the client's
-    `X-Forwarded-For` (`$proxy_add_x_forwarded_for`), and Caddy, trusting NPM's private address, appends NPM's. The
-    app trusts exactly `TRUST_PROXY` hops from the right (Caddy's socket + NPM's entry), so the client IP is the
-    entry NPM appended, and anything a client puts in front of it is ignored.
+    `X-Forwarded-For`, and Caddy, trusting NPM's private address, appends NPM's. The gateway trusts exactly `TRUST_PROXY` hops
+    from the right (Caddy's socket + NPM's entry), so the client IP is the entry NPM appended, and anything a client puts in
+    front of it is ignored. The gateway hands the workers that one address (they trust one hop: the gateway).
   * The hop count must match reality. Too low (`1` behind NPM): every client looks like NPM, and 5 failures lock the
     per-IP throttle for everyone coming through it. Too high: clients can pick their own IP. Another proxy in front of
     NPM (e.g. Cloudflare) makes it `3`.
   * Caddy trusts any private address, so a LAN host that reaches port 80 directly can claim any client IP and get
-    around the per-IP limit (the global limit still applies). That's why port 80 in HTTP mode should be reachable only
-    from the proxy.
+    around the per-IP limit (the global limit still applies). That's why the published ports in HTTP mode should be reachable
+    only from the proxy. The extra ports are published on `EXTRA_BIND` (default `127.0.0.1`: set `0.0.0.0` or a LAN address
+    only when the proxy for those users runs on another host, and firewall the range).
 * Only **caddy** publishes ports. The **app** has no route to the internet (it sits only on internal networks).
   **chromium** is the only component that talks to WhatsApp.
-* CDP has no authentication, so it is reachable only on `backend`, where the app is the only other container.
-  Chromium ignores `--remote-debugging-address` in headful mode, so it listens on 127.0.0.1:9222 and
-  `socat` exposes it as `0.0.0.0:9223` inside the container.
-* Chrome rejects CDP HTTP requests whose `Host` header is not an IP or `localhost`. The app therefore
-  **resolves `CHROMIUM_HOST` to an IP** (`dns.lookup`) and connects to `http://<ip>:9223`.
-* x11vnc is protected by `VNC_PASSWORD` (defense in depth). Its port is reachable only on `backend`, and the
-  browser reaches it **only** through the app's authenticated WebSocket bridge `/api/vnc`.
-* Hardening on every container: `no-new-privileges`, `cap_drop: [ALL]` (caddy re-adds `NET_BIND_SERVICE`),
-  non-root users, `read_only` root filesystems with explicit tmpfs mounts, memory limits, healthchecks.
+* The chromium manager (below) is the only way to a browser: CDP and VNC are never exposed. Each request carries the
+  bearer token of one instance, derived as `HMAC-SHA256(CONTROL_SECRET, "wal/chromium/instance/<id>")`; only the
+  supervisor and the manager know `CONTROL_SECRET` (it falls back to `VNC_PASSWORD` for `.env` files from before user
+  management). A worker is handed its own token only.
+* Hardening on every container: `no-new-privileges`, `cap_drop: [ALL]` (caddy re-adds `NET_BIND_SERVICE`; app and chromium
+  re-add `SETUID SETGID CHOWN KILL` for their root supervisor/manager, which hand nothing on to what they start), `read_only`
+  root filesystems with explicit tmpfs mounts, memory and pid limits, healthchecks. This replaces "non-root" for the two
+  containers that must run one process per user under different unix users: the root process is small, has no network
+  listener of its own (the manager's is token-checked) and starts everything else without capabilities.
 * Chromium keeps its **sandbox enabled**. Docker's default seccomp profile blocks the user-namespace syscalls
   the sandbox needs, so `chromium/seccomp-chromium.json` (Docker's default profile plus `clone`, `clone3`,
   `unshare`, `setns`, `chroot` and similar) is applied. **Never ship `--no-sandbox`.** It is available only as an
   explicit escape hatch (`CHROMIUM_NO_SANDBOX=1`) with a startup warning.
 
 ### chromium container
-* `entrypoint.sh` acts as a small supervisor (bash `wait -n` plus restart loops). It removes stale
-  `Singleton*` locks, then starts `Xvfb :99 -screen 0 ${SCREEN}`,
-  `chromium --user-data-dir=/data/profile --remote-debugging-port=9222 --kiosk --no-first-run
-  --no-default-browser-check --password-store=basic --disable-features=Translate,MediaRouter
-  --noerrdialogs --hide-crash-restore-bubble --autoplay-policy=no-user-gesture-required --window-position=0,0
-  --window-size=W,H about:blank` (the autoplay flag lets WhatsApp Web's call audio run without a human click, also in
-  a call popout window; there are no sound devices, the audio only goes to the app, §4 "Calls"), plus
-  `--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows`
-  (video calls move into a popout window, which hides the WhatsApp tab; hidden tabs would throttle the call code),
-  `x11vnc -display :99 -rfbport 5900 -rfbauth … -forever -shared`, and
-  `socat TCP-LISTEN:9223,fork,reuseaddr TCP:127.0.0.1:9222`. Crashed children are restarted.
-* socat and x11vnc listen only on the container's address in the network shared with the app (`BACKEND_PEER`): the
-  entrypoint resolves `app` and takes the source address of the route to it, and accepts it only if that route is
-  on-link (no gateway). Before the app container exists, Docker's DNS forwards the name to the host's resolver, where a
-  search domain can turn `app` into some public address; without the check the relays would listen on the egress
-  network and the app could not reach them (seen on the dev host, 2026-10-17).
-* The healthcheck calls `curl -fs http://127.0.0.1:9222/json/version`.
-* The profile volume **contains the live WhatsApp session**. Anyone with it can impersonate the account.
+* `entrypoint.sh` validates the environment, makes the volume root `root:root 0711` (traversable, not listable; each user's
+  directory below is `0700` and theirs) and starts the **manager** (`chromium/manager/`, Go, standard library only, built and
+  tested in the image's first build stage). It answers `/healthz` on loopback at once and listens on its address on the
+  network shared with the app (`BACKEND_PEER`, default `app`) as soon as that exists (the address must lie in one of its own
+  subnets, so a name that resolved to some public address is never used). `LISTEN_ADDR` overrides.
+* **Per user** (`instance.go`), all started on demand by `POST /i/<id>/ensure` and kept alive (restart after 2 s):
+  `Xvfb :100+id -nolisten tcp -nolisten local -auth <Xauthority>` (filesystem socket only, MIT cookie in the user's
+  private run directory), `chromium --user-data-dir=<profile> --remote-debugging-port=<free loopback port> --kiosk …`
+  (the same flags as before) and `x11vnc` on a free loopback port with a random per-start password. Each runs as
+  `uid 10100+id` / own gid (tenant 1: 10002, profile `/data/profile`), with an environment built from scratch (no
+  secrets), `HOME=/home/chrome/u<id>`, `TMPDIR=/tmp/u<id>`; directories are `0700`. Stale profile locks and X sockets are
+  removed *as that user* (root has no DAC override).
+* **API** (`server.go`, every route `/i/<id>/…` needs that instance's token or the admin token): `ensure`, `restart`,
+  `DELETE /i/<id>` (admin token: stop everything and delete the profile), `GET vnc-password`, `GET vnc` (an HTTP
+  `Upgrade: wal-tunnel` raw byte tunnel to x11vnc, wrapped into a WebSocket by the tenant's worker), and the DevTools relay
+  `GET cdp/json/version` + the single browser WebSocket `cdp/devtools/browser/<uuid>` (page-level endpoints, `/json/new`,
+  `/json/close` and the inspector are not relayed). `MAX_INSTANCES` (= `MAX_USERS`) caps the browsers.
+* The healthcheck calls `curl -fs http://127.0.0.1:9223/healthz`.
+* The profile volume **contains the live WhatsApp sessions**. Anyone with it can impersonate the accounts.
+* Residual risk (documented in §6): all browsers share the container's network namespace. A renderer exploit stays inside
+  Chromium's sandbox (which has no network); a full sandbox escape as uid N could reach the other browsers' loopback DevTools
+  ports. Separate containers per user would close that, at the price of a Docker-socket orchestrator.
 
 ## 4. App (server) — `server/`
 
@@ -118,7 +179,15 @@ Node 24 LTS, TypeScript (ESM), Fastify 5, better-sqlite3 (WAL), zod for validati
 
 ```
 server/src/
-  index.ts            bootstrap: config → db → crypto keyring → http → wa (only once an owner exists)
+  index.ts            the tenant WORKER: config → db → crypto keyring → http (unix socket) → wa (only once an owner exists)
+  front.ts, front/    the GATEWAY: system DB (users, ports, admin log), listeners per port, proxy to workers, admin API
+    gateway.ts          Fastify app, port/tenant policy, streaming proxy + WebSocket tunnel, response relay (tenant cookie)
+    auth.ts             /api/state, signup (admin), login/claim/recover routed by username
+    admin.ts            /api/admin/*: overview, create/update/reset/delete users, ports, admin log
+    proxy.ts            HTTP over the worker's unix socket; forwarding-header policy
+    pool.ts             talks to the supervisor's control socket · listeners.ts: the open ports · db.ts: system DB
+  supervisor/         the SUPERVISOR (root, 4 capabilities): directories, gateway + worker processes, control socket, tokens
+  api/internal.ts     worker routes only the gateway may call (provision, reset, revoke, unlink, info, admin signup)
   config.ts           zod-parsed env (see §9); fails fast on bad config
   log.ts              pino with redaction (cookies, auth headers, passwords, tokens, message bodies)
   db/                 connection, migrations (schema in §7), repositories (typed, prepared statements)
@@ -131,10 +200,11 @@ server/src/
                       throttle.ts (race-free per-IP + global brute-force throttle), totp.ts
   http/               server factory, security headers/CSP, static web UI, error handler
   api/                chats, messages, media (Range), search, deleted feed, SSE events, settings, audit, data wipe
-  vnc/                authenticated WebSocket ↔ TCP bridge to chromium:5900
+  vnc/                authenticated WebSocket ↔ the tenant's x11vnc, through the manager's tunnel
   wa/
     pageapi.ts        direct reads from WhatsApp Web's models: chats, contacts (LID → phone), history, avatars
-    browser.ts        resolve host → IP, connect puppeteer to CDP, tab hygiene (close stale WA tabs)
+    chromium.ts       ChromiumLink: this tenant's browser through the manager (ensure, DevTools endpoint, VNC tunnel)
+    browser.ts        connect puppeteer through the manager, tab hygiene (close stale WA tabs)
     client.ts         whatsapp-web.js Client lifecycle, state machine, reconnect with backoff
     ingest.ts         event handlers → mapper → repositories (idempotent upserts)
     mapper.ts         serialized WA message → DB record (pure, unit-tested); msgKey() rebuilds message keys
@@ -153,7 +223,7 @@ shared/api.d.ts       API DTO types shared by server and web (type-only)
 ```
 
 ### WhatsApp integration rules
-* Create the `Client` with `puppeteer: { browserURL: 'http://<ip>:9223', defaultViewport: null }`,
+* Create the `Client` with `puppeteer: { browserWSEndpoint, headers, defaultViewport: null }` (from `ChromiumLink`),
   `authStrategy: NoAuth` (the session lives in the Chromium profile volume),
   `webVersionCache: { type: 'none' }` (the container filesystem is read-only), and `takeoverOnConflict: true`.
 * **Never call `client.destroy()`.** On a connected browser it would close the remote Chromium. On shutdown,
@@ -172,6 +242,8 @@ shared/api.d.ts       API DTO types shared by server and web (type-only)
 * **LID ids:** one-to-one chats and group participants use `…@lid` ids (no phone number). The phone number
   comes from `contact.phoneNumber` or `WAWebLidMigrationUtils.toPn()` and is stored encrypted (`contacts.phone_enc`)
   as the last name fallback (saved name → `~pushname` → phone).
+* Connect through `wa/chromium.ts`: `ensure` the tenant's browser, fetch `/i/<id>/cdp/json/version`, and
+  `puppeteer.connect({browserWSEndpoint, headers})` with the tenant's bearer token (never `browserURL`).
 * Start the WA client only once an owner exists, because the owner's public key is required to encrypt anything.
 * Events used: `qr`, `loading_screen`, `authenticated`, `auth_failure`, `ready`, `change_state`,
   `disconnected`, `message_create` (fires for incoming **and** outgoing messages, so it is the single source for new
@@ -309,8 +381,11 @@ other side: WhatsApp's wasm stack → videoRendererRegistry.onVideoFrameWasmToJs
 React 19 + Vite + TypeScript SPA, built into `server` static assets. No CDN, no external fonts, and no inline
 scripts, so it satisfies a strict CSP. `@novnc/novnc` provides the VNC client, and `qrcode` renders the TOTP enrollment QR code.
 
-Routes: `/signup`, `/login`, `/recover`, `/setup/recovery`, `/setup/link`, `/` (chats), `/chat/:chatId`,
-`/deleted`, `/wa-web`, `/settings`. A route guard uses `GET /api/state` to decide where the user belongs.
+Routes: `/signup`, `/login` (also the **choose-your-own-password** step after a temporary password: `claim`, with the
+recovery key after an admin reset), `/recover`, `/setup/recovery`, `/setup/link`, `/` (chats), `/chat/:chatId`,
+`/deleted`, `/wa-web`, `/settings`, and for the admin `/admin` (**Users**: table with status/WhatsApp/port/last sign-in,
+add user with a generated or typed temporary password shown once, move to a port, disable/enable, reset (recovery or wipe),
+delete, open/close ports with their browser origin, admin log; destructive actions ask for the admin's password and 2FA code). A route guard uses `GET /api/state` to decide where the user belongs.
 
 Chat view features: date separators; sender names (colored) in groups; the WA text formatting parser
 (`*bold*`, `_italic_`, `~strike~`, `` ```mono``` ``, `> quote`, lists, links) renders to React elements, **never HTML**;
@@ -347,8 +422,12 @@ lateral movement between containers, brute force, and (with calls) someone liste
 session), and WhatsApp's own terms of service (unofficial client; ban risk is the user's decision).
 
 ### Authentication
-* Single owner. Signup is closed permanently once an owner exists and requires `SETUP_TOKEN`
-  (constant-time compare, rate limited).
+* One owner **per tenant** (this section describes one tenant's worker; §6 "Multi-user isolation" the rest). The first
+  account (the admin) is created on the signup page and needs `SETUP_TOKEN` (checked by the gateway: constant-time
+  compare, rate limited; closed permanently once a user exists). Other accounts are created by the admin and *claimed* by
+  the user with a temporary password (`POST /api/auth/claim`): a new account gets its keys when the user picks their own
+  password; after an admin reset, the claim needs the recovery key (mode `reset`) or, after a wipe, starts like a new account.
+  While a temporary password is pending it is the only credential (the old password does not work).
 * Password: min 12 characters, max 256, rejected if it matches the username or a small common-password list.
   `master = scrypt(pw, salt32, N=2^17, r=8, p=1, 32B)`, `authHash = HKDF(master, "wal/v1/auth")` (stored),
   `KEK = HKDF(master, "wal/v1/kek")` (never stored).
@@ -388,6 +467,49 @@ session), and WhatsApp's own terms of service (unofficial client; ban risk is th
   (or the request `Host` when that is unset). Authenticated non-GET requests must also carry
   `X-CSRF-Token = HMAC(HKDF(secret,"wal/v1/csrf"), "csrf")`, which `GET /api/state` returns.
 * The WebSocket (`/api/vnc`) and SSE (`/api/events`) require a valid session cookie and a matching `Origin`.
+
+### Multi-user isolation
+**Threats considered:** a user's credentials stolen; a user who turns hostile (a "friend"); malicious WhatsApp content in
+one user's account; an application-level bug reachable by an authenticated user; one tenant's compromised Chromium; an
+admin who should not be able to read users' data.
+
+* **Data**: every tenant has its own SQLite database, media directory and X25519 key ring (§6 "Encryption at rest" is per
+  tenant). Nothing links two tenants' ciphertexts; a stolen password or session opens exactly one tenant. The admin
+  never sees content: the admin API has no route that touches a worker's data, and a new account's keys are generated when the user
+  chooses their own password (the admin knows only a temporary password, which wrapped nothing).
+* **Processes**: every worker runs as its own unix user in its own mode-`0700` directory, with no capabilities, no
+  network listener and a socket nobody but the tenant and the gateway can reach. A compromise of one worker (say a
+  parsing bug triggered by a crafted WhatsApp message in the mapper) yields that tenant's data (which it already holds), not
+  another's: files, sockets, `ptrace` and `/proc/<pid>/environ` all stop at the unix-user boundary.
+  The worker has no secret that opens anything else: no control secret, no setup token, only its own browser token.
+* **Browsers**: one Chromium per user under its own unix user, own profile directory (`0700`), own X display (cookie auth, no
+  TCP, no abstract socket), own VNC password, own loopback ports. The only way in from the app container is the manager's
+  API with a per-instance token, so a compromised worker can drive its own browser only. Policy, seccomp profile and sandbox
+  are as before.
+* **Sessions and routing**: a session belongs to one worker; the tenant cookie only selects which worker validates it, so
+  forging it cannot reach other data (tested: every forged combination answers 401). Sessions are additionally bound to the
+  user's port by the gateway, and ended when the user is disabled or moved. The first-sign-in temporary password has its own
+  throttle (per IP, plus a per-account global lock) in the worker and the gateway throttles unknown names per IP and burns
+  a scrypt for them, so "no such user", "wrong port", "disabled" and "wrong password" are indistinguishable.
+* **Admin actions**: only the admin's session (validated by the admin's own worker, with CSRF and Origin) reaches
+  `/api/admin/*`; reset and delete ask for the admin's password (and 2FA code) again, verified by the worker's throttled
+  `verify` route. Everything is in the admin log (no secrets). The admin cannot be disabled, moved, reset or deleted through
+  the API.
+* **Trusted core**: the gateway and the supervisor. The gateway sees every request in transit (including passwords at
+  sign-in), so a compromised gateway can capture credentials of users who sign in afterwards and can call any worker's
+  internal routes (reset/wipe/revoke). It never holds keys or data at rest, runs unprivileged, parses only JSON bodies
+  of five small routes and forwards the rest unparsed, and cannot read a worker's files. The supervisor (root with four
+  capabilities) takes commands only from the gateway's unix user on a socket and builds worker environments from fixed
+  templates. A host root can do anything (out of scope, as before).
+* **Residual risks (accepted, documented)**:
+  (1) The Chromium processes share one container and network namespace; Chromium's own DevTools port of each browser listens
+  on loopback, so an attacker who first escapes Chromium's sandbox *as one user* could connect to another browser's DevTools
+  port. Closing that needs a container (or network namespace) per user, i.e. an orchestrator with Docker access, which was
+  judged a worse trade-off.
+  (2) All tenants share the host's CPU, RAM and disk: one user can slow others down (container memory/pid limits are global;
+  workers have a Node heap cap). Size `APP_MEM_LIMIT`/`CHROMIUM_MEM_LIMIT` for the number of users.
+  (3) The kernel is shared (a kernel exploit crosses unix users), as with any container.
+  (4) The admin chooses the temporary password and hands it over; use the generated one, over a channel you trust.
 
 ### Calls
 * Who can listen: only a valid session (cookie) from our Origin can open `WS /api/calls/audio`, and audio flows only
@@ -440,7 +562,10 @@ The logger writes while the owner is logged out, but must not be able to read ol
   request ID and never returned to the client.
 * Logs never contain message content, names, cookies or secrets (pino `redact` plus a code discipline enforced by review).
 
-## 7. Database (SQLite, `/data/wa_logger.db`, WAL, `foreign_keys=ON`)
+## 7. Database (SQLite, per tenant `wa_logger.db`, WAL, `foreign_keys=ON`)
+
+Each tenant has its own database (tenant 1: `/data/wa_logger.db`, the others `/users/<id>/wa_logger.db`); the gateway has a
+separate **system database** `/users/system/system.db` (below the tenant schema).
 
 ```sql
 owner(id INTEGER PRIMARY KEY CHECK (id = 1), username TEXT NOT NULL, pw_salt BLOB, pw_auth_hash BLOB,
@@ -467,6 +592,16 @@ message_edits(id INTEGER PRIMARY KEY, message_id TEXT, body_enc BLOB, captured_a
 reactions(message_id TEXT, sender_id TEXT, emoji_enc BLOB, ts INTEGER, removed_at INTEGER, PRIMARY KEY(message_id, sender_id))
 media(id INTEGER PRIMARY KEY, path TEXT, key_id INTEGER, mime_enc BLOB, filename_enc BLOB, size INTEGER, created_at INTEGER)
 ```
+Tenant migration 5 adds `pending_claim(id=1, username, mode 'new'|'reset', salt, auth_hash, failed_logins, locked_until,
+created_at)`: the admin-issued temporary credential (a salted scrypt-derived auth hash, never the password).
+
+System database (gateway; `front/db.ts`, own migrations):
+```sql
+users(id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE COLLATE NOCASE, role TEXT CHECK (admin|user),
+      disabled INTEGER, port INTEGER /* NULL = default port */, created_at, last_login_at)
+listeners(port INTEGER PRIMARY KEY, public_origin TEXT /* NULL = from Host */, created_at)
+audit(id INTEGER PRIMARY KEY, ts, event, actor INTEGER, target INTEGER, ip, detail)   -- admin log, no secrets
+```
 Migrations live in `server/src/db/db.ts` (`MIGRATIONS`, append-only), are applied in a transaction at startup
 and tracked in `schema_migrations`. Message ids are the rebuilt WA keys. Message bodies and their edit history share the
 AAD context `msgbody|<messageId>`, so an edit can move the old ciphertext into `message_edits` without decrypting.
@@ -475,19 +610,27 @@ AAD context `msgbody|<messageId>`, so an edit can move the old ciphertext into `
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| GET | /api/state | – | `{hasOwner, authenticated, onboardingComplete, csrfToken?, wa?}` |
-| POST | /api/auth/signup | setup token | create owner → `{recoveryKey}` + session |
-| POST | /api/auth/login | – | `{username,password,totp?}` → session (`{needTotp:true}` if missing) |
+| GET | /api/state | – | `{hasOwner, authenticated, onboardingComplete, csrfToken?, role?, wa?}` (gateway; `hasOwner` is true on every extra port) |
+| POST | /api/auth/signup | setup token | gateway, default port, only while no user exists: create the admin → `{recoveryKey}` + session |
+| POST | /api/auth/login | – | `{username,password,totp?}` → session (`{needTotp:true}` if missing; `{mustChangePassword:true, needRecoveryKey}` after a temporary password) |
+| POST | /api/auth/claim | – | `{username,password(temporary),newPassword,recoveryKey?}` → `{recoveryKey}` + session |
 | POST | /api/auth/logout · /api/auth/logout-all | ✓ | |
 | POST | /api/auth/recover | – | `{username, recoveryKey, newPassword}` → `{recoveryKey}` (new) |
 | POST | /api/auth/password | ✓ | `{currentPassword,newPassword}` |
+| POST | /api/auth/verify · /ping · GET /whoami | ✓ | password re-entry for destructive admin actions · session+CSRF probe used by the gateway · who am I |
 | GET/DELETE | /api/auth/sessions[/:id] | ✓ | list / revoke |
 | POST | /api/auth/totp/setup · enable · disable | ✓ | TOTP enrollment |
 | POST | /api/auth/recovery-key/rotate | ✓ | `{password}` → new recovery key |
 | GET | /api/wa/status | ✓ | `WaStatus` |
 | POST | /api/wa/restart · /api/wa/logout | ✓ | reconnect / unlink device |
 | POST | /api/onboarding/complete | ✓ | requires WA `ready` |
-| GET | /api/vnc/credentials | ✓ | `{password}` for noVNC |
+| GET | /api/vnc/credentials | ✓ | `{password}` for noVNC (random per browser start, from the manager) |
+| GET | /api/admin/overview | admin | users (status, WhatsApp state, port, last sign-in), open ports, available ports, limits |
+| POST | /api/admin/users | admin | `{username, password?, port}` → `{user, temporaryPassword}` (shown once) |
+| PATCH | /api/admin/users/:id | admin | `{port?, disabled?}`; ends the user's sessions |
+| POST | /api/admin/users/:id/reset · /delete | admin + password | reset (`recovery` \| `wipe`) → `{temporaryPassword}` · delete everything of the user |
+| PUT/DELETE | /api/admin/ports/:port | admin | open a port (`{origin|null}`) · close it (409 while users are on it) |
+| GET | /api/admin/audit | admin | admin log |
 | WS | /api/vnc | ✓ | binary bridge to chromium:5900 |
 | GET | /api/chats | ✓ | `ChatSummary[]` (sorted pinned, last_ts desc) |
 | GET | /api/chats/:chatId/messages?before=&limit= | ✓ | `MessagePage` (newest-first pages) |
@@ -515,14 +658,19 @@ AAD context `msgbody|<messageId>`, so an edit can move the old ciphertext into `
 | GET | /api/audit | ✓ | audit log |
 | POST | /api/data/wipe | ✓ + password | delete all logged messages/media (keeps owner) |
 
+Worker-only routes (`/internal/*`, unix socket, gateway token + scope header; never forwarded from outside): `info`,
+`signup`, `provision`, `reset`, `revoke-sessions`, `unlink`.
+
 ## 9. Configuration (`.env`, generated by `scripts/setup.sh`)
 
 `SITE_ADDRESS` (e.g. `wa.example.com` or `192.168.1.50`), `CADDY_TLS` (`internal` or an ACME email),
-`PUBLIC_ORIGIN` (e.g. `https://wa.example.com`; optional in HTTP mode), `SETUP_TOKEN`, `VNC_PASSWORD`,
+`PUBLIC_ORIGIN` (e.g. `https://wa.example.com`; optional in HTTP mode), `SETUP_TOKEN`, `CONTROL_SECRET` (app ↔ chromium; `VNC_PASSWORD` of older `.env` files is the fallback),
 `COOKIE_SECURE` (`true` default | `auto` | `false`), `CADDY_CONFIG` (`Caddyfile` | `Caddyfile.http`),
 `HTTP_PORT`/`HTTPS_PORT`, `HTTP_BIND`/`HTTPS_BIND` (bind address of the published ports), `WAL_VERSION` (image tag),
 `SESSION_IDLE_HOURS`, `SESSION_MAX_DAYS`, `MEDIA_MAX_MB` (default 100), `HISTORY_PER_CHAT` (200),
-`RECONCILE_MINUTES` (10), `CHROMIUM_HOST` (`chromium`), `CDP_PORT` (9223), `VNC_PORT` (5900),
+`RECONCILE_MINUTES` (10), `MAX_USERS` (10; also the number of browsers the chromium container will run), `EXTRA_PORTS`
+(`8101-8110`: the ports the admin may open for users; also published by caddy), `EXTRA_BIND` (`127.0.0.1`), `APP_MEM_LIMIT` (2g),
+`CHROMIUM_MEM_LIMIT` (6g), `CHROMIUM_SHM` (2gb), `CHROMIUM_URL` (`http://chromium:9223`, internal),
 `SCREEN` (`1280x800x24`), `LOG_LEVEL` (info), `TRUST_PROXY` (proxy hops: 1 = bundled Caddy, 2 = + external proxy,
 3 = + another proxy/CDN in front of that; see §3 for why it must match).
 
@@ -536,7 +684,15 @@ AAD context `msgbody|<messageId>`, so an edit can move the old ciphertext into `
 * `server/src/wa/client.test.ts` drives the real WaService event wiring with a fake whatsapp-web.js client
   (ordering, revoke, edit, reactions, states). `auth.test.ts` also covers encoded-path bypasses, parallel
   lockout races, TOTP replay races, WAL scrubbing and `COOKIE_SECURE=auto`.
-* `scripts/smoke.sh` (23 checks: TLS incl. no-SNI, headers, cookies, CSRF/Origin, signup, WA reaches `qr`, VNC
+* Multi-user: `auth/multiuser.test.ts` (worker: internal token + scope, provision/claim/reset/wipe/revoke, temporary-password
+  throttle), `front/gateway.test.ts` (26: real in-process workers on unix sockets behind the real gateway on real ports: setup,
+  create/claim, isolation incl. every forged-cookie combination, port policy and origin per port, disable/reset/wipe/delete,
+  forwarding-header policy, `/internal` unreachable, SSE and WebSocket tunnelling), `supervisor/supervisor.test.ts`
+  (environments, token vectors shared with Go, crash restart, control protocol, removal), `chromium/manager/manager_test.go`
+  (tokens, authorization, DevTools allowlist, VNC tunnel, layout, on-link choice; run in the image build).
+  `scripts/dev/multiuser-e2e.mts` (32 checks against a real compose stack: unix users, permissions, capabilities, one browser
+  per user, port policy, deletion) and a Playwright walkthrough of the UI were run for the release.
+* `scripts/smoke.sh` (35 checks: TLS incl. no-SNI, headers, cookies, CSRF/Origin, signup, WA reaches `qr`, VNC
   `RFB 003.00x`, no app egress, Chromium sandbox) and `scripts/smoke.sh --deploy` (the standalone layout).
 * Calls: `wa/callpage.test.ts` runs the injected source in a `vm` against fake WhatsApp modules and fake Web Audio,
   `api/calls.test.ts` covers the routes, the audio WebSocket and the call state machine. `scripts/dev/call-audio.mts`
@@ -559,10 +715,20 @@ AAD context `msgbody|<messageId>`, so an edit can move the old ciphertext into `
 * **Update:** `docker compose pull && docker compose up -d` (prebuilt) or `git pull && docker compose up -d --build`.
   The WhatsApp session survives restarts (it lives in the Chromium profile). Restarting only `app` does not touch
   Chromium: `docker compose up -d --no-deps app`.
-* **Backups:** `app_data` (encrypted; useless without the password or recovery key) and `chromium_profile` (the live
-  WhatsApp session: treat it as a credential).
+* **Upgrading from a single-user release** (tested on a volume pair written by 0.8-era images, `walold` in the 2026-10-20
+  session): replace the compose file (new volume `app_users`, `cap_add`, extra tmpfs, `CONTROL_SECRET` falls back to
+  `VNC_PASSWORD`, extra ports published on `127.0.0.1`) and run `docker compose pull && docker compose up -d`; `.env` stays as
+  it is. The existing account is adopted as the admin (tenant 1) with all its data and its WhatsApp session in place. People
+  have to sign in once more (the gateway needs its tenant cookie). For users behind another host's reverse proxy set
+  `EXTRA_BIND=0.0.0.0` (and firewall the range) and add `EXTRA_PORTS`/`MAX_USERS` to `.env` if the defaults don't fit.
+* **Sizing:** each active user costs about 1.5 GB in the chromium container and 0.2 GB in the app container; raise
+  `CHROMIUM_MEM_LIMIT` and `APP_MEM_LIMIT` with `MAX_USERS`. Workers run with a Node heap cap (`WORKER_HEAP_MB`, 768).
+* **Backups:** `app_data` (the first account) and `app_users` (the gateway's database and every other user) are encrypted and
+  useless without each user's password or recovery key; `chromium_profile` holds every user's live WhatsApp session: treat it
+  as a credential. Back all three up together.
 * **When WhatsApp Web changes break something** (history import fails, names missing, media not downloading):
-  run `docker compose exec -T app node - < scripts/wa-diagnose.js` on the host. It prints only aggregates (no
+  run `docker compose exec -T -u 10001 app node - < scripts/wa-diagnose.js` on the host (first account; for user N:
+  `-u $((10100+N)) -e TENANT=N`: every tenant's files belong to their own unix user). It prints only aggregates (no
   content): WhatsApp Web version, chat counts, whether whatsapp-web.js chat helpers still work, whether rebuilt
   message keys still match `MsgKey.toString()`, media stages, and DB stats. Then check `docs/wwebjs-notes.md`.
 

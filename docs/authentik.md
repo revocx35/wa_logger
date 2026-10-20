@@ -49,3 +49,18 @@ keeps working in the background.
 5. In the app: enter the server address as usual and tap **Sign in with authentik**.
 
 wa_logger's own login, sessions and 2FA stay as they are; authentik is an extra layer in front.
+
+## Some users without authentik (multi-user)
+
+If only you want authentik in front, but a friend should reach their own wa_logger without it (and from another domain):
+
+1. In wa_logger, **Users → Ports**: open a port (for example `8101`, from `EXTRA_PORTS`) and enter the friend's origin
+   (`https://friend.example.com`). Add the friend under **Users** on that port. If the proxy runs on another host, set
+   `EXTRA_BIND=0.0.0.0` (or the LAN address) in `.env`, restart caddy and firewall the range so only the proxy reaches it.
+2. In Nginx Proxy Manager add a **second** proxy host `friend.example.com` → `http://<server>:8101` (WebSockets on, your own
+   certificate) **without** the authentik snippet. Your own host keeps authentik and forwards to the default port.
+3. The friend signs in at `https://friend.example.com` with the temporary password and chooses their own.
+
+The admin account can only sign in on the default port, so the authentik-protected address is the only way to the admin
+UI, and a session of the friend is useless on the default port (and the other way round). The Android app needs the
+authentik sign-in only for the admin's server address; the friend's address is a plain wa_logger server.

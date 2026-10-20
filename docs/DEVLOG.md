@@ -332,3 +332,31 @@ model, and explicitly not in wa_logger mobile (Android WebView can't run WhatsAp
 - Verified: `AuthentikTest` (7, fake proxy/outpost/authentik), and on the emulator against a real authentik + NPM:
   detection, Custom Tab login, redirect back, wa_logger's login reached through authentik, restart keeps the sign-in,
   revoking the tokens in authentik brings the sign-in screen back.
+
+
+## 2026-10-20 — Multi-user support (gateway, workers, per-user browsers)
+
+- Request: first account = admin, admin creates users (temporary password, forced change at first sign-in), a separate WhatsApp
+  Web per account (own QR), strong isolation so one compromised account can't reach others, a user-management page, and
+  per-user ports (the admin behind authentik, a friend on another domain without it).
+- Design (ARCHITECTURE §3, §6): the former app became the per-user **worker** (own unix user, SQLite, keys) behind a
+  **gateway** that is the only listener and routes by tenant cookie; a root **supervisor** starts them; the chromium container
+  runs a Go **manager** with one Xvfb + Chromium + x11vnc per user, reachable only with per-instance tokens. Tenant 1 keeps the
+  single-user layout so upgrades adopt the existing account as the admin. Alternatives rejected: one process with per-request
+  tenant contexts (no isolation against app bugs), one container per user (needs a Docker-socket orchestrator).
+- Found while testing on real containers (all fixed, all in AGENTS.md "Gotchas"): the manager started before the app existed
+  and blocked the app's start through the healthcheck; root (no DAC override) can't write into, chmod or delete inside a
+  directory it handed to a tenant — do it as the tenant (also `rm` of stale locks, `find -delete`); `kill` needs `CAP_KILL`;
+  Node needs `HOME` for a uid without a passwd entry; the supervisor must join the front's group to probe sockets;
+  a recreated container (new hostname) leaves Chromium's `SingletonLock` pointing at "another computer" — found by the
+  upgrade test (old images + seeded volumes → new compose), which also showed the existing owner adopted as admin with the
+  data readable.
+- Security review items fixed before release: the gateway's token alone would have opened `/internal/*` for any path a client
+  could get forwarded (now: `X-WAL-Scope` the gateway never forwards, strict `/api/…` path check, all client `X-WAL-*` stripped);
+  worker Node heap cap; origin per port overrides forwarded scheme/host.
+- Verified: server 190+ tests, Go tests, `multiuser-e2e.mts` 32/32 on compose (three unix users for workers and browsers,
+  no capabilities in gateway/workers, sandbox on, cross-user file access denied, delete removes data/browser/processes),
+  Playwright walkthrough (create user → claim → own QR + live view), upgrade from the old layout.
+- One flake seen once: a worker's first WhatsApp Web load failed with "Cannot read properties of null (reading 'info')"
+  and kept failing for ~90 s while two others worked; it did not recur in 5 later runs (stack frames are now logged on
+  "whatsapp connect failed"). Watch for it.

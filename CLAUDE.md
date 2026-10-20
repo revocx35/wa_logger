@@ -1,6 +1,8 @@
 # wa_logger — notes for Claude sessions
 
 Read these first, every session:
+- `AGENTS.md`: stand-alone summary for any agent (layout, commands, conventions, never-do list, gotchas). Keep it and
+  `ARCHITECTURE.md` updated in the same commit as the change.
 - `ARCHITECTURE.md`: the design source of truth (containers, security model, crypto, DB schema, API, config,
   deployment & operations §11).
 - `progress.md`: step checklist. Tick items as they're completed, in the same commit.
@@ -12,6 +14,12 @@ Read these first, every session:
 - Security first: this app stores private messages. Never log or print message content, names, numbers,
   cookies or secrets (not even while debugging). Never render message text as HTML. Never weaken CSP, cookie
   flags, network isolation or the Chromium sandbox.
+- **Multi-user** (ARCHITECTURE §3, §6 "Multi-user isolation"): a gateway (`server/src/front/`) in front of one worker per
+  user (`server/src/index.ts`, own unix user), started by a root supervisor (`server/src/supervisor/`), and a Go manager in the
+  chromium container (`chromium/manager/`) that runs one browser per user. Keep tenants isolated: no shared files, sockets or
+  secrets; workers get a from-scratch environment; `/internal/*` needs the worker token **and** `X-WAL-Scope: internal`
+  (the gateway strips client `X-WAL-*`); the tenant cookie is only a hint. The two root processes have only
+  `SETUID SETGID CHOWN KILL` and no DAC override: they create and chown top-level directories and do the rest *as the tenant's user*.
 - `shared/api.d.ts` is the server↔web contract. Change it deliberately and update both sides.
 - Never call `client.destroy()`/`logout()` on the whatsapp-web.js client: both close the remote Chromium.
 - Don't use whatsapp-web.js chat helpers (`getChats`, `getChatById`, `getProfilePicUrl`, `Chat.fetchMessages`).
@@ -38,11 +46,16 @@ Read these first, every session:
 - Android: `cd android_client && ./gradlew :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug`
   (= the CI job; JDK 21 and SDK at /opt/android-sdk on this LXC). Screenshots: `./gradlew :app:recordRoborazziDebug`.
   Live end-to-end: `LiveServerTest` (see `android_client/README.md`). Release: ARCHITECTURE §12 "Build, test, release".
-- Full stack from source: `scripts/smoke.sh` (23 checks). Standalone layout: `scripts/smoke.sh --deploy`.
+- Chromium manager: `cd chromium/manager && go test ./...` (Go at `/usr/local/go/bin`; also run when the image builds).
+- Multi-user on a real stack: `scripts/dev/multiuser-e2e.mts` (command in its header; scratch compose project + `.env`, never the
+  owner's deployment). Upgrade test: build an old commit's images in a `git worktree`, run it, seed it, then start the new
+  compose on the same volumes (done 2026-10-20; it found the stale-`SingletonLock` bug).
+- Full stack from source: `scripts/smoke.sh` (35 checks). Standalone layout: `scripts/smoke.sh --deploy`.
 - UI/SSE browser tests: `scripts/dev/README.md` (`send-ui.mts`: sending end-to-end incl. a real voice recording;
   `call-ui.mts`: calls in the web UI; `call-audio.mts`: call audio inside the real Chromium image).
   Sample data: `server/src/testutil/seed.ts`.
-- Live instance health (read-only, aggregates only): `docker compose exec -T app node - < scripts/wa-diagnose.js`.
+- Live instance health (read-only, aggregates only): `docker compose exec -T -u 10001 app node - < scripts/wa-diagnose.js`
+  (user N: `-u $((10100+N)) -e TENANT=N`).
 
 ## Deployments
 - The owner's production instance runs on a separate VM, not on this dev LXC. Connection details and update
@@ -52,6 +65,11 @@ Read these first, every session:
   WhatsApp session): `docker compose up -d --no-deps app`.
 
 ## Gotchas learned the hard way
+- Multi-user (details in AGENTS.md "Gotchas"): root processes can't touch tenant files (do it as the tenant's user); `HOME` must
+  be set for workers; clear Chromium's `SingletonLock` as the instance user before each start (hostname changes when the
+  container is recreated); `docker build` for the app/caddy/chromium images of an *old* checkout re-tags
+  `wa_logger-*:local`: rebuild the new ones afterwards; the login routes allow 10 attempts / 15 min per IP, so repeated
+  scripted logins need an app restart (the limiter is in memory).
 - The dev LXC has 4 GB RAM: never run a Docker stack build/start and Gradle at the same time (the LXC froze once).
   Gradle is capped in `android_client/gradle.properties`; stop the smoke stack while Gradle runs.
 - `android_client/core` mirrors `shared/api.d.ts` and ports `web/src/lib/{waText,format}`: change them together.
