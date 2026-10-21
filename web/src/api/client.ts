@@ -1,5 +1,6 @@
 import type {
   AdminAuditEntry,
+  AdminBlocking,
   AdminOverview,
   AdminUser,
   AppState,
@@ -189,6 +190,8 @@ export const api = {
   adminResetUser: (id: number, body: ResetUserRequest) => request<ResetUserResponse>('POST', `/api/admin/users/${id}/reset`, body),
   adminDeleteUser: (id: number, adminPassword: string, totp?: string) =>
     request<{ ok: true }>('POST', `/api/admin/users/${id}/delete`, { adminPassword, ...(totp ? { totp } : {}) }),
+  adminBlocking: (id: number) => request<AdminBlocking>('GET', `/api/admin/users/${id}/blocking`),
+  adminSetBlocking: (id: number, phones: string[]) => request<{ ok: true; count: number }>('PUT', `/api/admin/users/${id}/blocking`, { phones }),
   adminPutPort: (port: number, origin: string | null) => request<{ ok: true }>('PUT', `/api/admin/ports/${port}`, { origin }),
   adminDeletePort: (port: number) => request<{ ok: true }>('DELETE', `/api/admin/ports/${port}`),
   adminAudit: () => request<AdminAuditEntry[]>('GET', '/api/admin/audit?limit=100'),

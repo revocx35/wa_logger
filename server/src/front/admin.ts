@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import type { AdminAuditEntry, AdminOverview, AdminPort, AdminUser, CreateUserResponse, ResetUserResponse, UserStatus } from '../../../shared/api.js';
+import type { AdminAuditEntry, AdminBlocking, AdminOverview, AdminPort, AdminUser, CreateUserResponse, ResetUserResponse, UserStatus } from '../../../shared/api.js';
 import { passwordPolicyError } from '../crypto/password.js';
 import { AppError, Errors } from '../errors.js';
 import type { UserRow } from './db.js';
@@ -175,6 +175,26 @@ export function registerAdminRoutes(app: FastifyInstance, gw: Gateway): void {
     // Sessions end now: an open stream (VNC, calls, live updates) is closed by the worker when its session goes.
     if (revoke) await gw.callInternal(u, 'POST', '/internal/revoke-sessions', {}).catch(() => undefined);
     return view(gw.repo.getUser(u.id)!);
+  });
+
+  /* ----------------------------------------------------------- blocked contacts */
+  app.get('/api/admin/users/:id/blocking', cfg, async (req): Promise<AdminBlocking> => {
+    await requireAdmin(req);
+    const u = nonAdmin(target(req.params));
+    const r = await gw.callInternal(u, 'GET', '/internal/blocking', undefined, 10_000);
+    if (r.status !== 200) throw workerError(r.status, r.body) ?? Errors.unavailable('The contact list could not be read.');
+    return JSON.parse(r.body.toString('utf8')) as AdminBlocking;
+  });
+
+  app.put('/api/admin/users/:id/blocking', cfg, async (req) => {
+    const admin = await requireAdmin(req);
+    const u = nonAdmin(target(req.params));
+    const body = z.object({ phones: z.array(z.string().max(40)).max(5000) }).strict().parse(req.body);
+    const r = await gw.callInternal(u, 'PUT', '/internal/blocking', body, 10_000);
+    if (r.status !== 200) throw workerError(r.status, r.body) ?? Errors.unavailable('The block list could not be saved.');
+    const { count } = JSON.parse(r.body.toString('utf8')) as { count: number };
+    audit('user_blocklist_changed', req, admin, u, `${count} blocked`);
+    return { ok: true, count };
   });
 
   /* -------------------------------------------------------------- reset */

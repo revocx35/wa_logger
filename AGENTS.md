@@ -29,7 +29,7 @@ docker-compose.yml    builds from source;  deploy/docker-compose.yml = prebuilt 
 ```
 
 ## Commands
-- Server: `cd server && PUPPETEER_SKIP_DOWNLOAD=true npm ci && npm test && npm run typecheck` (≈190 tests, ~5 s).
+- Server: `cd server && PUPPETEER_SKIP_DOWNLOAD=true npm ci && npm test && npm run typecheck` (≈210 tests, ~5 s).
 - Web: `cd web && npm test && npm run build`.
 - Chromium manager (Go, stdlib only): `cd chromium/manager && go test ./...` (also run in the image's build stage;
   Go is at `/usr/local/go/bin` on the dev LXC).
@@ -45,6 +45,14 @@ docker-compose.yml    builds from source;  deploy/docker-compose.yml = prebuilt 
 in the image, Dockerfile stage `ffmpeg-build`: enable new components there; `FFMPEG_PATH` overrides) mixes both sides' audio and the other side's H.264 picture into fragmented MP4 straight into an
 encrypted media file. Never write call media anywhere in plaintext, never log it, keep the REC sign on every client, and port any
 change of the recording UI to `android_client/` too. Tests need ffmpeg/ffprobe on the PATH (`apt install ffmpeg`), else they skip.
+
+## Blocked contacts
+Admin-set per user, matched by **phone number** (`wa/blocklist.ts`, `ctx.blocks`): `Ingest` drops messages/edits/revokes/reactions of a
+blocked number (1:1 chat or group sender) before writing, sync skips its chat, `CallService` refuses to record its calls
+(`CallInfo.recordingBlocked`). The admin picks from `contact_directory` (name label sealed with `directory.key`): the one place the
+admin sees contact names; never extend it to messages. A new place that writes messages/chats/contacts must call the block check
+(`Ingest.idBlocked`). Block list and directory are worker-side; the gateway only relays `/api/admin/users/:id/blocking`. Changes go to
+`android_client/` too (done in 0.11.0).
 
 ## Conventions
 - TypeScript ESM, strict; Fastify 5, zod on every body/query/param, better-sqlite3, vitest. Errors thrown as `AppError`

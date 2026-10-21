@@ -159,7 +159,7 @@ fun CallPanel(ui: CallUi, calls: CallActions, modifier: Modifier = Modifier) {
                     }
                     call.state != CallState.Ended -> {
                         if (ui.hasVideo) CallBtn(WaIcons.zoomIn, "Show video", c.active, c.text, { calls.setMinimized(false) })
-                        if (call.state == CallState.Active) {
+                        if (call.state == CallState.Active && !call.recordingBlocked) {
                             CallBtn(WaIcons.record, if (call.recording) "Stop recording" else "Record call", if (call.recording) c.danger else c.active, if (call.recording) Color.White else c.danger, calls::toggleRecording)
                         }
                         if (ui.audio == CallAudioState.Live) {
@@ -320,7 +320,7 @@ fun VideoStage(ui: CallUi, calls: CallActions) {
                     { if (camOff) withMic(true, calls::toggleCamera) else calls.toggleCamera() },
                     enabled = ours && ui.camera != CameraState.Starting,
                 )
-                if (call.state == CallState.Active) {
+                if (call.state == CallState.Active && !call.recordingBlocked) {
                     CallBtn(WaIcons.record, if (call.recording) "Stop recording" else "Record call", if (call.recording) Color(0xFFEA0038) else chip, Color.White, calls::toggleRecording)
                 }
                 if (ours) {

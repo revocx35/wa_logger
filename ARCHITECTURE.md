@@ -183,11 +183,12 @@ server/src/
   front.ts, front/    the GATEWAY: system DB (users, ports, admin log), listeners per port, proxy to workers, admin API
     gateway.ts          Fastify app, port/tenant policy, streaming proxy + WebSocket tunnel, response relay (tenant cookie)
     auth.ts             /api/state, signup (admin), login/claim/recover routed by username
-    admin.ts            /api/admin/*: overview, create/update/reset/delete users, ports, admin log
+    admin.ts            /api/admin/*: overview, create/update/reset/delete users, per-user block list, ports, admin log
     proxy.ts            HTTP over the worker's unix socket; forwarding-header policy
     pool.ts             talks to the supervisor's control socket · listeners.ts: the open ports · db.ts: system DB
   supervisor/         the SUPERVISOR (root, 4 capabilities): directories, gateway + worker processes, control socket, tokens
-  api/internal.ts     worker routes only the gateway may call (provision, reset, revoke, unlink, info, admin signup)
+  api/internal.ts     worker routes only the gateway may call (provision, reset, revoke, unlink, info, admin signup, blocking)
+  wa/blocklist.ts     the admin's block list + contact directory (see "Blocked contacts")
   config.ts           zod-parsed env (see §9); fails fast on bad config
   log.ts              pino with redaction (cookies, auth headers, passwords, tokens, message bodies)
   db/                 connection, migrations (schema in §7), repositories (typed, prepared statements)
@@ -375,6 +376,24 @@ page video tap ───► CallService.onPageVideo ─┘ peerVideo (H.264 → 
   where ffmpeg is missing). The Docker image builds its own **minimal ffmpeg** (Dockerfile stage `ffmpeg-build`, pinned source
   tarball + SHA-256; only pipes, PCM/IVF/H.264 in, AAC + libx264 → MP4 out and a few filters; ~6 MB plus `libx264`), so the
   image grows by ~12 MB and the attack surface stays small. If you add a filter/codec to the command line, enable it there too.
+
+### Blocked contacts
+The admin can exclude contacts for one user (Users → *Blocked…*, web and Android). **Matching is by phone number** (digits with
+country code), never by name, so a renamed contact stays blocked. For a blocked number the worker
+* logs nothing: `Ingest` drops its messages, edits, deletions, reactions and acks before anything is written (1:1 chat and, in
+  groups, messages it sent), so a message it deletes leaves no trace; the sync passes skip its chat; history already logged stays
+  as it was (later updates to it are not recorded either);
+* never records its calls: `CallService.startRecording` refuses (manual and `recordCalls`), `CallInfo.recordingBlocked` hides the
+  record button, and blocking someone mid-call stops a running recording. Group calls have no single peer and are not covered;
+* does not hide anything from the user: the messages are still visible in WhatsApp itself (the VNC view).
+LID ids ("…@lid") hide the number; `contact_directory` maps WhatsApp id → phone, learned in `ensureContact`/`ensureChat` or by one
+`getContact` lookup. A LID whose number still cannot be found is treated as blocked for 5 minutes while anything is blocked
+(fail closed; history/reconcile fetch the message again once the number is known).
+**Deliberate exception to "the admin cannot read user data":** so the admin can pick contacts, the worker keeps a small separate
+directory — phone numbers (also readable in chat ids) plus a display label sealed with AES-GCM under `directory.key` in the
+user's data directory (0600; protects a copy of the database alone, not a compromised worker). The admin sees names and numbers
+there, never messages. The list is stored per user in `blocked_contacts`; the gateway's admin routes only relay it and the admin
+log records the count, never numbers.
 
 ### Video
 Same idea as the audio: the call (and WhatsApp's video codec work) stays in the Chromium tab; frames travel.
@@ -627,6 +646,8 @@ media(id INTEGER PRIMARY KEY, path TEXT, key_id INTEGER, mime_enc BLOB, filename
 call_recordings(id INTEGER PRIMARY KEY, call_id TEXT, chat_id TEXT, direction TEXT, video INTEGER, auto INTEGER, started_at INTEGER,
          ended_at INTEGER, duration_ms INTEGER, status TEXT ('recording'|'processing'|'ready'|'failed'), media_id INTEGER → media)
 ```
+Tenant migration 7 adds `blocked_contacts(phone PRIMARY KEY, created_at)` and `contact_directory(id PRIMARY KEY, phone, label_enc, updated_at)`
+(see "Blocked contacts"; `wipeLoggedData` clears the directory, the block list is admin policy and survives).
 Tenant migration 5 adds `pending_claim(id=1, username, mode 'new'|'reset', salt, auth_hash, failed_logins, locked_until,
 created_at)`: the admin-issued temporary credential (a salted scrypt-derived auth hash, never the password).
 
@@ -665,6 +686,7 @@ AAD context `msgbody|<messageId>`, so an edit can move the old ciphertext into `
 | PATCH | /api/admin/users/:id | admin | `{port?, disabled?}`; ends the user's sessions |
 | POST | /api/admin/users/:id/reset · /delete | admin + password | reset (`recovery` \| `wipe`) → `{temporaryPassword}` · delete everything of the user |
 | PUT/DELETE | /api/admin/ports/:port | admin | open a port (`{origin|null}`) · close it (409 while users are on it) |
+| GET/PUT | /api/admin/users/:id/blocking | admin | contacts to pick from (`{phone, label, blocked}`) · `{phones}` replaces the block list |
 | GET | /api/admin/audit | admin | admin log |
 | WS | /api/vnc | ✓ | binary bridge to chromium:5900 |
 | GET | /api/chats | ✓ | `ChatSummary[]` (sorted pinned, last_ts desc) |
@@ -723,7 +745,7 @@ Worker-only routes (`/internal/*`, unix socket, gateway token + scope header; ne
   (ordering, revoke, edit, reactions, states). `auth.test.ts` also covers encoded-path bypasses, parallel
   lockout races, TOTP replay races, WAL scrubbing and `COOKIE_SECURE=auto`.
 * Multi-user: `auth/multiuser.test.ts` (worker: internal token + scope, provision/claim/reset/wipe/revoke, temporary-password
-  throttle), `front/gateway.test.ts` (28: real in-process workers on unix sockets behind the real gateway on real ports: setup,
+  throttle), `front/gateway.test.ts` (29: real in-process workers on unix sockets behind the real gateway on real ports: setup,
   create/claim, isolation incl. every forged-cookie combination, port policy and origin per port, disable/reset/wipe/delete,
   forwarding-header policy, `/internal` unreachable, SSE and WebSocket tunnelling), `supervisor/supervisor.test.ts`
   (environments, token vectors shared with Go, crash restart, control protocol, removal), `chromium/manager/manager_test.go`
@@ -732,6 +754,7 @@ Worker-only routes (`/internal/*`, unix socket, gateway token + scope header; ne
   per user, port policy, deletion) and a Playwright walkthrough of the UI were run for the release.
 * `scripts/smoke.sh` (30 checks: TLS incl. no-SNI, headers, cookies, CSRF/Origin, signup, WA reaches `qr`, VNC
   `RFB 003.00x`, no app egress, Chromium sandbox) and `scripts/smoke.sh --deploy` (the standalone layout).
+* Blocked contacts: `wa/blocklist.test.ts` (ingest, sync, LID, directory, recording refusal, internal routes).
 * Calls: `wa/callpage.test.ts` runs the injected source in a `vm` against fake WhatsApp modules and fake Web Audio,
   `api/calls.test.ts` covers the routes, the audio WebSocket and the call state machine. `scripts/dev/call-audio.mts`
   checks the audio path inside the real Chromium image (tab and popout, both output routes) and `scripts/dev/call-ui.mts`
@@ -775,7 +798,7 @@ Worker-only routes (`/internal/*`, unix socket, gateway token + scope header; ne
 A native client for the same API (no WebView, no server changes needed). Kotlin 2.4, Jetpack Compose,
 AGP 9.4 (built-in Kotlin), Gradle 9.8 (wrapper with pinned checksum), minSdk 26, compile/target SDK 37.
 Package `io.github.revocx35.walogger` (debug builds get the `.debug` suffix and install side by side).
-Current release: 0.10.0 (versionCode 11: call recording). 0.9.0 (versionCode 10: multi-user — choose-your-own-password step after a temporary password, and the admin's *Users* tab: users, ports, admin log; `ui/screens/AdminScreen.kt`, `ApiClient.admin*`). 0.8.0 (versionCode 9: servers behind authentik forward auth, see `docs/authentik.md`). 0.7.0 (versionCode 8: video calls). 0.6.0 (versionCode 7: voice calls). 0.5.0 (versionCode 6: sending). 0.4.0 (versionCode 5:
+Current release: 0.11.0 (versionCode 12: admin *Blocked…* dialog per user, no record button for blocked contacts). 0.10.0 (versionCode 11: call recording). 0.9.0 (versionCode 10: multi-user — choose-your-own-password step after a temporary password, and the admin's *Users* tab: users, ports, admin log; `ui/screens/AdminScreen.kt`, `ApiClient.admin*`). 0.8.0 (versionCode 9: servers behind authentik forward auth, see `docs/authentik.md`). 0.7.0 (versionCode 8: video calls). 0.6.0 (versionCode 7: voice calls). 0.5.0 (versionCode 6: sending). 0.4.0 (versionCode 5:
 multi-select photos/videos in a chat and save them to the gallery).
 0.3.0 (versionCode 4: auto-save with a disappearing-messages-only option, Android 17 local network
 permission). 0.1.1 (versionCode 2) was confirmed working by the owner on a Samsung, One UI 8.5 / Android 16,
@@ -870,6 +893,10 @@ API; wa_logger mobile implements the same interface locally), `ui/components/Com
 `MessageMenu`, `NewChatDialog`), `media/VoiceRecorder.kt` (MediaRecorder Ogg/Opus, Android 10+, `RECORD_AUDIO` asked on
 first use; the recording stays in the private cache and is deleted after sending). Files are streamed from their
 content URI (`RequestBody`), never loaded whole into memory.
+
+### Blocked contacts (0.11.0)
+`AdminBlocking`/`AdminBlockedContact`, `CallInfo.recordingBlocked`; ApiClient `adminBlocking`, `adminSetBlocking` (whole list, like the
+web). UI: *Blocked…* on each user row in `AdminScreen.kt` (search, tick, Save); `CallPanel` hides the record button for blocked contacts.
 
 ### Call recording (0.10.0)
 `CallInfo.recording`, `Settings.recordCalls`, `CallRecording`/`CallRecordingPage`, `ServerEvent.CallRecordingChanged`;

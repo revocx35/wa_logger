@@ -63,6 +63,10 @@ export class Sync {
           done++;
           continue;
         }
+        if (await this.ingest.isChatBlocked(chat.id)) {
+          done++;
+          continue;
+        }
         this.ingest.upsertChatInfo(chat.id, chat);
         if (limit > 0) {
           try {
@@ -88,8 +92,11 @@ export class Sync {
       const chats = (await this.api.listChats()).sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
       const logStatus = this.ctx.settings.get().logStatus;
       const targets: ChatLite[] = [];
+      const blocked = new Set<string>();
+      for (const chat of chats) if (await this.ingest.isChatBlocked(chat.id)) blocked.add(chat.id);
       chats.forEach((chat, i) => {
         if (chat.id === 'status@broadcast' && !logStatus) return;
+        if (blocked.has(chat.id)) return;
         const stored = this.ctx.repo.getChat(chat.id);
         if (!stored || stored.removed_at) this.ingest.upsertChatInfo(chat.id, chat);
         const moved = !stored || (chat.timestamp ?? 0) > (stored.last_ts ?? 0);

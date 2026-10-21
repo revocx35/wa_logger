@@ -232,6 +232,21 @@ class ApiClientTest {
     }
 
     @Test
+    fun adminBlockedContactsAreListedAndSavedAsAWholeList() = runBlocking {
+        api.csrfToken = "tok"
+        server.enqueue(json("""{"contacts":[{"phone":"905559990001","label":"Ahmet Reis","blocked":true},{"phone":"905551112233","label":null,"blocked":false}]}"""))
+        server.enqueue(json("""{"ok":true,"count":1}"""))
+        val list = api.adminBlocking(2)
+        assertEquals("/api/admin/users/2/blocking", server.takeRequest().target)
+        assertEquals(listOf("905559990001"), list.contacts.filter { it.blocked }.map { it.phone })
+        assertEquals(null, list.contacts[1].label)
+        assertEquals(1, api.adminSetBlocking(2, listOf("905559990001")).count)
+        val put = server.takeRequest()
+        assertEquals("PUT", put.method)
+        assertEquals("""{"phones":["905559990001"]}""", put.body?.utf8())
+    }
+
+    @Test
     fun recordsCallsAndListsRecordings() = runBlocking {
         api.csrfToken = "tok"
         server.enqueue(json("""{"id":"C1","direction":"incoming","state":"active","recording":true}"""))

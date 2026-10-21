@@ -4,6 +4,8 @@ import { z } from 'zod';
 import type { AppContext } from '../context.js';
 import { derivePasswordKeys, newSalt, PASSWORD_MAX } from '../crypto/password.js';
 import { Errors } from '../errors.js';
+import { normalizePhone } from '../wa/blocklist.js';
+import type { AdminBlocking } from '../../../shared/api.js';
 
 const Username = z
   .string()
@@ -103,6 +105,31 @@ export function registerInternalRoutes(
     ctx.events.emit({ type: 'session_revoked' });
     repo.audit('sessions_revoked_by_admin', req.ip, `${n} sessions`);
     return { ok: true, sessions: n };
+  });
+
+  /** The admin's block list and the contacts to pick from (see wa/blocklist.ts: the one place the admin may see names). */
+  app.get('/internal/blocking', cfg, async (): Promise<AdminBlocking> => {
+    const blocked = new Set(ctx.blocks.list());
+    const contacts = ctx.blocks.directory().map((c) => ({ ...c, blocked: blocked.has(c.phone) }));
+    contacts.sort((a, b) => Number(b.blocked) - Number(a.blocked) || (a.label ?? '\uffff').localeCompare(b.label ?? '\uffff') || a.phone.localeCompare(b.phone));
+    return { contacts };
+  });
+
+  /** Replaces the whole block list (phone numbers; names never count). */
+  app.put('/internal/blocking', cfg, async (req) => {
+    const body = z.object({ phones: z.array(z.string().max(40)).max(5000) }).strict().parse(req.body);
+    const phones = new Set<string>();
+    for (const raw of body.phones) {
+      const p = normalizePhone(raw);
+      if (!p) throw Errors.validation('That is not a phone number.');
+      phones.add(p);
+    }
+    ctx.blocks.replace([...phones]);
+    repo.audit('blocklist_changed', req.ip, `${phones.size} blocked`);
+    // A recording that is running with someone who was just blocked ends now.
+    const call = ctx.wa.calls.current();
+    if (call?.recording && call.recordingBlocked) await ctx.wa.calls.setRecording(call.id, false).catch(() => undefined);
+    return { ok: true, count: phones.size };
   });
 
   /** Before the account is deleted: unlink the WhatsApp device and stop logging. */

@@ -302,6 +302,8 @@ export interface CallInfo {
   videoClient: boolean;
   /** The call is being recorded right now (a clear "REC" sign must be shown wherever the call is shown). */
   recording: boolean;
+  /** The administrator switched recording off for this contact: hide the record button (the server refuses it anyway). */
+  recordingBlocked: boolean;
 }
 
 /** `POST /api/chats/:chatId/call` (`video`: a video call) and `POST /api/calls/:callId/accept` (`video`: answer with the camera). */
@@ -451,6 +453,16 @@ export interface CreateUserRequest {
   port: number | null;
 }
 export interface CreateUserResponse { user: AdminUser; temporaryPassword: string }
+
+/**
+ * Contacts the admin excludes for one user (`GET/PUT /api/admin/users/:id/blocking`). Matched by phone number (digits,
+ * with country code), never by name. Nothing from a blocked number is logged and calls with it are never recorded; the
+ * user still sees the messages in WhatsApp itself. `label` is the name the user's WhatsApp shows for the number.
+ */
+export interface AdminBlockedContact { phone: string; label: string | null; blocked: boolean }
+export interface AdminBlocking { contacts: AdminBlockedContact[] }
+/** The complete list of blocked numbers (replaces the old one). */
+export interface SetBlockingRequest { phones: string[] }
 
 export interface UpdateUserRequest { port?: number | null; disabled?: boolean }
 

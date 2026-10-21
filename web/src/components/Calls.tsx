@@ -223,6 +223,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
         audio: false,
         videoClient: false,
         recording: false,
+        recordingBlocked: false,
       });
       setMinimized(false);
       void api
@@ -568,7 +569,7 @@ function CallPanel(p: PanelProps & { onExpand?: () => void }) {
                 <Icon name="expand" size={20} />
               </button>
             ) : null}
-            {c.state === 'active' ? <RecordButton recording={c.recording} onRecord={p.onRecord} /> : null}
+            {c.state === 'active' && !c.recordingBlocked ? <RecordButton recording={c.recording} onRecord={p.onRecord} /> : null}
             {ours ? <MuteButton muted={p.muted} onMute={p.onMute} /> : null}
             <button className="call-btn decline" onClick={p.onHangup} aria-label="Hang up" title="Hang up">
               <Icon name="callEnd" size={22} />
@@ -651,7 +652,7 @@ function VideoStage(
           >
             <Icon name={p.camera === 'off' ? 'videoOff' : 'video'} size={22} />
           </button>
-          {c.state === 'active' ? <RecordButton recording={c.recording} onRecord={p.onRecord} /> : null}
+          {c.state === 'active' && !c.recordingBlocked ? <RecordButton recording={c.recording} onRecord={p.onRecord} /> : null}
           {ours ? <MuteButton muted={p.muted} onMute={p.onMute} /> : null}
           <button className="call-btn decline" onClick={p.onHangup} aria-label="Hang up" title="Hang up">
             <Icon name="callEnd" size={22} />

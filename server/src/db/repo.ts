@@ -652,6 +652,47 @@ export class Repo implements DataKeyStore {
     this.db.prepare('UPDATE contacts SET avatar_media_id = ?, avatar_checked_at = ? WHERE id = ?').run(mediaId, checkedAt, id);
   }
 
+  /* ------------------------------------------------ blocked contacts */
+
+  listBlocked(): string[] {
+    return (this.db.prepare('SELECT phone FROM blocked_contacts ORDER BY phone').all() as { phone: string }[]).map((r) => r.phone);
+  }
+
+  /** Replaces the whole list. */
+  setBlocked(phones: string[], now: number): void {
+    this.transaction(() => {
+      this.db.prepare('DELETE FROM blocked_contacts').run();
+      const ins = this.db.prepare('INSERT INTO blocked_contacts (phone, created_at) VALUES (?, ?)');
+      for (const p of phones) ins.run(p, now);
+    });
+  }
+
+  upsertDirectory(e: { id: string; phone: string | null; label_enc: Buffer | null; now: number }): void {
+    this.db
+      .prepare(
+        `INSERT INTO contact_directory (id, phone, label_enc, updated_at) VALUES (@id, @phone, @label_enc, @now)
+         ON CONFLICT (id) DO UPDATE SET
+           phone = COALESCE(excluded.phone, contact_directory.phone),
+           label_enc = COALESCE(excluded.label_enc, contact_directory.label_enc),
+           updated_at = excluded.updated_at`,
+      )
+      .run(e);
+  }
+
+  getDirectoryPhone(id: string): string | null {
+    const r = this.db.prepare('SELECT phone FROM contact_directory WHERE id = ?').get(id) as { phone: string | null } | undefined;
+    return r?.phone ?? null;
+  }
+
+  listDirectory(): { id: string; phone: string | null; label_enc: Buffer | null }[] {
+    return this.db.prepare('SELECT id, phone, label_enc FROM contact_directory').all() as { id: string; phone: string | null; label_enc: Buffer | null }[];
+  }
+
+  /** Ids of 1:1 chats (plaintext, so readable without the user's key) — the directory's fallback when no name is known. */
+  listUserChatIds(): string[] {
+    return (this.db.prepare(`SELECT id FROM chats WHERE kind = 'user' AND removed_at IS NULL`).all() as { id: string }[]).map((r) => r.id);
+  }
+
   /* --------------------------------------------------------- messages */
 
   getMessage(id: string): MessageRow | undefined {
@@ -859,6 +900,7 @@ export class Repo implements DataKeyStore {
         DELETE FROM message_edits;
         DELETE FROM messages;
         DELETE FROM contacts;
+        DELETE FROM contact_directory;
         DELETE FROM chats;
         DELETE FROM media;
       `);

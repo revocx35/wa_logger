@@ -211,6 +211,27 @@ const MIGRATIONS: { id: number; name: string; sql: string }[] = [
       CREATE INDEX call_recordings_started ON call_recordings (started_at);
     `,
   },
+  {
+    id: 7,
+    name: 'blocked_contacts',
+    // Admin-set exclusions: nothing from these phone numbers is logged and their calls are never recorded. The directory
+    // is what the admin picks from (the user's own data is sealed to the user, so the admin cannot read it); `label_enc`
+    // is sealed with a per-user server-side key file, `phone` (digits) is also readable in chat ids anyway. One row per
+    // WhatsApp id, so a LID id resolves to its phone number without asking the page.
+    sql: `
+      CREATE TABLE blocked_contacts (
+        phone TEXT PRIMARY KEY,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE contact_directory (
+        id TEXT PRIMARY KEY,
+        phone TEXT,
+        label_enc BLOB,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX contact_directory_phone ON contact_directory (phone) WHERE phone IS NOT NULL;
+    `,
+  },
 ];
 
 export function openDb(file: string): DB {

@@ -6,6 +6,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
@@ -288,6 +289,13 @@ class ApiClient(baseClient: OkHttpClient, val baseUrl: HttpUrl) {
     suspend fun adminDeleteUser(id: Int, adminPassword: String, totp: String?): OkResponse = sendJson("POST", "/api/admin/users/$id/delete") {
         put("adminPassword", JsonPrimitive(adminPassword))
         if (!totp.isNullOrEmpty()) put("totp", JsonPrimitive(totp))
+    }
+
+    suspend fun adminBlocking(id: Int): AdminBlocking = get("/api/admin/users/$id/blocking")
+
+    /** Replaces the user's whole block list. */
+    suspend fun adminSetBlocking(id: Int, phones: Collection<String>): BlockingSaved = sendJson("PUT", "/api/admin/users/$id/blocking") {
+        put("phones", JsonArray(phones.map { JsonPrimitive(it) }))
     }
 
     suspend fun adminPutPort(port: Int, origin: String?): OkResponse = sendJson("PUT", "/api/admin/ports/$port") {

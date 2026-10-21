@@ -387,3 +387,15 @@ model, and explicitly not in wa_logger mobile (Android WebView can't run WhatsAp
   fed instead while the other camera is off. (4) Only the other side's picture is recorded; VP8 is skipped.
 - Removed the old "never record" rules from CLAUDE.md in favour of the explicit-consent rules; the Dockerfile now installs ffmpeg.
 - Tests: `recfmt.test.ts`, `recording.test.ts` (real ffmpeg), web build, Android `ApiClientTest` + screenshot renders.
+
+## 2026-10-21 — Blocked contacts (server, web, Android 0.11.0)
+- Request: the admin picks, per user, contacts that are not logged (messages kept out of the database, so a deleted message leaves
+  nothing) and whose calls cannot be recorded; selection by phone number so renaming the contact changes nothing.
+- Design: worker-side `BlockList` (+ migration 7 `blocked_contacts`, `contact_directory`); checks in `Ingest` (message, edit, revoke,
+  reaction, ack, sync passes) and `CallService.startRecording`; admin routes relay through the gateway. Names are encrypted for the
+  user only, so the admin's pick list needs a separate directory — the owner chose "names + numbers" over numbers only; labels are
+  sealed with a per-user key file (documented exception in ARCHITECTURE "Blocked contacts").
+- Decisions: groups — a blocked sender's messages are skipped too; unresolvable LIDs fail closed (5 min retry); old data stays;
+  group calls are not covered; blocking mid-call stops the running recording.
+- Tests: `wa/blocklist.test.ts` (8; mutation-checked), gateway admin route test, Android `ApiClientTest`.
+

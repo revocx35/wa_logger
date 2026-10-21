@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import type { AdminAuditEntry, AdminOverview, AdminUser, ResetMode, UserStatus } from '../../../shared/api';
+import type { AdminAuditEntry, AdminBlockedContact, AdminOverview, AdminUser, ResetMode, UserStatus } from '../../../shared/api';
 import { api, errorMessage } from '../api/client';
 import { Icon } from '../components/Icon';
 import { ErrorNote, Modal, Spinner, WaStatePill } from '../components/ui';
@@ -253,10 +253,108 @@ function DeleteModal({ user, onClose, onDone }: { user: AdminUser; onClose: () =
   );
 }
 
+/** "+90 555 999 00 01"-style display of a phone number (digits with country code). */
+function showPhone(digits: string): string {
+  return `+${digits}`;
+}
+
+/**
+ * Picks the contacts whose messages are not logged for this user and whose calls are not recorded. Matching is by phone
+ * number, so renaming the contact in WhatsApp changes nothing. The user still sees the messages in WhatsApp itself.
+ */
+function BlockingModal({ user, onClose }: { user: AdminUser; onClose: () => void }) {
+  const [contacts, setContacts] = useState<AdminBlockedContact[] | null>(null);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [saved, setSaved] = useState<Set<string>>(new Set());
+  const [query, setQuery] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    api
+      .adminBlocking(user.id)
+      .then((r) => {
+        if (!live) return;
+        const on = new Set(r.contacts.filter((c) => c.blocked).map((c) => c.phone));
+        setContacts(r.contacts);
+        setPicked(on);
+        setSaved(on);
+      })
+      .catch((err: unknown) => live && setError(errorMessage(err)));
+    return () => {
+      live = false;
+    };
+  }, [user.id]);
+
+  const q = query.trim().toLowerCase();
+  const shown = (contacts ?? []).filter((c) => !q || (c.label ?? '').toLowerCase().includes(q) || c.phone.includes(q.replace(/\D/g, '') || '\u0000'));
+  const dirty = picked.size !== saved.size || [...picked].some((p) => !saved.has(p));
+  const toggle = (phone: string) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(phone)) next.add(phone);
+      return next;
+    });
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.adminSetBlocking(user.id, [...picked]);
+      onClose();
+    } catch (err) {
+      setError(errorMessage(err));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title={`Blocked contacts of ${user.username}`} onClose={onClose}>
+      <p className="muted small">
+        Ticked contacts are not logged for {user.username}: their messages are never saved (so a message they delete leaves nothing behind) and calls with them cannot be recorded. {user.username} still sees the
+        messages in WhatsApp. Contacts are matched by phone number, not by name. Messages logged before the block stay.
+      </p>
+      {contacts === null ? (
+        error ? null : <Spinner size={22} />
+      ) : (
+        <>
+          <input type="search" placeholder="Search name or number" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search contacts" autoComplete="off" />
+          <div className="table-wrap" style={{ maxHeight: '45vh', overflowY: 'auto' }}>
+            <table className="table">
+              <tbody>
+                {shown.map((c) => (
+                  <tr key={c.phone}>
+                    <td style={{ width: 32 }}>
+                      <input type="checkbox" checked={picked.has(c.phone)} onChange={() => toggle(c.phone)} aria-label={`Block ${c.label ?? showPhone(c.phone)}`} />
+                    </td>
+                    <td>{c.label ?? <span className="muted">No name known</span>}</td>
+                    <td className="mono small">{showPhone(c.phone)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {shown.length === 0 ? <p className="muted small">{contacts.length ? 'Nobody matches.' : 'No contacts known yet. They appear once messages have been logged for this user.'}</p> : null}
+          </div>
+        </>
+      )}
+      <ErrorNote error={error} />
+      <div className="row gap">
+        <button className="btn primary" disabled={busy || contacts === null || !dirty} onClick={() => void save()}>
+          {busy ? <Spinner size={18} /> : `Save (${picked.size} blocked)`}
+        </button>
+        <button type="button" className="btn ghost" onClick={onClose}>
+          Cancel
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 function UsersSection({ o, reload }: { o: AdminOverview; reload: () => Promise<void> }) {
   const [adding, setAdding] = useState(false);
   const [resetting, setResetting] = useState<AdminUser | null>(null);
   const [deleting, setDeleting] = useState<AdminUser | null>(null);
+  const [blocking, setBlocking] = useState<AdminUser | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
 
@@ -276,7 +374,7 @@ function UsersSection({ o, reload }: { o: AdminOverview; reload: () => Promise<v
   return (
     <Section
       title="Users"
-      hint="Everyone has a WhatsApp of their own, separate encrypted data, separate keys and a separate browser. You see names, status and ports — never messages."
+      hint="Everyone has a WhatsApp of their own, separate encrypted data, separate keys and a separate browser. You see names, status and ports — never messages. For “Blocked…” you also see the contact names and numbers of that user."
     >
       <div className="table-wrap">
         <table className="table users">
@@ -320,6 +418,9 @@ function UsersSection({ o, reload }: { o: AdminOverview; reload: () => Promise<v
                         <button className="btn tiny" disabled={busyId === u.id} onClick={() => void patch(u, { disabled: !u.disabled })}>
                           {u.disabled ? 'Enable' : 'Disable'}
                         </button>
+                        <button className="btn tiny" onClick={() => setBlocking(u)}>
+                          Blocked…
+                        </button>
                         <button className="btn tiny" onClick={() => setResetting(u)}>
                           Reset…
                         </button>
@@ -351,6 +452,7 @@ function UsersSection({ o, reload }: { o: AdminOverview; reload: () => Promise<v
           }}
         />
       ) : null}
+      {blocking ? <BlockingModal user={blocking} onClose={() => setBlocking(null)} /> : null}
       {resetting ? <ResetModal o={o} user={resetting} onClose={() => setResetting(null)} onDone={() => void reload()} /> : null}
       {deleting ? <DeleteModal user={deleting} onClose={() => setDeleting(null)} onDone={() => void reload()} /> : null}
     </Section>

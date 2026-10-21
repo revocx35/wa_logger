@@ -2021,3 +2021,6 @@ label.switch {
   background: #000;
   border-radius: 8px;
 }
+.table input[type='checkbox'] {
+  width: auto;
+}

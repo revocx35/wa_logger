@@ -22,6 +22,7 @@ export type Source = 'live' | 'history';
 
 const CHAT_REFRESH_MS = 6 * 3600_000;
 const CONTACT_REFRESH_MS = 24 * 3600_000;
+const UNRESOLVED_RETRY_MS = 5 * 60_000;
 
 /**
  * Turns WhatsApp events into encrypted DB rows. Every handler is idempotent (keyed by the serialized
@@ -30,6 +31,7 @@ const CONTACT_REFRESH_MS = 24 * 3600_000;
 export class Ingest {
   private readonly chatSeen = new Map<string, number>();
   private readonly contactSeen = new Map<string, number>();
+  private readonly unresolvedAt = new Map<string, number>();
 
   constructor(
     private readonly ctx: AppContext,
@@ -44,6 +46,7 @@ export class Ingest {
   resetCaches(): void {
     this.chatSeen.clear();
     this.contactSeen.clear();
+    this.unresolvedAt.clear();
   }
 
   /* ------------------------------------------------------------- chats */
@@ -63,6 +66,7 @@ export class Ingest {
       info = null;
     }
     const name = kind === 'status' ? 'Status updates' : info?.name ?? null;
+    if (kind === 'user') this.ctx.blocks.record(chatId, null, name);
     this.ctx.repo.upsertChat({
       id: chatId,
       kind,
@@ -78,9 +82,11 @@ export class Ingest {
   upsertChatInfo(chatId: string, info: { name: string | null; timestamp: number | null; archived: boolean; pinned: boolean; muted: boolean }): void {
     const w = this.writer;
     if (!w) return;
+    if (this.ctx.blocks.blocks(chatId)) return;
     const now = Date.now();
     this.chatSeen.set(chatId, now);
     const kind = chatKind(chatId);
+    if (kind === 'user') this.ctx.blocks.record(chatId, null, info.name);
     this.ctx.repo.upsertChat({
       id: chatId,
       kind,
@@ -106,6 +112,7 @@ export class Ingest {
     } catch {
       info = null;
     }
+    if (!info?.isMe) this.ctx.blocks.record(id, info?.phone ?? null, info?.name || info?.pushname || notifyName);
     this.ctx.repo.upsertContact({
       id,
       name_enc: w.encrypt(...F.contactName(id), info?.name ?? null),
@@ -115,6 +122,44 @@ export class Ingest {
       is_business: info?.isBusiness ?? false,
       now,
     });
+  }
+
+  /* ------------------------------------------------------- blocked contacts */
+
+  /**
+   * True when [id] belongs to a contact the admin blocked. A LID whose number isn't known yet is looked up once (and
+   * remembered by ensureContact); if it still can't be resolved it counts as blocked for a few minutes, because
+   * logging it could record a blocked contact — history and reconcile pick the message up once the number is known.
+   */
+  async idBlocked(id: string | null | undefined): Promise<boolean> {
+    const blocks = this.ctx.blocks;
+    if (!blocks.active || !id) return false;
+    if (blocks.blocks(id)) return true;
+    if (!blocks.unresolved(id)) return false;
+    const failed = this.unresolvedAt.get(id);
+    if (failed && Date.now() - failed < UNRESOLVED_RETRY_MS) return true;
+    // Only the number is wanted: nothing about a possibly blocked contact is stored in the user's own data.
+    try {
+      const info = await this.api.getContact(id);
+      if (info && !info.isMe) blocks.record(id, info.phone ?? null, info.name || info.pushname);
+    } catch {
+      /* stays unresolved */
+    }
+    if (!blocks.unresolved(id)) return blocks.blocks(id);
+    this.unresolvedAt.set(id, Date.now());
+    return true;
+  }
+
+  /** A message belongs to a blocked contact when it is in their 1:1 chat or they sent it (in a group, too). */
+  private async blockedMessage(chatId: string, senderId: string | null, fromMe: boolean): Promise<boolean> {
+    if (!this.ctx.blocks.active) return false;
+    if (chatKind(chatId) === 'user' && (await this.idBlocked(chatId))) return true;
+    return !fromMe && !!senderId && senderId !== chatId && (await this.idBlocked(senderId));
+  }
+
+  /** Sync passes skip a blocked contact's chat altogether. */
+  isChatBlocked(chatId: string): Promise<boolean> {
+    return chatKind(chatId) === 'user' ? this.idBlocked(chatId) : Promise.resolve(false);
   }
 
   /* ---------------------------------------------------------- messages */
@@ -166,6 +211,7 @@ export class Ingest {
     const m = mapMessage(raw);
     if (m.skip) return null;
     if (m.isStatus && !this.ctx.settings.get().logStatus) return null;
+    if (await this.blockedMessage(m.chatId, m.senderId, m.fromMe)) return null;
 
     await this.ensureChat(m.chatId);
     if (m.senderId && !m.fromMe) await this.ensureContact(m.senderId, m.notifyName);
@@ -314,6 +360,7 @@ export class Ingest {
     if (!w) return;
     const m = mapMessage(raw);
     if (m.skip || m.revoked) return;
+    if (await this.blockedMessage(m.chatId, m.senderId, m.fromMe)) return;
     const existing = this.ctx.repo.getMessage(m.id);
     if (!existing) {
       // First sight of an edited message: store it, and keep the previous text as history.
@@ -346,6 +393,7 @@ export class Ingest {
   async revoke(afterRaw: RawMsg, beforeRaw: RawMsg | null): Promise<void> {
     if (!this.writer) return;
     const after = mapMessage(afterRaw);
+    if (await this.blockedMessage(after.chatId, after.senderId, after.fromMe)) return;
     const { repo, events } = this.ctx;
     const now = Date.now();
     let existing = repo.getMessage(after.id);
@@ -374,11 +422,18 @@ export class Ingest {
     }
   }
 
+  /** A message logged before its contact was blocked stays as it is: later updates to it are not recorded. */
+  private rowBlocked(row: MessageRow): boolean {
+    const b = this.ctx.blocks;
+    return b.active && (b.blocks(row.chat_id) || (!row.from_me && b.blocks(row.sender_id)));
+  }
+
   /** whatsapp-web.js `message_revoke_me(message)` — deleted only on the owner's devices. */
   revokeMe(raw: RawMsg): void {
     const m = mapMessage(raw);
     const existing = this.ctx.repo.getMessage(m.id);
     if (!existing || existing.deleted_for_me_at) return;
+    if (this.rowBlocked(existing)) return;
     const now = Date.now();
     this.ctx.repo.updateMessage(existing.id, { deleted_for_me_at: now, updated_at: now });
     this.ctx.events.emit({ type: 'message_update', chatId: existing.chat_id, messageId: existing.id, reason: 'deleted' });
@@ -392,7 +447,7 @@ export class Ingest {
     const senderId = jid(r.senderId);
     if (!messageId || !senderId) return;
     const existing = this.ctx.repo.getMessage(messageId);
-    if (!existing) return;
+    if (!existing || this.rowBlocked(existing) || this.ctx.blocks.blocks(senderId)) return;
     const emoji = typeof r.reaction === 'string' ? r.reaction : '';
     let ts = typeof r.timestamp === 'number' ? r.timestamp : Date.now();
     if (ts < 1e12) ts *= 1000;
@@ -411,7 +466,7 @@ export class Ingest {
     const a = typeof ack === 'number' ? ack : null;
     if (a === null) return;
     const existing = this.ctx.repo.getMessage(m.id);
-    if (!existing || (existing.ack !== null && existing.ack >= a)) return;
+    if (!existing || (existing.ack !== null && existing.ack >= a) || this.rowBlocked(existing)) return;
     this.ctx.repo.updateMessage(existing.id, { ack: a, updated_at: Date.now() });
     this.ctx.events.emit({ type: 'message_update', chatId: existing.chat_id, messageId: existing.id, reason: 'ack' });
   }

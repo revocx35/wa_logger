@@ -409,6 +409,25 @@ describe('gateway: multi-user', () => {
       expect(again.user.status).toBe('pending');
     });
 
+    it('keeps a block list per user: only the admin sets it, it replaces the old one, the log has no numbers', async () => {
+      const { temporaryPassword } = await createUser('friend');
+      const friend = new Browser(g.port);
+      await claim(friend, 'friend', temporaryPassword);
+      const id = g.repo.getUserByName('friend')!.id;
+      const url = `/api/admin/users/${id}/blocking`;
+      expect((await friend.req('GET', url)).status).toBeGreaterThanOrEqual(401);
+      expect((await friend.req('PUT', url, { phones: ['905559990001'] })).status).toBeGreaterThanOrEqual(401);
+      expect((await admin.req('PUT', url, { phones: ['not a number'] })).status).toBe(400);
+      expect((await admin.req('PUT', url, { phones: ['+90 555 999 00 01'] })).body).toEqual({ ok: true, count: 1 });
+      expect((await admin.req('GET', url)).body).toEqual({ contacts: [{ phone: '905559990001', label: null, blocked: true }] });
+      expect((await admin.req('PUT', url, { phones: [] })).body).toEqual({ ok: true, count: 0 });
+      expect((await admin.req('GET', url)).body).toEqual({ contacts: [] });
+      expect((await admin.req('GET', '/api/admin/users/1/blocking')).status).toBe(409);
+      const log = (await admin.req('GET', '/api/admin/audit')).body as { event: string; detail: string | null }[];
+      expect(log.find((e) => e.event === 'user_blocklist_changed')).toBeDefined();
+      expect(JSON.stringify(log)).not.toContain('5559990001');
+    });
+
     it('records what the admin did, without secrets', async () => {
       const made = await createUser('friend');
       const log = (await admin.req('GET', '/api/admin/audit')).body as { event: string; actor: string | null; target: string | null; detail: string | null }[];

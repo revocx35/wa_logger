@@ -92,6 +92,8 @@ export class CallService implements WaCalls {
   private lastPeerKeyRequest = 0;
   private readonly started: number[] = [];
   private readonly lastPeerVideo = new Map<string, boolean>();
+  /** The other side's WhatsApp ids per call (both forms: phone number and LID), for the admin's block list. */
+  private readonly peers = new Map<string, string[]>();
   private recorder: CallRecorder | null = null;
   private recorderStarting = false;
 
@@ -116,8 +118,16 @@ export class CallService implements WaCalls {
     return !!this.recorder && !this.recorder.ending;
   }
 
+  /** Recording is off for calls with a contact the admin blocked (1:1 calls only: a group call has no single peer). */
+  private recordingBlocked(callId: string): boolean {
+    const b = this.ctx.blocks;
+    if (!b.active) return false;
+    const ids = this.peers.get(callId) ?? [];
+    return ids.some((id) => b.blocks(id)) || (ids.length > 0 && ids.every((id) => b.unresolved(id)));
+  }
+
   private view(info: CallInfo): CallInfo {
-    return { ...info, audio: !!this.audio, videoClient: !!this.videoClient, recording: this.recording() };
+    return { ...info, audio: !!this.audio, videoClient: !!this.videoClient, recording: this.recording(), recordingBlocked: this.recordingBlocked(info.id) };
   }
 
   private page(): CallBridge {
@@ -155,8 +165,10 @@ export class CallService implements WaCalls {
           audio: false,
           videoClient: false,
           recording: false,
+          recordingBlocked: false,
         },
       };
+      this.peers.set(c.id, c.isGroup ? [] : ([c.peer, c.peerAlt].filter(Boolean) as string[]));
       this.calls.set(c.id, rec);
       created = true;
       if (!this.currentId || !LIVE.has(this.calls.get(this.currentId)?.info.state ?? 'ended')) this.currentId = c.id;
@@ -191,6 +203,7 @@ export class CallService implements WaCalls {
       const id = c.id;
       setTimeout(() => {
         this.calls.delete(id);
+        this.peers.delete(id);
         if (this.currentId === id) this.currentId = this.latestLive();
       }, ENDED_LINGER_MS).unref();
       if (this.currentId === id) {
@@ -440,6 +453,7 @@ export class CallService implements WaCalls {
     const c = this.known(callId);
     if (this.recording() || this.recorderStarting) return this.view(c);
     if (c.state !== 'active') throw Errors.conflict('The call is not connected yet.');
+    if (this.recordingBlocked(callId)) throw Errors.conflict('Recording is switched off for this contact by the administrator.');
     this.recorderStarting = true;
     try {
       const rec = await CallRecorder.start(

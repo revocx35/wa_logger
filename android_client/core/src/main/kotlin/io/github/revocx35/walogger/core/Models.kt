@@ -389,6 +389,8 @@ data class CallInfo(
     val videoClient: Boolean = false,
     /** The call is being recorded right now (a clear REC sign is shown wherever the call is shown). */
     val recording: Boolean = false,
+    /** The administrator switched recording off for this contact: no record button (the server refuses it anyway). */
+    val recordingBlocked: Boolean = false,
 ) {
     val incoming: Boolean get() = direction == "incoming"
     val live: Boolean get() = state != CallState.Ended
@@ -473,6 +475,14 @@ data class AdminOverview(
     val availablePorts: List<Int> = emptyList(),
     val maxUsers: Int = 0,
 )
+
+/** A contact the admin can exclude for a user: matched by phone number (digits with country code), never by name. */
+@Serializable
+data class AdminBlockedContact(val phone: String, val label: String? = null, val blocked: Boolean = false)
+
+@Serializable data class AdminBlocking(val contacts: List<AdminBlockedContact> = emptyList())
+
+@Serializable data class BlockingSaved(val ok: Boolean = true, val count: Int = 0)
 
 @Serializable data class CreateUserResponse(val user: AdminUser, val temporaryPassword: String)
 

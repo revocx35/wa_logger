@@ -9,7 +9,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -29,6 +32,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import io.github.revocx35.walogger.core.AdminAuditEntry
+import io.github.revocx35.walogger.core.AdminBlockedContact
 import io.github.revocx35.walogger.core.AdminOverview
 import io.github.revocx35.walogger.core.AdminUser
 import io.github.revocx35.walogger.core.ApiClient
@@ -42,6 +46,7 @@ import io.github.revocx35.walogger.ui.LocalFormatter
 import io.github.revocx35.walogger.ui.components.Badge
 import io.github.revocx35.walogger.ui.components.BadgeTone
 import io.github.revocx35.walogger.ui.components.BtnStyle
+import io.github.revocx35.walogger.ui.components.CheckRow
 import io.github.revocx35.walogger.ui.components.Divider
 import io.github.revocx35.walogger.ui.components.ErrorNote
 import io.github.revocx35.walogger.ui.components.FilterChip
@@ -144,6 +149,7 @@ private fun UsersSection(d: AdminDeps, o: AdminOverview, reload: () -> Unit) {
     var adding by remember { mutableStateOf(false) }
     var resetting by remember { mutableStateOf<AdminUser?>(null) }
     var deleting by remember { mutableStateOf<AdminUser?>(null) }
+    var blocking by remember { mutableStateOf<AdminUser?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var busyId by remember { mutableStateOf<Int?>(null) }
     val scope = rememberCoroutineScope()
@@ -164,13 +170,14 @@ private fun UsersSection(d: AdminDeps, o: AdminOverview, reload: () -> Unit) {
     }
 
     SectionCard("Users") {
-        MutedText("Everyone has a WhatsApp of their own, separate encrypted data, separate keys and a separate browser. You see names, status and ports — never messages.", style = WaType.small)
+        MutedText("Everyone has a WhatsApp of their own, separate encrypted data, separate keys and a separate browser. You see names, status and ports — never messages. For “Blocked…” you also see the contact names and numbers of that user.", style = WaType.small)
         Column {
             o.users.forEachIndexed { i, u ->
                 if (i > 0) Divider()
                 UserRow(d, o, u, busy = busyId == u.id,
                     onPort = { port -> patch(u) { d.api.adminSetUserPort(u.id, port) } },
                     onToggle = { patch(u) { d.api.adminSetUserDisabled(u.id, !u.disabled) } },
+                    onBlocked = { blocking = u },
                     onReset = { resetting = u },
                     onDelete = { deleting = u },
                 )
@@ -181,12 +188,13 @@ private fun UsersSection(d: AdminDeps, o: AdminOverview, reload: () -> Unit) {
         WaButton("Add a user", { adding = true }, style = BtnStyle.Primary, icon = WaIcons.plus, enabled = o.users.size < o.maxUsers)
     }
     if (adding) CreateDialog(d, o, onClose = { adding = false; reload() })
+    blocking?.let { BlockingDialog(d, it, onClose = { blocking = null }) }
     resetting?.let { ResetDialog(d, o, it, onClose = { resetting = null }, onDone = reload) }
     deleting?.let { DeleteDialog(d, it, onClose = { deleting = null }, onDone = reload) }
 }
 
 @Composable
-private fun UserRow(d: AdminDeps, o: AdminOverview, u: AdminUser, busy: Boolean, onPort: (Int?) -> Unit, onToggle: () -> Unit, onReset: () -> Unit, onDelete: () -> Unit) {
+private fun UserRow(d: AdminDeps, o: AdminOverview, u: AdminUser, busy: Boolean, onPort: (Int?) -> Unit, onToggle: () -> Unit, onBlocked: () -> Unit, onReset: () -> Unit, onDelete: () -> Unit) {
     val c = Wa.colors
     val fmt = LocalFormatter.current
     val (label, tone) = statusOf(u)
@@ -210,6 +218,7 @@ private fun UserRow(d: AdminDeps, o: AdminOverview, u: AdminUser, busy: Boolean,
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 WaButton(if (u.disabled) "Enable" else "Disable", onToggle, tiny = true, enabled = !busy, style = BtnStyle.Ghost)
+                WaButton("Blocked…", onBlocked, tiny = true, style = BtnStyle.Ghost)
                 WaButton("Reset…", onReset, tiny = true, style = BtnStyle.Ghost)
                 WaButton("Delete…", onDelete, tiny = true, style = BtnStyle.Danger)
             }
@@ -340,6 +349,75 @@ private fun ResetDialog(d: AdminDeps, o: AdminOverview, user: AdminUser, onClose
                         }
                     }
                 }, style = if (wipe) BtnStyle.Danger else BtnStyle.Primary, busy = busy, enabled = adminPassword.isNotEmpty() && (custom.isEmpty() || custom.length >= 12))
+                WaButton("Cancel", onClose, style = BtnStyle.Ghost)
+            }
+        }
+    }
+}
+
+/**
+ * Picks the contacts whose messages are not logged for this user and whose calls are not recorded. Matching is by phone
+ * number, so renaming the contact in WhatsApp changes nothing. The user still sees the messages in WhatsApp itself.
+ */
+@Composable
+private fun BlockingDialog(d: AdminDeps, user: AdminUser, onClose: () -> Unit) {
+    var contacts by remember { mutableStateOf<List<AdminBlockedContact>?>(null) }
+    var saved by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var picked by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var query by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(user.id) {
+        try {
+            val r = d.api.adminBlocking(user.id)
+            val on = r.contacts.filter { it.blocked }.map { it.phone }.toSet()
+            contacts = r.contacts
+            saved = on
+            picked = on
+        } catch (e: Exception) {
+            error = e.userMessage()
+        }
+    }
+    val q = query.trim().lowercase()
+    val digits = q.filter { it.isDigit() }
+    val shown = contacts.orEmpty().filter { q.isEmpty() || (it.label ?: "").lowercase().contains(q) || (digits.isNotEmpty() && it.phone.contains(digits)) }
+    WaDialog("Blocked contacts of ${user.username}", onClose) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            MutedText(
+                "Ticked contacts are not logged for ${user.username}: their messages are never saved (so a message they delete leaves nothing behind) and calls with them cannot be recorded. " +
+                    "${user.username} still sees the messages in WhatsApp. Contacts are matched by phone number, not by name. Messages logged before the block stay.",
+                style = WaType.small,
+            )
+            if (contacts == null) {
+                if (error == null) Spinner()
+            } else {
+                WaTextField(query, { query = it }, "Search name or number", imeAction = ImeAction.Search)
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 320.dp)) {
+                    items(shown, key = { it.phone }) { c ->
+                        CheckRow(c.phone in picked, { on -> picked = if (on) picked + c.phone else picked - c.phone }, "${c.label ?: "No name known"} · +${c.phone}")
+                    }
+                    if (shown.isEmpty()) item {
+                        MutedText(if (contacts.orEmpty().isEmpty()) "No contacts known yet. They appear once messages have been logged for this user." else "Nobody matches.", style = WaType.small)
+                    }
+                }
+            }
+            ErrorNote(error)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                WaButton("Save (${picked.size} blocked)", {
+                    busy = true
+                    error = null
+                    scope.launch {
+                        try {
+                            d.api.adminSetBlocking(user.id, picked)
+                            onClose()
+                        } catch (e: Exception) {
+                            error = e.userMessage()
+                        } finally {
+                            busy = false
+                        }
+                    }
+                }, style = BtnStyle.Primary, busy = busy, enabled = contacts != null && picked != saved)
                 WaButton("Cancel", onClose, style = BtnStyle.Ghost)
             }
         }
