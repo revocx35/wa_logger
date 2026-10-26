@@ -407,3 +407,10 @@ model, and explicitly not in wa_logger mobile (Android WebView can't run WhatsAp
   chose scope "send + chat list" implicitly by asking only for sending; "receive" was not built (it would need message access).
 - Tests: `api/tokens.test.ts` (5), gateway routing test; migration 8. Not ported to Android (noted in AGENTS.md).
 
+
+## 2026-10-26 — API-only TLS port for other apps
+- Problem: production runs `Caddyfile.http` behind NPM/authentik, so the only LAN ports speak plain HTTP and 443 is localhost-only;
+  Poker Balance (HTTPS-only for its token) got "refused the request" (a redirect/HTTP answer) from the LAN address.
+- Fix: optional `API_TLS_PORT` listener (`caddy/extra-ports.sh`, `wal_api` snippet in both Caddyfiles): `/api/v1/*` only, pinned
+  self-signed cert in `/data/api-tls`, `default_sni` added to `Caddyfile.http` for IP clients. Chosen by the owner over exposing 443
+  or allowing plain HTTP. Tested with the built image against a stub app (200 on /api/v1, 404 elsewhere, fingerprint = logged one).

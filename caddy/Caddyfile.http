@@ -3,6 +3,8 @@
 {
 	admin off
 	auto_https off
+	# Clients that open the API TLS port by IP send no SNI; serve the pinned certificate anyway.
+	default_sni {$SITE_ADDRESS}
 	servers {
 		# Pass through X-Forwarded-For/-Proto/-Host set by your reverse proxy (private networks only), so the
 		# app sees the real client IP (brute-force throttling) and knows the request came in over HTTPS.
@@ -45,6 +47,24 @@
 
 :80 {
 	import wal_site 8080
+}
+
+# The API-only listener (API_TLS_PORT, see extra-ports.sh): bearer-token routes of /api/v1/* and nothing else.
+(wal_api) {
+	request_body {
+		max_size 64KB
+	}
+	header {
+		-Server
+		-Via
+		Strict-Transport-Security "max-age=31536000"
+	}
+	handle /api/v1/* {
+		reverse_proxy app:8080
+	}
+	handle {
+		respond "Not found" 404
+	}
 }
 
 import /tmp/extra-ports*.caddy

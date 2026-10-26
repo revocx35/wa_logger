@@ -4,6 +4,7 @@
 # The entrypoint adds one site per port of EXTRA_PORTS (the ports the admin can give to other users).
 # To customise, mount your own file over /etc/caddy/Caddyfile.
 FROM caddy:2.11-alpine
+RUN apk add --no-cache openssl
 COPY Caddyfile Caddyfile.http /etc/caddy/
 COPY extra-ports.sh /usr/local/bin/extra-ports.sh
 RUN chmod 0755 /usr/local/bin/extra-ports.sh

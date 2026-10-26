@@ -55,4 +55,22 @@
 	import wal_site 8080
 }
 
+# The API-only listener (API_TLS_PORT, see extra-ports.sh): bearer-token routes of /api/v1/* and nothing else.
+(wal_api) {
+	request_body {
+		max_size 64KB
+	}
+	header {
+		-Server
+		-Via
+		Strict-Transport-Security "max-age=31536000"
+	}
+	handle /api/v1/* {
+		reverse_proxy app:8080
+	}
+	handle {
+		respond "Not found" 404
+	}
+}
+
 import /tmp/extra-ports*.caddy

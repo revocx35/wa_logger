@@ -58,6 +58,7 @@ admin sees contact names; never extend it to messages. A new place that writes m
 `api/tokens.ts`, `wa/apitokens.ts`, gateway `apiTokenUser`: bearer tokens (`walt_<tenant>_…`) let another app list a few chosen chats and
 send text to them (`/api/v1/*`, `config.bearer` routes). They never read messages, never use cookies/CSRF, and session routes never
 accept them. Keep it that way: a new `/api/v1` route must be send-only or metadata-only. Web UI = Settings → API access.
+`API_TLS_PORT` (caddy, see `caddy/extra-ports.sh`) adds an HTTPS listener that serves only `/api/v1/*`; its pinned fingerprint is in the caddy log.
 **Not ported to `android_client/`** (deliberate, 2026-10-26: tokens are set up once on a desktop for a server-side app; add it if wanted).
 
 ## Conventions

@@ -412,7 +412,13 @@ list other chats, or create tokens. Design points:
 * **Abuse:** per-IP rate limits (30/min destinations, 20/min send), 4000-char texts, "chat not in the token" and "no such chat"
   answer identically, the audit log records `api_token_created/deleted/send` (never text, names or numbers). `wipeLoggedData`
   clears `api_token_chats`.
-* The ordinary deployment puts the gateway behind HTTPS only; callers should use HTTPS and verify (or pin) the certificate.
+* **HTTPS for callers:** the ordinary deployment puts the gateway behind HTTPS only; callers should use HTTPS and verify (or pin) the
+  certificate. A deployment whose Caddy serves plain HTTP behind a TLS proxy (`Caddyfile.http`) can set `API_TLS_PORT` (e.g. `8443`,
+  published on `API_TLS_BIND`, default 127.0.0.1): `extra-ports.sh` then adds a listener at `<SITE_ADDRESS>:<port>` that forwards
+  only `/api/v1/*` (64 KB body cap) to the default app port and answers 404 for everything else. Its certificate is a 10-year
+  self-signed EC key made once in `/data/api-tls` (caddy volume, 0600); the SHA-256 fingerprint is printed in the caddy log at start so
+  the caller can pin it. Threat notes: the UI, login and cookies are not reachable on that port; tokens are the only credential
+  there, rate-limited like any `/api/v1` call; the key never leaves the volume.
 
 ### Video
 Same idea as the audio: the call (and WhatsApp's video codec work) stays in the Chromium tab; frames travel.

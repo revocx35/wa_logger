@@ -34,6 +34,8 @@ services:
       # Extra ports for users the admin keeps off the default port (user management). Closed to the network by default:
       # set EXTRA_BIND=0.0.0.0 (or your LAN address) when the reverse proxy for those users runs on another host.
       - "${EXTRA_BIND:-127.0.0.1}:${EXTRA_PORTS:-8101-8110}:${EXTRA_PORTS:-8101-8110}"
+      # HTTPS-only API listener for other apps (bearer tokens, /api/v1/* only). Off unless API_TLS_PORT is set.
+      - "${API_TLS_BIND:-127.0.0.1}:${API_TLS_PORT:-8443}:${API_TLS_PORT:-8443}"
     # Caddyfile = HTTPS (Let's Encrypt / internal CA); Caddyfile.http = plain HTTP behind your own TLS proxy.
     command: ["caddy", "run", "--config", "/etc/caddy/${CADDY_CONFIG:-Caddyfile}", "--adapter", "caddyfile"]
     environment:
@@ -41,6 +43,7 @@ services:
       CADDY_TLS: ${CADDY_TLS:-internal}
       CADDY_CONFIG: ${CADDY_CONFIG:-Caddyfile}
       EXTRA_PORTS: ${EXTRA_PORTS:-8101-8110}
+      API_TLS_PORT: ${API_TLS_PORT:-}
     volumes:
       - caddy_data:/data
       - caddy_config:/config
