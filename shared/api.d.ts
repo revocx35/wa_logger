@@ -491,3 +491,12 @@ export interface AdminAuditEntry {
   ip: string | null;
   detail: string | null;
 }
+
+/* ------------------------------------------------------------------ API tokens (other apps send text to chosen chats) */
+
+export interface ApiTokenInfo { id: number; name: string; createdAt: number; lastUsedAt: number | null; chatCount: number }
+export interface ApiTokenList { tokens: ApiTokenInfo[] }
+/** `POST /api/api-tokens` `{ name, chatIds }`: the only time the secret is shown. */
+export interface ApiTokenCreated { id: number; name: string; token: string }
+/** `GET /api/v1/destinations` with `Authorization: Bearer <token>`; `POST /api/v1/send` `{ chatId, text }` answers a `SendResult`. */
+export interface TokenDestinations { destinations: { chatId: string; kind: string; name: string | null }[] }

@@ -37,6 +37,8 @@ const EnvSchema = z.object({
     .refine((v) => /^https?:\/\/[^/\s]+$/.test(v), 'CHROMIUM_URL must look like http://host:port'),
   /** Which Chromium instance of the manager belongs to this tenant, and the bearer token that proves it. */
   CHROMIUM_INSTANCE: int(1, 1, 1_000_000),
+  /** Which user this worker serves (the supervisor sets it; 1 in single-process mode). Goes into API tokens so the gateway can route them. */
+  TENANT_ID: int(1, 1, 9999),
   CHROMIUM_TOKEN: z.string().min(16).optional(),
   /** true: always Secure/__Host- cookies; auto: Secure only when the request arrived over HTTPS (TLS by an
    *  external reverse proxy, detected via the trusted X-Forwarded-Proto); false: never (local HTTP only). */
@@ -100,6 +102,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     chromiumUrl: e.CHROMIUM_URL,
     chromiumHost: new URL(e.CHROMIUM_URL).hostname,
     chromiumInstance: e.CHROMIUM_INSTANCE,
+    tenantId: e.TENANT_ID,
     chromiumToken: e.CHROMIUM_TOKEN,
     logLevel: e.LOG_LEVEL,
     waEnabled: e.WA_ENABLED,

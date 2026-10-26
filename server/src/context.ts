@@ -7,6 +7,7 @@ import { Throttle } from './auth/throttle.js';
 import type { EventBus } from './events.js';
 import type { Logger } from './log.js';
 import type { SettingsStore } from './settings.js';
+import { ApiTokens } from './wa/apitokens.js';
 import { BlockList } from './wa/blocklist.js';
 
 /** Sending as the linked account (throws AppError: unavailable when WhatsApp is not connected). */
@@ -93,6 +94,8 @@ export class AppContext {
   readonly throttle: Throttle;
   /** The admin's block list for this user: contacts that are never logged and whose calls are never recorded. */
   readonly blocks: BlockList;
+  /** Bearer tokens that let other apps send text to chats the owner picked. */
+  readonly apiTokens: ApiTokens;
 
   constructor(
     readonly config: Config,
@@ -105,6 +108,7 @@ export class AppContext {
     this.wa = wa ?? new NullWa();
     this.throttle = new Throttle(repo);
     this.blocks = new BlockList(repo, config.dataDir);
+    this.apiTokens = new ApiTokens(repo, config.dataDir, config.tenantId);
   }
 
   /** The encryptor for new data; null until an owner (and thus a public key) exists. */

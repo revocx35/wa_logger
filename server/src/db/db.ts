@@ -232,6 +232,29 @@ const MIGRATIONS: { id: number; name: string; sql: string }[] = [
       CREATE INDEX contact_directory_phone ON contact_directory (phone) WHERE phone IS NOT NULL;
     `,
   },
+  {
+    id: 8,
+    name: 'api_tokens',
+    // Bearer tokens for other apps (e.g. a poker tracker) that may only send text to the chats listed in api_token_chats.
+    // Only sha256(token) is stored; `label_enc` (the chat's name, for the app's chat picker) is sealed with a key file next to
+    // the database, like the contact directory, because the app has no session key to open the user's own sealed data.
+    sql: `
+      CREATE TABLE api_tokens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        hash BLOB NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        last_used_at INTEGER
+      );
+      CREATE TABLE api_token_chats (
+        token_id INTEGER NOT NULL REFERENCES api_tokens (id) ON DELETE CASCADE,
+        chat_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        label_enc BLOB,
+        PRIMARY KEY (token_id, chat_id)
+      );
+    `,
+  },
 ];
 
 export function openDb(file: string): DB {

@@ -395,6 +395,25 @@ user's data directory (0600; protects a copy of the database alone, not a compro
 there, never messages. The list is stored per user in `blocked_contacts`; the gateway's admin routes only relay it and the admin
 log records the count, never numbers.
 
+### API tokens (other apps sending text)
+Settings → *API access* (web only; see AGENTS.md) creates bearer tokens `walt_<tenant>_<43 base64url>` (256 random bits) for apps such
+as a poker tracker. A token is bound to a list of chats chosen at creation (direct chats and groups) and can do exactly two things:
+`GET /api/v1/destinations` (the chats and their names) and `POST /api/v1/send {chatId, text ≤ 4000}`. It cannot read a message,
+list other chats, or create tokens. Design points:
+* **Auth is separate from sessions.** Routes marked `config.bearer` skip cookies, CSRF and the Origin check (nothing ambient for a
+  cross-site page to ride on) and authenticate `Authorization: Bearer` only; every session route ignores bearer tokens and every
+  `/api/v1` route ignores cookies. Tokens in query strings are not accepted. The route-coverage test still sees them as non-public.
+* **Gateway:** for `/api/v1/*` with a well-formed bearer header the gateway takes the tenant from the token, applies the usual port
+  policy (disabled users and wrong ports are refused), drops the cookie header and forwards; the worker verifies the secret. Only
+  `sha256(token)` is stored (`api_tokens.hash`), so a database copy cannot be turned back into a token. Revoking deletes the row.
+* **Names:** chat names are sealed to the owner, which an app cannot open, so at creation the owner's session copies the chosen
+  chats' names into `api_token_chats.label_enc`, sealed (AES-GCM, AAD `wal/apitoken|<chatId>`) under `apitoken.key` in the user's
+  data directory (0600). Same deliberate, narrow exception as the block list's directory: names of chats the owner picked.
+* **Abuse:** per-IP rate limits (30/min destinations, 20/min send), 4000-char texts, "chat not in the token" and "no such chat"
+  answer identically, the audit log records `api_token_created/deleted/send` (never text, names or numbers). `wipeLoggedData`
+  clears `api_token_chats`.
+* The ordinary deployment puts the gateway behind HTTPS only; callers should use HTTPS and verify (or pin) the certificate.
+
 ### Video
 Same idea as the audio: the call (and WhatsApp's video codec work) stays in the Chromium tab; frames travel.
 ```
@@ -648,6 +667,7 @@ call_recordings(id INTEGER PRIMARY KEY, call_id TEXT, chat_id TEXT, direction TE
 ```
 Tenant migration 7 adds `blocked_contacts(phone PRIMARY KEY, created_at)` and `contact_directory(id PRIMARY KEY, phone, label_enc, updated_at)`
 (see "Blocked contacts"; `wipeLoggedData` clears the directory, the block list is admin policy and survives).
+Tenant migration 8 adds `api_tokens(id, hash UNIQUE, name, created_at, last_used_at)` and `api_token_chats(token_id → api_tokens ON DELETE CASCADE, chat_id, kind, label_enc, PRIMARY KEY(token_id, chat_id))` (see "API tokens").
 Tenant migration 5 adds `pending_claim(id=1, username, mode 'new'|'reset', salt, auth_hash, failed_logins, locked_until,
 created_at)`: the admin-issued temporary credential (a salted scrypt-derived auth hash, never the password).
 
@@ -715,6 +735,9 @@ AAD context `msgbody|<messageId>`, so an edit can move the old ciphertext into `
 | WS | /api/calls/video | ✓ | call video both ways: header + H.264/VP8 frame per message (`CallVideoHello` first, `{type:'keyframe'}`) |
 | GET | /api/events | ✓ | SSE: `wa_state`, `message`, `message_update`, `chat_update`, `sync_progress`, `call` |
 | GET/PUT | /api/settings | ✓ | `{logStatus, downloadHistoryMedia, mediaMaxMb, historyPerChat, readReceipts}` |
+| GET/POST | /api/api-tokens | ✓ | list tokens (no secrets) · `{name, chatIds[1..50]}` → `{id, name, token}` (the only time the token is shown); DELETE /api/api-tokens/:id revokes |
+| GET | /api/v1/destinations | bearer | `TokenDestinations`: chats this API token may send to |
+| POST | /api/v1/send | bearer | `{chatId, text}` → `SendResult`; 404 for any chat not in the token |
 | GET | /api/audit | ✓ | audit log |
 | POST | /api/data/wipe | ✓ + password | delete all logged messages/media (keeps owner) |
 

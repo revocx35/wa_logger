@@ -2024,3 +2024,14 @@ label.switch {
 .table input[type='checkbox'] {
   width: auto;
 }
+
+.pick-list {
+  max-height: 16rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.5rem;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.3));
+  border-radius: 8px;
+}

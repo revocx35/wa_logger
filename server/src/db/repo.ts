@@ -260,6 +260,14 @@ function buildUpdate<T extends object>(allowed: Set<keyof T>, patch: Partial<T>)
 
 const MSG_COLS = 'rowid, *';
 
+export interface ApiTokenRow {
+  id: number;
+  name: string;
+  created_at: number;
+  last_used_at: number | null;
+  chat_count: number;
+}
+
 export class Repo implements DataKeyStore {
   constructor(public readonly db: DB) {}
 
@@ -901,10 +909,55 @@ export class Repo implements DataKeyStore {
         DELETE FROM messages;
         DELETE FROM contacts;
         DELETE FROM contact_directory;
+        DELETE FROM api_token_chats;
         DELETE FROM chats;
         DELETE FROM media;
       `);
       return paths;
     });
   }
+  /* ------------------------------------------------------- API tokens */
+
+  insertApiToken(t: { hash: Buffer; name: string; now: number; chats: { id: string; kind: string; label_enc: Buffer | null }[] }): number {
+    return this.transaction(() => {
+      const id = Number(this.db.prepare('INSERT INTO api_tokens (hash, name, created_at) VALUES (?, ?, ?)').run(t.hash, t.name, t.now).lastInsertRowid);
+      const ins = this.db.prepare('INSERT INTO api_token_chats (token_id, chat_id, kind, label_enc) VALUES (?, ?, ?, ?)');
+      for (const c of t.chats) ins.run(id, c.id, c.kind, c.label_enc);
+      return id;
+    });
+  }
+
+  listApiTokens(): ApiTokenRow[] {
+    return this.db
+      .prepare(
+        `SELECT t.id, t.name, t.created_at, t.last_used_at, (SELECT COUNT(*) FROM api_token_chats c WHERE c.token_id = t.id) AS chat_count
+         FROM api_tokens t ORDER BY t.id`,
+      )
+      .all() as ApiTokenRow[];
+  }
+
+  getApiTokenByHash(hash: Buffer): { id: number; name: string } | undefined {
+    return this.db.prepare('SELECT id, name FROM api_tokens WHERE hash = ?').get(hash) as { id: number; name: string } | undefined;
+  }
+
+  touchApiToken(id: number, now: number): void {
+    this.db.prepare('UPDATE api_tokens SET last_used_at = ? WHERE id = ?').run(now, id);
+  }
+
+  deleteApiToken(id: number): boolean {
+    return this.db.prepare('DELETE FROM api_tokens WHERE id = ?').run(id).changes > 0;
+  }
+
+  listApiTokenChats(tokenId: number): { chat_id: string; kind: string; label_enc: Buffer | null }[] {
+    return this.db.prepare('SELECT chat_id, kind, label_enc FROM api_token_chats WHERE token_id = ? ORDER BY rowid').all(tokenId) as {
+      chat_id: string;
+      kind: string;
+      label_enc: Buffer | null;
+    }[];
+  }
+
+  apiTokenAllows(tokenId: number, chatId: string): boolean {
+    return !!this.db.prepare('SELECT 1 FROM api_token_chats WHERE token_id = ? AND chat_id = ?').get(tokenId, chatId);
+  }
+
 }

@@ -531,3 +531,50 @@ describe('gateway helpers', () => {
     for (const bad of ['/apix', '/api/../internal/info', '/api/%2e%2e/x', '/api//x', '/api/%2fx', '/api/x%00', '/api/\\x', '/internal/info', '/%61pi/x', '/api/%252e', '/api/x y']) expect(cleanApiPath(bad), bad).toBe(false);
   });
 });
+
+describe('gateway: API tokens', () => {
+  let g: TestGateway;
+  let admin: Browser;
+
+  beforeEach(async () => {
+    g = await makeGateway({ extraPorts: [38201] });
+    admin = new Browser(g.port);
+    const r = await admin.req('POST', '/api/auth/signup', { setupToken: SETUP, username: 'admin', password: ADMIN_PW });
+    expect(r.status).toBe(200);
+  });
+  afterEach(async () => {
+    await g.close();
+  });
+
+  const get = (port: number, token: string | null, url = '/api/v1/destinations', cookie?: string) =>
+    new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const headers: Record<string, string> = {};
+      if (token) headers.authorization = `Bearer ${token}`;
+      if (cookie) headers.cookie = cookie;
+      http
+        .get({ host: '127.0.0.1', port, path: url, headers }, (res) => {
+          let body = '';
+          res.on('data', (c) => (body += c));
+          res.on('end', () => resolve({ status: res.statusCode ?? 0, body }));
+        })
+        .on('error', reject);
+    });
+
+  it('routes a token to its tenant without any cookie, and refuses unknown tenants, other paths and disabled users', async () => {
+    const worker = g.pool.workers.get(1)!;
+    const { token } = worker.ctx.apiTokens.create('Poker', [{ id: '905551112233@c.us', kind: 'user', name: 'Ali' }]);
+    const ok = await get(g.port, token);
+    expect(ok.status).toBe(200);
+    expect(JSON.parse(ok.body).destinations).toEqual([{ chatId: '905551112233@c.us', kind: 'user', name: 'Ali' }]);
+    // The token's tenant must exist; the worker still has to know the secret.
+    expect((await get(g.port, token.replace('walt_1_', 'walt_7_'))).status).toBe(401);
+    expect((await get(g.port, token.slice(0, -2) + 'AA')).status).toBe(401);
+    // Only /api/v1 takes tokens: other API paths still need the browser session.
+    expect((await get(g.port, token, '/api/chats')).status).toBe(401);
+    // Querystring tokens are not a thing.
+    expect((await get(g.port, null, `/api/v1/destinations?token=${token}`)).status).toBe(401);
+    // A disabled account's tokens stop working at the gateway.
+    g.repo.db.prepare('UPDATE users SET disabled = 1 WHERE id = 1').run();
+    expect((await get(g.port, token)).status).toBe(401);
+  });
+});

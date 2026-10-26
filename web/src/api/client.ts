@@ -1,4 +1,6 @@
 import type {
+  ApiTokenCreated,
+  ApiTokenList,
   AdminAuditEntry,
   AdminBlocking,
   AdminOverview,
@@ -195,6 +197,9 @@ export const api = {
   adminPutPort: (port: number, origin: string | null) => request<{ ok: true }>('PUT', `/api/admin/ports/${port}`, { origin }),
   adminDeletePort: (port: number) => request<{ ok: true }>('DELETE', `/api/admin/ports/${port}`),
   adminAudit: () => request<AdminAuditEntry[]>('GET', '/api/admin/audit?limit=100'),
+  apiTokens: () => request<ApiTokenList>('GET', '/api/api-tokens'),
+  createApiToken: (name: string, chatIds: string[]) => request<ApiTokenCreated>('POST', '/api/api-tokens', { name, chatIds }),
+  deleteApiToken: (id: number) => request<{ ok: true }>('DELETE', `/api/api-tokens/${id}`),
   wipe: (password: string, totp?: string) => request<{ ok: true }>('POST', '/api/data/wipe', { password, ...(totp ? { totp } : {}) }),
 };
 

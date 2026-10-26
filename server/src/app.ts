@@ -6,6 +6,7 @@ import { registerEventRoutes } from './api/events.js';
 import { registerInternalRoutes } from './api/internal.js';
 import { registerMediaRoutes } from './api/media.js';
 import { registerSendRoutes } from './api/send.js';
+import { registerTokenRoutes } from './api/tokens.js';
 import { registerStateRoutes } from './api/state.js';
 import { registerAuthRoutes } from './auth/routes.js';
 import type { Config } from './config.js';
@@ -40,6 +41,7 @@ export async function createApp(
   registerChatRoutes(app, ctx);
   registerMediaRoutes(app, ctx);
   registerSendRoutes(app, ctx);
+  registerTokenRoutes(app, ctx);
   registerCallRoutes(app, ctx);
   registerEventRoutes(app, ctx);
   registerAdminRoutes(app, ctx);

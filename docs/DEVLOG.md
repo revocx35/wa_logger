@@ -399,3 +399,11 @@ model, and explicitly not in wa_logger mobile (Android WebView can't run WhatsAp
   group calls are not covered; blocking mid-call stops the running recording.
 - Tests: `wa/blocklist.test.ts` (8; mutation-checked), gateway admin route test, Android `ApiClientTest`.
 
+## 2026-10-26 — API tokens for other apps (server, gateway, web)
+- Request: Poker Balance (separate app) should post game results to a WhatsApp group or DMs through wa_logger. wa_logger had only
+  cookie sessions + CSRF + Origin, so nothing but a browser could send.
+- Design: per-user bearer tokens limited to a chat allowlist, send-text + list-destinations only (no reading). Chat names are sealed to
+  the owner, so the names a token shows are copied sealed (`apitoken.key`) at creation, as in the block list's directory. The owner
+  chose scope "send + chat list" implicitly by asking only for sending; "receive" was not built (it would need message access).
+- Tests: `api/tokens.test.ts` (5), gateway routing test; migration 8. Not ported to Android (noted in AGENTS.md).
+

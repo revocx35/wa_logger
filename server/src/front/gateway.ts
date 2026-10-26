@@ -353,6 +353,16 @@ export function cleanApiPath(url: string): boolean {
   return !/(^|\/)\.{1,2}(\/|$)|\/\/|\\|[\x00-\x1f\x7f]/.test(decoded) && /^\/api(\/|$)/.test(decoded);
 }
 
+/** The tenant an `Authorization: Bearer walt_<tenant>_…` request on /api/v1/ claims, if it may use this port. */
+function apiTokenUser(gw: Gateway, req: FastifyRequest, port: number): UserRow | null {
+  const path = req.url.split('?')[0] ?? '';
+  if (!path.startsWith('/api/v1/')) return null;
+  const m = /^Bearer walt_(\d{1,5})_[A-Za-z0-9_-]{43}$/.exec(req.headers.authorization ?? '');
+  if (!m) return null;
+  const user = gw.repo.getUser(Number(m[1]));
+  return gw.usable(user, port) ? user : null;
+}
+
 /** Forwards a request of a signed-in user to that user's worker, streaming. */
 async function forwardApi(gw: Gateway, req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const res = reply.raw;
@@ -362,6 +372,21 @@ async function forwardApi(gw: Gateway, req: FastifyRequest, reply: FastifyReply)
   }
   const port = gw.localPort(req.raw);
   const secure = gw.secure(req);
+  // API tokens (other apps, no browser): the token names its tenant. The worker verifies the token itself; this only picks
+  // the worker, under the same port policy as a sign-in. Cookies are not consulted and no Origin is involved.
+  const viaToken = apiTokenUser(gw, req, port);
+  if (viaToken) {
+    let h: WorkerHandle;
+    try {
+      h = await gw.pool.ensure(viaToken.id);
+    } catch {
+      const e = Errors.unavailable('The service is starting. Please try again in a moment.');
+      return rawReply(res, e.statusCode, e);
+    }
+    const headers = upstreamHeaders(req.headers, gw.info(req), h);
+    delete headers.cookie;
+    return proxyStream(h, req.raw, res, { headers });
+  }
   const user = gw.identify(req.headers, port, secure);
   if (!user) {
     // Stale or foreign tenant cookie: forget it so the UI falls back to the login page.

@@ -12,7 +12,7 @@ export class AppError extends Error {
 }
 
 export const Errors = {
-  unauthorized: () => new AppError(401, 'unauthorized', 'Please log in.'),
+  unauthorized: (msg = 'Please log in.') => new AppError(401, 'unauthorized', msg),
   forbidden: (msg = 'Forbidden.') => new AppError(403, 'forbidden', msg),
   notFound: (what = 'Resource') => new AppError(404, 'not_found', `${what} not found.`),
   conflict: (msg: string) => new AppError(409, 'conflict', msg),

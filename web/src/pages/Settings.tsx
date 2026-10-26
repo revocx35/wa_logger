@@ -1,7 +1,7 @@
 import QRCode from 'qrcode';
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
-import type { AuditEntry, SessionInfo, Settings, TotpSetupResponse } from '../../../shared/api';
+import type { ApiTokenInfo, AuditEntry, ChatSummary, SessionInfo, Settings, TotpSetupResponse } from '../../../shared/api';
 import { api, errorMessage } from '../api/client';
 import { Icon } from '../components/Icon';
 import { ConfirmButton, ErrorNote, Spinner, WaStatePill } from '../components/ui';
@@ -373,6 +373,138 @@ function WhatsAppSection() {
   );
 }
 
+function ApiAccessSection() {
+  const [tokens, setTokens] = useState<ApiTokenInfo[] | null>(null);
+  const [chats, setChats] = useState<ChatSummary[] | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState('');
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [filter, setFilter] = useState('');
+  const [created, setCreated] = useState<string | null>(null);
+  const a = useAsync();
+  const load = useCallback(() => api.apiTokens().then((r) => setTokens(r.tokens), () => setTokens([])), []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  const startCreate = () => {
+    setCreating(true);
+    setCreated(null);
+    if (!chats) void api.chats().then((c) => setChats(c.filter((x) => (x.kind === 'user' || x.kind === 'group') && !x.removed)), () => setChats([]));
+  };
+  const toggle = (id: string) =>
+    setPicked((p) => {
+      const n = new Set(p);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    const ok = await a.run(async () => {
+      const r = await api.createApiToken(name.trim(), [...picked]);
+      setCreated(r.token);
+      setCreating(false);
+      setName('');
+      setPicked(new Set());
+      await load();
+    });
+    if (!ok) setCreated(null);
+  };
+  const shown = (chats ?? []).filter((c) => c.name.toLowerCase().includes(filter.trim().toLowerCase()));
+  return (
+    <Section id="api" title="API access">
+      <p className="muted small">
+        Lets another app (for example a poker tracker) send text messages from your WhatsApp to the chats you pick here. A token
+        can only send to those chats; it cannot read any message. Copy the token into the other app: it is shown only once.
+      </p>
+      <ErrorNote error={a.error} />
+      {created ? (
+        <>
+          <RecoveryKeyBox recoveryKey={created} />
+          <p className="ok-note">Token created. Store it now, it cannot be shown again.</p>
+        </>
+      ) : null}
+      {!tokens ? (
+        <Spinner />
+      ) : tokens.length ? (
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Chats</th>
+                <th>Created</th>
+                <th>Last used</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {tokens.map((t) => (
+                <tr key={t.id}>
+                  <td>{t.name}</td>
+                  <td>{t.chatCount}</td>
+                  <td>{formatDateTime(t.createdAt)}</td>
+                  <td>{t.lastUsedAt ? formatDateTime(t.lastUsedAt) : 'never'}</td>
+                  <td>
+                    <ConfirmButton
+                      className="btn tiny ghost"
+                      confirmLabel="Revoke token"
+                      onConfirm={() =>
+                        a.run(async () => {
+                          await api.deleteApiToken(t.id);
+                          await load();
+                        })
+                      }
+                    >
+                      Revoke
+                    </ConfirmButton>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="muted">No tokens yet.</p>
+      )}
+      {creating ? (
+        <form className="form narrow" onSubmit={submit}>
+          <label>
+            Name (which app uses it)
+            <input value={name} onChange={(e) => setName(e.target.value)} maxLength={60} required />
+          </label>
+          <label>
+            Chats it may send to
+            <input placeholder="Filter…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+          </label>
+          {!chats ? (
+            <Spinner />
+          ) : (
+            <div className="pick-list">
+              {shown.map((c) => (
+                <label key={c.id} className="check">
+                  <input type="checkbox" checked={picked.has(c.id)} onChange={() => toggle(c.id)} /> {c.name}{' '}
+                  <span className="muted small">{c.kind === 'group' ? 'group' : 'direct'}</span>
+                </label>
+              ))}
+            </div>
+          )}
+          <button className="btn primary" disabled={a.busy || !name.trim() || picked.size === 0}>
+            Create token ({picked.size} chat{picked.size === 1 ? '' : 's'})
+          </button>{' '}
+          <button type="button" className="btn ghost" onClick={() => setCreating(false)}>
+            Cancel
+          </button>
+        </form>
+      ) : (
+        <button className="btn" onClick={startCreate}>
+          New token
+        </button>
+      )}
+    </Section>
+  );
+}
+
 function AuditSection() {
   const [rows, setRows] = useState<AuditEntry[] | null>(null);
   useEffect(() => {
@@ -467,6 +599,7 @@ export function SettingsPage() {
             ['sessions', 'Sessions'],
             ['logging', 'Logging'],
             ['whatsapp', 'WhatsApp'],
+            ['api', 'API access'],
             ['audit', 'Security log'],
             ['danger', 'Danger zone'],
           ].map(([id, label]) => (
@@ -482,6 +615,7 @@ export function SettingsPage() {
       <SessionsSection />
       <LoggingSection />
       <WhatsAppSection />
+      <ApiAccessSection />
       <AuditSection />
       <DangerSection />
     </div>

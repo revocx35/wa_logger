@@ -20,12 +20,16 @@ declare module 'fastify' {
     session: ActiveSession | null;
     /** Request-scoped decryptor (lazily created from the session; disposed after the response). */
     readerInstance: DataReader | null;
+    /** The API token a /api/v1 request came with (set only on `bearer` routes). */
+    apiToken: { id: number; name: string } | null;
   }
   interface FastifyContextConfig {
     /** Route is reachable without a session. Default: false (every /api route requires auth). */
     public?: boolean;
     /** Skip the CSRF token check (only for unauthenticated auth endpoints). */
     skipCsrf?: boolean;
+    /** Authenticated by an API token (Authorization: Bearer) instead of a session: no cookie, CSRF token or Origin involved. */
+    bearer?: boolean;
   }
 }
 
@@ -211,6 +215,7 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
 
   app.decorateRequest('session', null);
   app.decorateRequest('readerInstance', null);
+  app.decorateRequest('apiToken', null);
 
   await app.register(cookie);
   await app.register(websocket, { options: { maxPayload: 4 * 1024 * 1024 } });
@@ -241,6 +246,12 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
     if (!req.url.startsWith('/')) return sendError(reply, new AppError(400, 'bad_request', 'Bad request.'));
     if (!isApiRequest(req)) return;
     const routeCfg = req.routeOptions.config ?? {};
+    // Token routes never look at cookies, so there is nothing for a cross-site page to ride on: no Origin/CSRF checks.
+    if (routeCfg.bearer) {
+      req.apiToken = ctx.apiTokens.authenticate(req.headers.authorization);
+      if (!req.apiToken) return sendError(reply, Errors.unauthorized('A valid API token is required.'));
+      return;
+    }
     const isWs = req.headers.upgrade?.toLowerCase() === 'websocket';
 
     // Cross-site request protection: every state-changing request (and every WebSocket
@@ -267,7 +278,7 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
   // public must have a session — regardless of how the URL was spelled.
   app.addHook('preHandler', async (req, reply) => {
     const route = req.routeOptions.url;
-    if (route?.startsWith('/api/') && !req.routeOptions.config?.public && !req.session) {
+    if (route?.startsWith('/api/') && !req.routeOptions.config?.public && !req.apiToken && !req.session) {
       return sendError(reply, Errors.unauthorized());
     }
   });
