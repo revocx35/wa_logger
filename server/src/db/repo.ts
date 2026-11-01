@@ -889,6 +889,7 @@ export class Repo implements DataKeyStore {
       const paths = this.wipeLoggedData();
       this.db.exec(`
         DELETE FROM sessions;
+        DELETE FROM api_tokens;
         DELETE FROM data_keys;
         DELETE FROM owner;
         DELETE FROM app_state;

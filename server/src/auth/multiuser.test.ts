@@ -178,8 +178,13 @@ describe('multi-user worker', () => {
 
     it('wipe mode: deletes the data and the keys, the next claim starts from scratch', async () => {
       const oldKey = Buffer.from(h.ctx.repo.getOwner()!.public_key);
+      const { token } = h.ctx.apiTokens.create('old app', []);
+      expect(h.ctx.apiTokens.authenticate(`Bearer ${token}`)).not.toBeNull();
       expect((await internal('POST', '/internal/reset', { mode: 'wipe', tempPassword: 'Second-Temp-Password-9' })).status).toBe(200);
       expect(h.ctx.repo.hasOwner()).toBe(false);
+      // The old owner's API tokens go with the account: they must not keep working for whoever claims it next.
+      expect(h.ctx.apiTokens.authenticate(`Bearer ${token}`)).toBeNull();
+      expect(h.ctx.repo.listApiTokens()).toEqual([]);
       expect(h.ctx.repo.getMessage('false_' + CHAT + '_M1')).toBeUndefined();
       expect(h.ctx.writer()).toBeNull();
       expect((await c.req('GET', '/api/chats')).status).toBe(401);

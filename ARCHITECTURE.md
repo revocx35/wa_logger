@@ -411,7 +411,8 @@ list other chats, or create tokens. Design points:
   data directory (0600). Same deliberate, narrow exception as the block list's directory: names of chats the owner picked.
 * **Abuse:** per-IP rate limits (30/min destinations, 20/min send), 4000-char texts, "chat not in the token" and "no such chat"
   answer identically, the audit log records `api_token_created/deleted/send` (never text, names or numbers). `wipeLoggedData`
-  clears `api_token_chats`.
+  clears `api_token_chats`; an admin *wipe* reset (`resetAccount`) deletes the tokens themselves, so they never outlive the
+  account they were made for.
 * **HTTPS for callers:** the ordinary deployment puts the gateway behind HTTPS only; callers should use HTTPS and verify (or pin) the
   certificate. A deployment whose Caddy serves plain HTTP behind a TLS proxy (`Caddyfile.http`) can set `API_TLS_PORT` (e.g. `8443`,
   published on `API_TLS_BIND`, default 127.0.0.1): `extra-ports.sh` then adds a listener at `<SITE_ADDRESS>:<port>` that forwards
