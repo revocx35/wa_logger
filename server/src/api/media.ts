@@ -172,7 +172,14 @@ export function registerMediaRoutes(app: FastifyInstance, ctx: AppContext): void
       await media.fh.close();
       throw Errors.notFound('Media');
     }
-    const key = reader.key(media.header.keyId);
+    let key: Buffer;
+    try {
+      key = reader.key(media.header.keyId);
+    } catch (err) {
+      // Unknown or unreadable data key: don't leave the file handle open.
+      await media.fh.close().catch(() => undefined);
+      throw err;
+    }
     const inline = download ? null : inlineContentType(mime);
 
     reply.header('Content-Type', inline ?? 'application/octet-stream');
