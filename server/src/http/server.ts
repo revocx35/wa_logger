@@ -237,7 +237,9 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
       const t = req.headers['x-wal-internal'];
       if (typeof t !== 'string' || !ctEqual(t, config.internalToken)) return sendError(reply, Errors.forbidden());
       // /internal is for the gateway's own calls: it marks those with a scope header it never forwards from a client.
-      if (/^\/internal(\/|$)/i.test(req.url) && req.headers['x-wal-scope'] !== 'internal') return sendError(reply, Errors.forbidden());
+      // Decided from the matched route too: the router percent-decodes, so "/%69nternal/…" reaches an /internal route.
+      const internalPath = /^\/internal(\/|$)/i.test(req.url) || /^\/internal(\/|$)/i.test(req.routeOptions.url ?? '');
+      if (internalPath && req.headers['x-wal-scope'] !== 'internal') return sendError(reply, Errors.forbidden());
     }
     if (peerGuard.isBlocked(req.socket.remoteAddress)) {
       return sendError(reply, Errors.forbidden());

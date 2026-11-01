@@ -47,6 +47,7 @@ describe('multi-user worker', () => {
     // The token alone (what a request forwarded for a browser carries) does not open the /internal routes.
     const tokenOnly = h.client({ 'x-wal-internal': INTERNAL_TOKEN });
     expect((await tokenOnly.req('GET', '/internal/info', undefined, { origin: null })).status).toBe(403);
+    expect((await tokenOnly.req('GET', '/%69nternal/info', undefined, { origin: null })).status).toBe(403);
     expect((await tokenOnly.req('POST', '/internal/reset', { mode: 'wipe', tempPassword: TEMP }, { origin: null })).status).toBe(403);
     expect((await tokenOnly.req('GET', '/INTERNAL/info', undefined, { origin: null })).status).toBe(403);
   });
