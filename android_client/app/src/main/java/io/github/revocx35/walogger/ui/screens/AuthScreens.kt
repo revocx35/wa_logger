@@ -152,9 +152,9 @@ fun SignupScreen(actions: AuthActions, onChangeServer: () -> Unit) {
     }
     AuthShell("Create your account", "This instance has no owner yet. Create the single owner account to start logging your WhatsApp.") {
         WaTextField(token, { token = it }, "Setup token", placeholder = "SETUP_TOKEN from your .env file", mono = true)
-        WaTextField(username, { username = it }, "Username")
-        WaTextField(password, { password = it }, "Password", password = true)
-        WaTextField(confirm, { confirm = it }, "Confirm password", password = true, imeAction = ImeAction.Done, onIme = submit)
+        WaTextField(username, { username = it }, "Username", contentType = androidx.compose.ui.autofill.ContentType.Username)
+        WaTextField(password, { password = it }, "Password", password = true, contentType = androidx.compose.ui.autofill.ContentType.Password)
+        WaTextField(confirm, { confirm = it }, "Confirm password", password = true, contentType = androidx.compose.ui.autofill.ContentType.NewPassword, imeAction = ImeAction.Done, onIme = submit)
         PasswordHints(password, username)
         Note("Your logs are encrypted with a key derived from this password. If you lose both the password and the recovery key, the logged data cannot be recovered by anyone.", WaIcons.lock)
         ErrorNote(error)
@@ -215,8 +215,8 @@ fun LoginScreen(actions: AuthActions, onRecover: () -> Unit, onChangeServer: () 
             },
         ) {
             if (c.needRecoveryKey) WaTextField(recoveryKey, { recoveryKey = it }, "Recovery key", mono = true, singleLine = false, minLines = 3)
-            WaTextField(newPassword, { newPassword = it }, "New password", password = true)
-            WaTextField(confirm, { confirm = it }, "Confirm new password", password = true, imeAction = ImeAction.Done, onIme = submit)
+            WaTextField(newPassword, { newPassword = it }, "New password", password = true, contentType = androidx.compose.ui.autofill.ContentType.NewPassword)
+            WaTextField(confirm, { confirm = it }, "Confirm new password", password = true, contentType = androidx.compose.ui.autofill.ContentType.NewPassword, imeAction = ImeAction.Done, onIme = submit)
             PasswordHints(newPassword, username)
             ErrorNote(error)
             WaButton("Set password and continue", submit, style = BtnStyle.Primary, block = true, busy = busy, enabled = newPassword.length >= 12 && (!c.needRecoveryKey || recoveryKey.isNotBlank()))
@@ -227,8 +227,8 @@ fun LoginScreen(actions: AuthActions, onRecover: () -> Unit, onChangeServer: () 
         return
     }
     AuthShell("Log in", "Unlock your encrypted WhatsApp log.") {
-        WaTextField(username, { username = it }, "Username", enabled = !needTotp)
-        WaTextField(password, { password = it }, "Password", password = true, enabled = !needTotp, imeAction = if (needTotp) ImeAction.Next else ImeAction.Done, onIme = { if (!needTotp) submit() })
+        WaTextField(username, { username = it }, "Username", contentType = androidx.compose.ui.autofill.ContentType.Username, enabled = !needTotp)
+        WaTextField(password, { password = it }, "Password", password = true, contentType = androidx.compose.ui.autofill.ContentType.Password, enabled = !needTotp, imeAction = if (needTotp) ImeAction.Next else ImeAction.Done, onIme = { if (!needTotp) submit() })
         if (needTotp) {
             WaTextField(totp, { totp = it.filter { ch -> ch.isDigit() || ch == ' ' }.take(7) }, "Authentication code", keyboardType = KeyboardType.NumberPassword, placeholder = "123456", imeAction = ImeAction.Done, onIme = submit)
         }
@@ -269,10 +269,10 @@ fun RecoverScreen(actions: AuthActions, onBack: () -> Unit) {
     }
     androidx.activity.compose.BackHandler(onBack = onBack)
     AuthShell("Recover access", "Use the recovery key you saved during signup to set a new password. Two-factor authentication will be turned off.") {
-        WaTextField(username, { username = it }, "Username")
+        WaTextField(username, { username = it }, "Username", contentType = androidx.compose.ui.autofill.ContentType.Username)
         WaTextField(key, { key = it }, "Recovery key", mono = true, singleLine = false, minLines = 3)
-        WaTextField(password, { password = it }, "New password", password = true)
-        WaTextField(confirm, { confirm = it }, "Confirm new password", password = true, imeAction = ImeAction.Done, onIme = submit)
+        WaTextField(password, { password = it }, "New password", password = true, contentType = androidx.compose.ui.autofill.ContentType.NewPassword)
+        WaTextField(confirm, { confirm = it }, "Confirm new password", password = true, contentType = androidx.compose.ui.autofill.ContentType.NewPassword, imeAction = ImeAction.Done, onIme = submit)
         PasswordHints(password, username)
         ErrorNote(error)
         WaButton("Reset password", submit, style = BtnStyle.Primary, block = true, busy = busy)

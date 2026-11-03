@@ -58,6 +58,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.autofill.ContentType
+import androidx.compose.ui.semantics.contentType
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -350,6 +353,8 @@ fun WaTextField(
     minLines: Int = 1,
     autoCorrect: Boolean = false,
     capitalization: KeyboardCapitalization = KeyboardCapitalization.None,
+    /** Autofill role for password managers (Bitwarden); defaults to [ContentType.Password] for password fields. */
+    contentType: ContentType? = null,
 ) {
     val c = Wa.colors
     val interaction = remember { MutableInteractionSource() }
@@ -376,6 +381,7 @@ fun WaTextField(
             interactionSource = interaction,
             modifier = Modifier
                 .fillMaxWidth()
+                .semantics { (contentType ?: if (password) ContentType.Password else null)?.let { this.contentType = it } }
                 .alpha(if (enabled) 1f else 0.6f)
                 .background(c.panel, shape)
                 .border(BorderStroke(if (focused) 2.dp else 1.dp, if (focused) c.accent else c.border), shape)

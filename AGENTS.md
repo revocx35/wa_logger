@@ -104,3 +104,5 @@ accept them. Keep it that way: a new `/api/v1` route must be send-only or metada
 - The root `.gitignore` ignores `data/`; build from a fresh `git clone` before pushing.
 - The worker decides "is this an /internal route" from the raw URL *and* the matched route (`req.routeOptions.url`): the
   router percent-decodes, so `/%69nternal/info` used to reach an /internal handler with only the forwarded worker token.
+
+- Android password managers (Bitwarden): `WaTextField` sets Compose autofill `contentType` (Username / Password / NewPassword). Tag every login/signup/password field with it, or the manager only fills the password.
