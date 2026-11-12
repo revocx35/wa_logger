@@ -738,6 +738,15 @@ export class Repo implements DataKeyStore {
     return r.changes === 1;
   }
 
+  /** Removes one message row with its edits and reactions (only used for content-less revoke stubs). */
+  deleteMessageRow(id: string): void {
+    this.transaction(() => {
+      this.db.prepare('DELETE FROM reactions WHERE message_id = ?').run(id);
+      this.db.prepare('DELETE FROM message_edits WHERE message_id = ?').run(id);
+      this.db.prepare('DELETE FROM messages WHERE id = ?').run(id);
+    });
+  }
+
   updateMessage(id: string, patch: Partial<MessageRow>): void {
     const { sets, values } = buildUpdate(MESSAGE_UPDATABLE, patch);
     if (!sets) return;

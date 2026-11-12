@@ -29,7 +29,7 @@ docker-compose.yml    builds from source;  deploy/docker-compose.yml = prebuilt 
 ```
 
 ## Commands
-- Server: `cd server && PUPPETEER_SKIP_DOWNLOAD=true npm ci && npm test && npm run typecheck` (≈210 tests, ~5 s).
+- Server: `cd server && PUPPETEER_SKIP_DOWNLOAD=true npm ci && npm test && npm run typecheck` (≈220 tests, ~5 s).
 - Web: `cd web && npm test && npm run build`.
 - Chromium manager (Go, stdlib only): `cd chromium/manager && go test ./...` (also run in the image's build stage;
   Go is at `/usr/local/go/bin` on the dev LXC).
@@ -85,6 +85,9 @@ accept them. Keep it that way: a new `/api/v1` route must be send-only or metada
 - Push or publish without the leak scan from the global instructions (IPs, secrets, history) and the owner's OK.
 
 ## Gotchas
+- **Deleted-for-everyone messages change id** (WhatsApp Web 2.3000.x): the revoked message carries the original key in
+  `protocolMessageKey`; `mapMessage` maps it back. Never look a revoke up by its own id (that gave wa_logger_mobile#1:
+  a "deleted before it could be logged" stub next to the unflagged original).
 - **Root has no DAC override in the two root processes** (capabilities are `SETUID SETGID CHOWN KILL` only): they cannot
   read, write, chmod or delete inside a tenant's directories. Create + chown top-level dirs, then do everything inside as
   that unix user (`runAs`, `find … -delete`, `rm -f` of stale `SingletonLock`/X sockets). Root also cannot `chmod` a directory

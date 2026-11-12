@@ -124,6 +124,44 @@ describe('ingest', () => {
     expect(bodyOf(id)).toBe('will be deleted');
   });
 
+  // WhatsApp Web 2.3000.x re-keys a revoked message: new stanza id, original key in protocolMessageKey (wa_logger_mobile#1).
+  const rekeyed = (orig: string, rev: string, subtype = 'sender') => ({ ...text(rev, ''), type: 'revoked', subtype, protocolMessageKey: rid(orig) });
+  const count = () => (h.ctx.repo as any).db.prepare('SELECT COUNT(*) AS n FROM messages').get().n as number;
+
+  it('flags the logged message on a re-keyed revoke, without a separate stub', async () => {
+    const id = (await ingest.message(text('R1', 'keep me'), 'live'))!;
+    await ingest.revoke(rekeyed('R1', 'REVOKE1'), null);
+    const row = h.ctx.repo.getMessage(id)!;
+    expect(row.deleted_at).toBeGreaterThan(0);
+    expect(row.type).toBe('chat');
+    expect(bodyOf(id)).toBe('keep me');
+    expect(h.ctx.repo.getMessage('false_905551112233@c.us_REVOKE1')).toBeFalsy();
+    await ingest.message(rekeyed('R1', 'REVOKE1'), 'live');
+    await ingest.message(rekeyed('R1', 'REVOKE1'), 'history');
+    expect(count()).toBe(1);
+    expect(bodyOf(id)).toBe('keep me');
+  });
+
+  it('re-keyed revoke seen first by reconcile, and `before` stored under the original id', async () => {
+    const id = (await ingest.message(text('R2', 'seen live'), 'live'))!;
+    await ingest.message(rekeyed('R2', 'REVOKE2', 'admin'), 'live');
+    expect(h.ctx.repo.getMessage(id)!.deleted_by).toBe('admin');
+    await ingest.revoke(rekeyed('R3', 'REVOKE3'), text('R3', 'only in before'));
+    expect(bodyOf('false_905551112233@c.us_R3')).toBe('only in before');
+    expect(h.ctx.repo.getMessage('false_905551112233@c.us_R3')!.deleted_at).toBeGreaterThan(0);
+    expect(count()).toBe(2);
+  });
+
+  it('removes the stub earlier versions stored for a re-keyed revoke', async () => {
+    const id = (await ingest.message(text('R4', 'logged'), 'live'))!;
+    await ingest.message({ ...text('REVOKE4', ''), type: 'revoked', subtype: 'sender' }, 'live');
+    expect(count()).toBe(2);
+    await ingest.message(rekeyed('R4', 'REVOKE4'), 'live');
+    expect(h.ctx.repo.getMessage('false_905551112233@c.us_REVOKE4')).toBeFalsy();
+    expect(h.ctx.repo.getMessage(id)!.deleted_at).toBeGreaterThan(0);
+    expect(count()).toBe(1);
+  });
+
   it('recovers the original from `before` when the message was never logged', async () => {
     await ingest.revoke({ ...text('D2', ''), type: 'revoked', subtype: 'sender' }, text('D2', 'original text'));
     const id = 'false_905551112233@c.us_D2';

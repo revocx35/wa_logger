@@ -218,6 +218,7 @@ export class Ingest {
 
     const { repo, events } = this.ctx;
     const now = Date.now();
+    this.dropRekeyedStub(m);
     const existing = repo.getMessage(m.id);
 
     if (!existing) {
@@ -243,6 +244,19 @@ export class Ingest {
 
     this.updateExisting(existing, m, source, now);
     return m.id;
+  }
+
+  /**
+   * Earlier versions stored a re-keyed revoke (`revokeKey`) as its own content-less "deleted before it could be
+   * logged" row next to the logged original (wa_logger_mobile#1). Remove such a row when the revoke is seen again.
+   */
+  private dropRekeyedStub(m: MappedMessage): void {
+    if (!m.revokeKey) return;
+    const { repo, events } = this.ctx;
+    const stub = repo.getMessage(m.revokeKey);
+    if (!stub || stub.type !== 'revoked' || stub.body_enc || stub.meta_enc) return;
+    repo.deleteMessageRow(m.revokeKey);
+    events.emit({ type: 'message_update', chatId: stub.chat_id, messageId: m.revokeKey, reason: 'deleted' });
   }
 
   private insertRevokedStub(m: MappedMessage, source: Source, now: number): void {
@@ -396,16 +410,19 @@ export class Ingest {
     if (await this.blockedMessage(after.chatId, after.senderId, after.fromMe)) return;
     const { repo, events } = this.ctx;
     const now = Date.now();
+    this.dropRekeyedStub(after);
     let existing = repo.getMessage(after.id);
     if (beforeRaw) {
       const before = mapMessage(beforeRaw);
       const target = repo.getMessage(before.id) ?? existing;
+      // Store the original under the key the revoke points at (the original key when WhatsApp re-keyed it).
+      const afterKey = after.revokeKey ? afterRaw.protocolMessageKey : afterRaw.id;
       if (!target) {
         // Never logged (e.g. app was down): store the original content from `before` first.
-        await this.message({ ...beforeRaw, id: afterRaw.id ?? beforeRaw.id }, 'live');
+        await this.message({ ...beforeRaw, id: afterKey ?? beforeRaw.id }, 'live');
         existing = repo.getMessage(after.id);
       } else if (target.type === 'revoked' && !target.body_enc) {
-        await this.message({ ...beforeRaw, id: afterRaw.id ?? beforeRaw.id }, 'live');
+        await this.message({ ...beforeRaw, id: afterKey ?? beforeRaw.id }, 'live');
         existing = repo.getMessage(after.id);
       } else {
         existing = target;

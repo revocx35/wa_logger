@@ -265,6 +265,10 @@ shared/api.d.ts       API DTO types shared by server and web (type-only)
 * Revoke: `message_revoke_everyone(after, before)` → mark the original row `deleted_at=now`, `deleted_by`.
   If the original was never logged and `before` is present, insert it first.
   If both are missing, insert a stub row flagged deleted with `body=null`.
+  WhatsApp Web 2.3000.x **re-keys** a revoked message in place (`WAWebRevokeMsgAction`): `after.id` is the original
+  chat/sender with the revoke stanza's id, and the original key is in `after._data.protocolMessageKey`. `mapMessage`
+  therefore uses `protocolMessageKey` as the id of a `revoked` message (`revokeKey` = the re-keyed id), and ingest
+  deletes a content-less stub stored under that re-keyed id by older versions (wa_logger_mobile#1).
 * Edit: `message_edit(msg, newBody, prevBody)` → push `prevBody` into `message_edits` (dedupe), set
   `body=newBody` and `edited_at`.
 * History: after the first `ready` (until `app_state.initial_sync_done` is set), fetch each chat's last

@@ -116,6 +116,12 @@ export interface MappedMessage {
   ack: number | null;
   revoked: boolean;
   revokedBy: string | null;
+  /**
+   * WhatsApp Web (2.3000.x) re-keys a message when it is deleted for everyone: the revoked model gets the revoke
+   * stanza's id and keeps the original key in `protocolMessageKey`. `id` is then the original key (the row we logged)
+   * and this is the re-keyed id, which must never become a row of its own. Null otherwise.
+   */
+  revokeKey: string | null;
   editKey: string | null;
   editTs: number | null;
   notifyName: string | null;
@@ -204,9 +210,12 @@ function quotedText(q: RawMsg): string | null {
 }
 
 export function mapMessage(raw: RawMsg): MappedMessage {
-  const idObj = raw.id ?? {};
-  const id = msgKey(idObj) ?? '';
   const rawType = String(raw.type ?? 'unknown');
+  const ownKey = msgKey(raw.id ?? {});
+  const pmk = rawType === 'revoked' ? msgKey(raw.protocolMessageKey) : null;
+  const originalKey = pmk && pmk.includes('_') && pmk !== ownKey ? pmk : null;
+  const idObj = (originalKey ? raw.protocolMessageKey : raw.id) ?? {};
+  const id = originalKey ?? ownKey ?? '';
   const fromMe = !!idObj.fromMe;
   const chatId = jid(idObj.remote) ?? (fromMe ? jid(raw.to) : jid(raw.from)) ?? 'unknown@c.us';
   const isGroupish = chatId.endsWith('@g.us') || chatId === 'status@broadcast' || chatId.endsWith('@broadcast');
@@ -334,6 +343,7 @@ export function mapMessage(raw: RawMsg): MappedMessage {
     ack: num(raw.ack),
     revoked: rawType === 'revoked',
     revokedBy: rawType === 'revoked' ? (str(raw.subtype) === 'admin' ? 'admin' : 'sender') : null,
+    revokeKey: originalKey ? ownKey : null,
     editKey,
     editTs: num(raw.latestEditSenderTimestampMs),
     notifyName: str(raw.notifyName),

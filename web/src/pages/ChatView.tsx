@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import type { ChatSummary, Message, SearchHit } from '../../../shared/api';
-import { api, errorMessage } from '../api/client';
+import { ApiError, api, errorMessage } from '../api/client';
 import { useServerEvents } from '../api/events';
 import { CallButton } from '../components/Calls';
 import { Composer } from '../components/Composer';
@@ -225,7 +225,10 @@ export function ChatView({ chatId }: { chatId: string }) {
       if (ev.type === 'message' && nextAfter) return; // viewing older history; will load when scrolling down
       api.message(ev.messageId).then(
         (m) => setMessages((cur) => upsert(cur, m)),
-        () => undefined,
+        // The row was removed (a leftover revoke stub, see Ingest.dropRekeyedStub).
+        (e) => {
+          if (e instanceof ApiError && e.status === 404) setMessages((cur) => cur.filter((x) => x.id !== ev.messageId));
+        },
       );
       if (ev.type === 'message' || (ev.type === 'message_update' && ev.reason === 'deleted')) void loadChatInfo();
     } else if (ev.type === 'chat_update' && ev.chatId === chatId) {

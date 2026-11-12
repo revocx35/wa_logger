@@ -51,7 +51,7 @@ These are facts about the library that the design relies on, checked against
 | `group_join/leave/update/admin_changed/membership_request(notification)` | `gp2` messages are routed here instead. Stored as `system` messages. |
 | `message_ciphertext(msg)` | Placeholder "waiting for this message". When it decrypts, the library emits `message_create` for the real message. |
 | `message_edit(msg, newBody, prevBody)` | From `Msg.on('change:body change:caption')`. It also fires for thumbnail/body updates on media, so ignore base64-looking bodies. Real edits carry `latestEditMsgKey`. |
-| `message_revoke_everyone(after, before?)` | `after` has `type:'revoked'` and the same id. `before` is only set if the original was the most recently changed message (the library's `last_message` trick), so it is **often undefined**. That is why we log every message on arrival. |
+| `message_revoke_everyone(after, before?)` | `after` has `type:'revoked'` and, since WhatsApp Web 2.3000.x, a **new id**: original chat/sender + the revoke stanza's id; the original key is in `after._data.protocolMessageKey` (`WAWebRevokeMsgAction` re-keys the model in place, `WAWebRevoke.getMsgKeyAfterRevoke`). `before` is only set if the original was the most recently changed message (the library's `last_message` trick, which compares the new id), so it is **almost always undefined**. That is why we log every message on arrival. |
 | `message_revoke_me(msg)` | Deleted only on the owner's devices. |
 | `message_reaction(reaction)` | `reaction.reaction === ''` means removed. `msgId` is the parent message key. |
 | `message_ack(msg, ack)` | Ack ticks for own messages. |
@@ -64,7 +64,7 @@ These are facts about the library that the design relies on, checked against
 - For media messages, `_data.body` is a base64 **JPEG thumbnail**, not text. The caption is `_data.caption`.
   `hasMedia` = `Boolean(directPath)`.
 - View-once: `_data.isViewOnce === true`.
-- Edits: `latestEditMsgKey`, `latestEditSenderTimestampMs`. Revokes: `type:'revoked'`, `subtype:'sender'|'admin'`.
+- Edits: `latestEditMsgKey`, `latestEditSenderTimestampMs`. Revokes: `type:'revoked'`, `subtype:'sender'|'admin'`, `protocolMessageKey` = the original key (the revoked message's own id is a new one).
 - `chat.fetchMessages({limit})` calls `loadEarlierMsgs` until it reaches `limit`, and **filters out notifications**.
 
 ## Media download

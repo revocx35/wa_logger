@@ -152,6 +152,18 @@ describe('mapMessage', () => {
     expect(m.revokedBy).toBe('sender');
     const a = mapMessage(base({ id: id(false, 'g@g.us', 'R2'), type: 'revoked', subtype: 'admin' }));
     expect(a.revokedBy).toBe('admin');
+    expect(a.revokeKey).toBeNull();
+  });
+
+  it('maps a re-keyed revoke (WhatsApp Web 2.3000.x) to the original key', () => {
+    const m = mapMessage(base({ id: id(false, 'g@g.us', 'REV', '5@lid'), type: 'revoked', subtype: 'admin', protocolMessageKey: id(false, 'g@g.us', 'ORIG', '5@lid') }));
+    expect(m.id).toBe('false_g@g.us_ORIG_5@lid');
+    expect(m.revokeKey).toBe('false_g@g.us_REV_5@lid');
+    expect(m.chatId).toBe('g@g.us');
+    expect(m.senderId).toBe('5@lid');
+    const chat = mapMessage(base({ id: id(false, 'a@c.us', 'C'), type: 'chat', body: 'x', protocolMessageKey: id(false, 'a@c.us', 'OTHER') }));
+    expect(chat.id).toBe('false_a@c.us_C');
+    expect(chat.revokeKey).toBeNull();
   });
 
   it('extracts edit keys', () => {
