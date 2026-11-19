@@ -1,6 +1,6 @@
 import type { AppContext } from '../context.js';
 import { F, type MessageRow, type NewMessage } from '../db/repo.js';
-import { chatKind, jid, looksLikeBase64Blob, mapMessage, msgKey, type MappedMessage, type RawMsg } from './mapper.js';
+import { chatKind, jid, looksLikeBase64Blob, mapMessage, msgKey, type MappedMessage, type MediaRef, type RawMsg } from './mapper.js';
 
 /** The subset of the WhatsApp client ingest needs (abstracted for tests). */
 export interface WaApi {
@@ -16,6 +16,8 @@ export interface WaApi {
 
 export interface MediaSink {
   enqueue(messageId: string, priority: 'live' | 'history'): void;
+  /** Keeps the media's download keys in memory, so it can still be fetched after a quick delete for everyone. */
+  remember?(messageId: string, ref: MediaRef): void;
 }
 
 export type Source = 'live' | 'history';
@@ -219,6 +221,8 @@ export class Ingest {
     const { repo, events } = this.ctx;
     const now = Date.now();
     this.dropRekeyedStub(m);
+    // Before the row exists: the queue may start on it as soon as it is inserted.
+    if (m.mediaRef) this.media.remember?.(m.id, m.mediaRef);
     const existing = repo.getMessage(m.id);
 
     if (!existing) {

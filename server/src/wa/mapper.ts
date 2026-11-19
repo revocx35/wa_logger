@@ -90,6 +90,24 @@ export interface MediaFacts {
   durationSec: number | null;
 }
 
+/**
+ * What WhatsApp Web needs to fetch and decrypt a media file from its CDN without the message model. Kept in memory
+ * only (`MediaQueue`): deleting a message for everyone re-keys it and drops its media fields in the page, so a download
+ * that starts after a quick delete can only use what was captured when the message arrived. `mediaKey` is a secret.
+ */
+export interface MediaRef {
+  directPath: string;
+  mediaKey: string;
+  encFilehash: string;
+  filehash: string | null;
+  mediaKeyTimestamp: number | null;
+  /** WhatsApp's raw type (image, video, sticker, ...), the CDN media type. */
+  type: string;
+  mimetype: string | null;
+  filename: string | null;
+  size: number | null;
+}
+
 export interface MappedMessage {
   id: string;
   chatId: string;
@@ -108,6 +126,8 @@ export interface MappedMessage {
   media: MediaFacts | null;
   /** True when WhatsApp holds downloadable media for this message (and it is not view-once). */
   downloadable: boolean;
+  /** Download keys for `downloadable` media (null when any is missing). Never stored or logged. */
+  mediaRef: MediaRef | null;
   isViewOnce: boolean;
   isForwarded: boolean;
   isStatus: boolean;
@@ -207,6 +227,24 @@ function quotedText(q: RawMsg): string | null {
   if (t === 'vcard' || t === 'multi_vcard') return 'Contact';
   const b = str(q.body);
   return b && !looksLikeBase64Blob(b) ? b : null;
+}
+
+function mediaRefOf(raw: RawMsg, rawType: string): MediaRef | null {
+  const directPath = str(raw.directPath);
+  const mediaKey = str(raw.mediaKey);
+  const encFilehash = str(raw.encFilehash);
+  if (!directPath || !mediaKey || !encFilehash) return null;
+  return {
+    directPath,
+    mediaKey,
+    encFilehash,
+    filehash: str(raw.filehash),
+    mediaKeyTimestamp: num(raw.mediaKeyTimestamp),
+    type: rawType,
+    mimetype: str(raw.mimetype),
+    filename: str(raw.filename),
+    size: num(raw.size),
+  };
 }
 
 export function mapMessage(raw: RawMsg): MappedMessage {
@@ -336,6 +374,7 @@ export function mapMessage(raw: RawMsg): MappedMessage {
     quotedStanzaId: meta.quoted?.stanzaId ?? null,
     media,
     downloadable: isMedia && hasDirectPath && !isViewOnce,
+    mediaRef: isMedia && hasDirectPath && !isViewOnce ? mediaRefOf(raw, rawType) : null,
     isViewOnce,
     isForwarded: !!raw.isForwarded,
     isStatus: !!raw.isStatusV3 || chatId === 'status@broadcast',

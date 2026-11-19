@@ -112,6 +112,9 @@ Update this file whenever a step is completed.
 - [x] Fix: media queue could stall (WhatsApp's downloadMedia can wait forever) → in-page + Node-side timeouts;
       history media whose CDN copy expired (stage NEED_POKE after a download attempt) is marked unavailable after
       2 tries instead of blocking the queue (Retry button stays available)
+- [x] Fix (2026-11-19): stickers/images/videos stayed "failed" since WhatsApp Web 2.3000.1054x (`downloadMedia()` no-op
+      for untrusted senders → `isUserInitiated`, direct CDN fetch with the keys) and media deleted for everyone within
+      seconds was lost (keys captured on arrival, kept in memory by `MediaQueue`)
 
 ## Phase 11 — HTTP mode behind a user's reverse proxy
 - [x] `caddy/Caddyfile.http` (plain HTTP, trusted_proxies private_ranges) selectable via `CADDY_CONFIG`

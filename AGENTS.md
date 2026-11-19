@@ -85,6 +85,10 @@ accept them. Keep it that way: a new `/api/v1` route must be send-only or metada
 - Push or publish without the leak scan from the global instructions (IPs, secrets, history) and the owner's OK.
 
 ## Gotchas
+- **Media downloads don't trust `mediaStage`** (2026-11-19, WhatsApp Web 2.3000.1054x): `downloadMedia()` is a no-op for
+  "untrusted" senders unless `isUserInitiated: true`, and a delete for everyone wipes the model's media keys. `wa/media.ts`
+  fetches with the keys directly and falls back to the `MediaRef` captured by `Ingest` (memory only: never persist, log or
+  return `mediaKey`). Tests: `wa/media.test.ts` (fake page).
 - **Deleted-for-everyone messages change id** (WhatsApp Web 2.3000.x): the revoked message carries the original key in
   `protocolMessageKey`; `mapMessage` maps it back. Never look a revoke up by its own id (that gave wa_logger_mobile#1:
   a "deleted before it could be logged" stub next to the unflagged original).

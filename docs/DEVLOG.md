@@ -414,3 +414,22 @@ model, and explicitly not in wa_logger mobile (Android WebView can't run WhatsAp
 - Fix: optional `API_TLS_PORT` listener (`caddy/extra-ports.sh`, `wal_api` snippet in both Caddyfiles): `/api/v1/*` only, pinned
   self-signed cert in `/data/api-tls`, `default_sni` added to `Caddyfile.http` for IP clients. Chosen by the owner over exposing 443
   or allowing plain HTTP. Tested with the built image against a stub app (200 on /api/v1, 404 elsewhere, fingerprint = logged one).
+
+## 2026-11-19 — stickers, images and videos not logged (WhatsApp Web 2.3000.1054x)
+- Report: media often shows "unavailable"/"Retry", and deleted images/videos only keep the low-quality thumbnail.
+- Production (aggregates only): every live media message of 2026-11-19 failed (0 downloaded, 9 failed/unavailable), and
+  23 of 24 live media messages deleted for everyone since October ended `unavailable`. Two causes:
+  1. WhatsApp Web 2.3000.1054261556 made `Msg.downloadMedia()` a silent no-op for messages not "trusted for auto-download"
+     unless `isUserInitiated` is set. Stage stayed `INIT` → 4 × "retry" → `failed`. Read-only probe: the failed stickers were
+     in memory with full keys, `isTrustedForAutoDownload` false.
+  2. A delete for everyone re-keys the message and drops `mediaData` and the keys: lookups by the original id find nothing,
+     or `mediaData.mediaStage` threw ("Cannot read properties of undefined") when it happened mid-download. With cause 1
+     delaying every download, nearly every quickly deleted media was lost.
+- Fix: `downloadMedia({isUserInitiated:true})`, then always `downloadAndMaybeDecrypt` with the keys (stage is UI state only;
+  404/410 still mean gone); `Ingest` gives each media message's `MediaRef` to `MediaQueue` (memory only, 5000 max), used when the
+  model is gone or revoked; `retryMedia` also accepts deleted media while its keys are known. No schema/API/UI change, so no
+  client port. Tests: `wa/media.test.ts` (fake page: untrusted INIT, revoked, mediaData vanishing mid-download, 404, queue),
+  mapper and ingest tests.
+- Not verified against a live WhatsApp account from here (production writes/downloads need the owner's go-ahead); the old
+  `failed` rows can be re-tried from the UI after the deploy.
+

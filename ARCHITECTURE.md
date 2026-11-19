@@ -256,6 +256,13 @@ shared/api.d.ts       API DTO types shared by server and web (type-only)
   5 s/30 s/2 min/10 min. The download happens inside the page (same internals as whatsapp-web.js) and is pulled
   over CDP in 2 MiB slices that are encrypted straight to disk. Every WhatsApp call is raced against a timer
   (20 s poke, 120 s download, 180 s overall), because `downloadMedia()` can hang forever.
+  The media file is fetched straight from WhatsApp's CDN with the message's keys (`downloadAndMaybeDecrypt`), whatever
+  WhatsApp Web's own `mediaStage` says; `downloadMedia({isUserInitiated:true})` is called first only so WhatsApp asks
+  the phone for a re-upload when needed (without `isUserInitiated` it is a silent no-op for untrusted senders since
+  2.3000.1054x). **Download keys in memory:** a delete for everyone re-keys the message and drops its media fields in
+  the page, so `Ingest` hands each media message's keys (`MediaRef`: directPath, mediaKey, file hashes, mimetype) to
+  the `MediaQueue` on arrival; the queue keeps them in memory only (at most 5000, dropped after a successful download
+  and on stop; never stored, logged or sent to clients) and uses them when the model is gone or revoked.
   Media larger than `MEDIA_MAX_MB` is `too_large`. History media whose CDN copy expired (stage `NEED_POKE`
   after a download attempt, observed for media older than about 2–4 weeks) becomes `unavailable` after 2 tries.
   Downloads pause while the data filesystem has less than 2 GB free. Failed, too-large, skipped or unavailable

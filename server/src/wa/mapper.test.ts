@@ -89,6 +89,15 @@ describe('mapMessage', () => {
     expect(m.media).toEqual({ mime: 'image/jpeg', filename: null, size: 12345, width: 800, height: 600, durationSec: null });
   });
 
+  it('keeps the download keys of downloadable media (and none for view-once or incomplete keys)', () => {
+    const keys = { directPath: '/v/t62/x', mediaKey: 'S0VZ', encFilehash: 'RU5D', filehash: 'SEFTSA==', mediaKeyTimestamp: 1_700_000_000, mimetype: 'image/webp', size: 99 };
+    const m = mapMessage(base({ id: id(false, 'a@c.us', 'K1'), type: 'sticker', ...keys }));
+    expect(m.mediaRef).toEqual({ ...keys, type: 'sticker', filename: null });
+    expect(mapMessage(base({ id: id(false, 'a@c.us', 'K2'), type: 'image', ...keys, isViewOnce: true })).mediaRef).toBeNull();
+    expect(mapMessage(base({ id: id(false, 'a@c.us', 'K3'), type: 'image', ...keys, mediaKey: undefined })).mediaRef).toBeNull();
+    expect(mapMessage(base({ id: id(false, 'a@c.us', 'K4'), type: 'chat', body: 'hi', ...keys })).mediaRef).toBeNull();
+  });
+
   it('never treats a thumbnail as text', () => {
     const m = mapMessage(base({ id: id(false, 'a@c.us', 'V'), type: 'video', body: THUMB, directPath: '/x', from: 'a@c.us' }));
     expect(m.body).toBeNull();

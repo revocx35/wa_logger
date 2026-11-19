@@ -102,6 +102,24 @@ describe('ingest', () => {
     expect(seen).toEqual(['pending']);
   });
 
+  it('hands the media download keys to the queue before it enqueues the row, also for a deleted original', async () => {
+    const order: string[] = [];
+    ingest = new Ingest(h.ctx, api, {
+      enqueue: (qid) => order.push(`enqueue:${qid}`),
+      remember: (qid, ref) => order.push(`remember:${qid}:${ref.directPath}`),
+    });
+    const keys = { directPath: '/p', mediaKey: 'S0VZ', encFilehash: 'RU5D', size: 10, mimetype: 'image/webp' };
+    await ingest.message({ ...text('R1', ''), type: 'sticker', ...keys }, 'live');
+    expect(order).toEqual(['remember:false_905551112233@c.us_R1:/p', 'enqueue:false_905551112233@c.us_R1']);
+    // Never logged before it was deleted for everyone: the original from `before` still brings its keys.
+    order.length = 0;
+    const before: RawMsg = { ...text('R2', ''), type: 'video', ...keys, directPath: '/q' };
+    const after: RawMsg = { ...text('R2X', ''), type: 'revoked', protocolMessageKey: rid('R2'), subtype: 'sender' };
+    await ingest.revoke(after, before);
+    expect(order).toEqual(['remember:false_905551112233@c.us_R2:/q', 'enqueue:false_905551112233@c.us_R2']);
+    expect(h.ctx.repo.getMessage('false_905551112233@c.us_R2')!.deleted_at).not.toBeNull();
+  });
+
   it('stores the disappearing-messages timer and backfills it on older rows', async () => {
     const id = (await ingest.message({ ...text('E1', 'hi'), ephemeralDuration: 86400 }, 'live'))!;
     expect(h.ctx.repo.getMessage(id)!.ephemeral_sec).toBe(86400);

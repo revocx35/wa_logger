@@ -308,7 +308,8 @@ export class WaService implements WaController {
 
   retryMedia(messageId: string): boolean {
     const row = this.ctx.repo.getMessage(messageId);
-    if (!row || row.is_view_once || row.deleted_at && !row.media_id && row.media_status === 'unavailable') {
+    // Deleted for everyone before it was downloaded: only retryable while its download keys are still in memory.
+    if (!row || row.is_view_once || (row.deleted_at && !row.media_id && row.media_status === 'unavailable' && !this.media.hasRef(messageId))) {
       return false;
     }
     if (!['failed', 'too_large', 'skipped', 'unavailable'].includes(row.media_status)) return false;

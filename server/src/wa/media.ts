@@ -6,6 +6,7 @@ import { randomBytes } from '../crypto/primitives.js';
 import { MediaFileWriter } from '../crypto/stream.js';
 import { F } from '../db/repo.js';
 import { maskId } from '../log.js';
+import type { MediaRef } from './mapper.js';
 
 /* ------------------------------------------------------ encrypted storage */
 
@@ -78,47 +79,77 @@ export type DownloadOutcome =
  */
 const PREP_TIMEOUT_MS = 180_000;
 
-export async function downloadMessageMedia(ctx: AppContext, page: Page, messageId: string, maxBytes: number): Promise<DownloadOutcome> {
+export async function downloadMessageMedia(
+  ctx: AppContext,
+  page: Page,
+  messageId: string,
+  maxBytes: number,
+  ref: MediaRef | null = null,
+): Promise<DownloadOutcome> {
   let prepTimer: NodeJS.Timeout | undefined;
   const prepTimeout = new Promise<PrepResult>((resolve) => {
     prepTimer = setTimeout(() => resolve({ status: 'retry', reason: 'timeout' }), PREP_TIMEOUT_MS);
   });
   const prepCall = (page.evaluate(
-    async (msgId: string, max: number) => {
+    async (msgId: string, max: number, saved: MediaRef | null) => {
       /* eslint-disable @typescript-eslint/no-explicit-any */
       const w = window as any;
       const store: Map<string, { u8: Uint8Array; t: number }> = (w.__walMedia ||= new Map());
       for (const [k, v] of store) if (Date.now() - v.t > 10 * 60_000) store.delete(k);
       const { Msg } = w.require('WAWebCollections');
       const msg = Msg.get(msgId) || (await Msg.getMessagesById([msgId]))?.messages?.[0];
-      if (!msg) return { status: 'unavailable', reason: 'not_found' };
-      if (msg.isViewOnce) return { status: 'view_once' };
-      if (!msg.mediaData || !msg.directPath) return { status: 'unavailable', reason: 'no_media' };
-      if (typeof msg.size === 'number' && msg.size > max) return { status: 'too_large', size: msg.size };
-      if (msg.mediaData.mediaStage === 'REUPLOADING') return { status: 'retry', reason: 'reuploading' };
+      if (msg?.isViewOnce) return { status: 'view_once' };
+      // Deleted for everyone: WhatsApp re-keys the message and drops its media fields (mediaData becomes undefined),
+      // so only the keys captured on arrival (`saved`) can still fetch the file from the CDN.
+      const live = msg && msg.type !== 'revoked' && msg.mediaData ? msg : null;
+      if (!live && !saved) return { status: 'unavailable', reason: msg ? 'no_media' : 'not_found' };
       // WhatsApp's own calls can wait indefinitely (e.g. for the phone): always race them against a timer.
       const within = <T,>(p: Promise<T>, ms: number): Promise<T | 'timeout'> =>
         Promise.race([p, new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), ms))]);
-      if (msg.mediaData.mediaStage !== 'RESOLVED') {
-        try {
-          await within(msg.downloadMedia({ downloadEvenIfExpensive: true, rmrReason: 1 }), 20_000);
-        } catch {
-          /* fall through to the stage check */
+      let stage = 'NONE';
+      let src: MediaRef | null = saved;
+      if (live) {
+        // mediaData can disappear at any await (a delete for everyone arriving meanwhile).
+        const stageOf = () => String(live.mediaData?.mediaStage ?? 'GONE');
+        if (typeof live.size === 'number' && live.size > max) return { status: 'too_large', size: live.size };
+        stage = stageOf();
+        if (stage === 'REUPLOADING') return { status: 'retry', reason: 'reuploading' };
+        if (stage !== 'RESOLVED') {
+          let returned = false;
+          try {
+            // `isUserInitiated`: since WhatsApp Web 2.3000.1054x, downloadMedia() silently does nothing for messages that
+            // are not "trusted for auto-download" (e.g. stickers/images from unknown group members) unless the user asked.
+            returned = (await within(live.downloadMedia({ downloadEvenIfExpensive: true, rmrReason: 1, isUserInitiated: true }), 20_000)) !== 'timeout';
+          } catch {
+            /* fall through to the stage check */
+          }
+          // Give an in-flight fetch a few seconds to resolve (nothing is in flight if it returned and the stage is still INIT).
+          const deadline = returned && stageOf() === 'INIT' ? 0 : Date.now() + 8_000;
+          while (Date.now() < deadline) {
+            const st = stageOf();
+            if (st === 'RESOLVED' || st.includes('ERROR') || st === 'NEED_POKE' || st === 'GONE') break;
+            await new Promise((r) => setTimeout(r, 500));
+          }
+          stage = stageOf();
         }
-        // Give an in-flight fetch a few seconds to resolve.
-        const deadline = Date.now() + 8_000;
-        while (Date.now() < deadline) {
-          const st = String(msg.mediaData.mediaStage);
-          if (st === 'RESOLVED' || st.includes('ERROR') || st === 'NEED_POKE') break;
-          await new Promise((r) => setTimeout(r, 500));
+        if (stage === 'REUPLOADING') return { status: 'retry', reason: 'reuploading' };
+        // The model's own keys win (a re-upload from the phone gives a new directPath); the saved ones are the fallback.
+        if (live.directPath && live.mediaKey && live.encFilehash) {
+          src = {
+            directPath: live.directPath,
+            mediaKey: live.mediaKey,
+            encFilehash: live.encFilehash,
+            filehash: live.filehash ?? null,
+            mediaKeyTimestamp: live.mediaKeyTimestamp ?? null,
+            type: live.type,
+            mimetype: live.mimetype ?? null,
+            filename: live.filename ?? null,
+            size: typeof live.size === 'number' ? live.size : null,
+          };
         }
       }
-      const stage = String(msg.mediaData.mediaStage);
-      if (stage.includes('ERROR')) return { status: 'failed', reason: stage };
-      // NEED_POKE after we already asked to download = the CDN copy has expired (404); WhatsApp Web only
-      // re-requests it from the phone on a manual click. Report it as unavailable instead of blocking.
-      if (stage === 'NEED_POKE') return { status: 'unavailable', reason: 'expired' };
-      if (stage !== 'RESOLVED') return { status: 'retry', reason: stage };
+      if (!src) return { status: 'unavailable', reason: 'no_media' };
+      if (typeof src.size === 'number' && src.size > max) return { status: 'too_large', size: src.size };
       const qpl = {
         addAnnotations() {
           return this;
@@ -127,33 +158,39 @@ export async function downloadMessageMedia(ctx: AppContext, page: Page, messageI
           return this;
         },
       };
+      // Fetch straight from the CDN with the keys, whatever the stage says: the stage is only WhatsApp's UI state
+      // (INIT for media it chose not to auto-download), and a 404 tells us reliably that the file is gone.
       let buf: ArrayBuffer | 'timeout';
       try {
         buf = await within(w.require('WAWebDownloadManager').downloadManager.downloadAndMaybeDecrypt({
-          directPath: msg.directPath,
-          encFilehash: msg.encFilehash,
-          filehash: msg.filehash,
-          mediaKey: msg.mediaKey,
-          mediaKeyTimestamp: msg.mediaKeyTimestamp,
-          type: msg.type,
+          directPath: src.directPath,
+          encFilehash: src.encFilehash,
+          filehash: src.filehash,
+          mediaKey: src.mediaKey,
+          mediaKeyTimestamp: src.mediaKeyTimestamp,
+          type: src.type,
           // Since WhatsApp Web 2.3000.1049x the result is checked against this (absent = octet-stream → rejected).
-          mimetype: msg.mimetype,
+          mimetype: src.mimetype,
           signal: new AbortController().signal,
           downloadQpl: qpl,
         }), 120_000);
       } catch (e: any) {
-        if (e && (e.status === 404 || e.status === 410)) return { status: 'unavailable', reason: 'gone' };
+        // NEED_POKE after our download request = the CDN copy expired; WhatsApp Web re-requests it from the phone only
+        // on a manual click.
+        if (e && (e.status === 404 || e.status === 410)) return { status: 'unavailable', reason: stage === 'NEED_POKE' ? 'expired' : 'gone' };
+        if (stage.includes('ERROR')) return { status: 'failed', reason: stage };
         return { status: 'failed', reason: `download_error:${String(e?.name || 'unknown').slice(0, 40)}` };
       }
       if (buf === 'timeout') return { status: 'retry', reason: 'download_timeout' };
       if (buf.byteLength > max) return { status: 'too_large', size: buf.byteLength };
       const token = `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
       store.set(token, { u8: new Uint8Array(buf), t: Date.now() });
-      return { status: 'ok', token, size: buf.byteLength, mimetype: msg.mimetype || null, filename: msg.filename || null };
+      return { status: 'ok', token, size: buf.byteLength, mimetype: src.mimetype || null, filename: src.filename || null };
       /* eslint-enable @typescript-eslint/no-explicit-any */
     },
     messageId,
     maxBytes,
+    ref,
   ) as Promise<PrepResult>);
   const prep = await Promise.race([prepCall, prepTimeout]).finally(() => clearTimeout(prepTimer));
 
@@ -203,6 +240,8 @@ export async function downloadMessageMedia(ctx: AppContext, page: Page, messageI
 const MAX_ATTEMPTS = 4;
 const MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024;
 const BACKOFF_MS = [5_000, 30_000, 120_000, 600_000];
+/** Download keys kept in memory (see MediaRef); the oldest are dropped first. */
+const MAX_REFS = 5000;
 
 export class MediaQueue {
   private readonly high: string[] = [];
@@ -212,6 +251,7 @@ export class MediaQueue {
   private paused = true;
   private readonly timers = new Set<NodeJS.Timeout>();
   private lowDiskWarned = false;
+  private readonly refs = new Map<string, MediaRef>();
 
   constructor(
     private readonly ctx: AppContext,
@@ -228,6 +268,17 @@ export class MediaQueue {
     this.queued.add(messageId);
     (priority === 'live' ? this.high : this.low).push(messageId);
     this.pump();
+  }
+
+  remember(messageId: string, ref: MediaRef): void {
+    this.refs.delete(messageId);
+    this.refs.set(messageId, ref);
+    if (this.refs.size > MAX_REFS) this.refs.delete(this.refs.keys().next().value!);
+  }
+
+  /** True when the media can still be fetched without WhatsApp's message model (e.g. after a delete for everyone). */
+  hasRef(messageId: string): boolean {
+    return this.refs.has(messageId);
   }
 
   /** Re-queues every message still marked pending in the DB (e.g. after a restart). */
@@ -248,6 +299,7 @@ export class MediaQueue {
     this.paused = true;
     for (const t of this.timers) clearTimeout(t);
     this.timers.clear();
+    this.refs.clear();
   }
 
   private next(): string | undefined {
@@ -306,8 +358,9 @@ export class MediaQueue {
       events.emit({ type: 'message_update', chatId: row.chat_id, messageId: id, reason: 'media' });
     };
     try {
-      const out = await downloadMessageMedia(this.ctx, page, id, this.ctx.mediaMaxBytes());
+      const out = await downloadMessageMedia(this.ctx, page, id, this.ctx.mediaMaxBytes(), this.refs.get(id) ?? null);
       if (out.status === 'ok') {
+        this.refs.delete(id);
         // The row may have been wiped while downloading, or (own sent media) got its file from the upload meanwhile.
         const now = repo.getMessage(id);
         if (!now || now.media_id) {
