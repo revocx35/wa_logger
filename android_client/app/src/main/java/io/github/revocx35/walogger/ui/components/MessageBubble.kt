@@ -271,7 +271,7 @@ fun MessageBubble(msg: Message, isGroup: Boolean, showSender: Boolean, highlight
     }
     val innerMax = maxBubbleWidth - 17.dp
     val selection = LocalSelection.current
-    val selectable = selection != null && MessageSelection.selectable(msg)
+    val selectable = selection != null && selection.canSelect(msg)
     val selected = selection?.isSelected(msg.id) == true
 
     Column(

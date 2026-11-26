@@ -1,9 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import type { DeletedFeedPage, MediaFeedPage, MessageEdit, MessagePage, SearchHit, SearchResponse } from '../../../shared/api.js';
+import type { DeleteMessagesResult, DeletedFeedPage, MediaFeedPage, MessageEdit, MessagePage, SearchHit, SearchResponse } from '../../../shared/api.js';
 import type { AppContext } from '../context.js';
 import { F, decodeCursor, encodeCursor, type MessageRow } from '../db/repo.js';
 import { Errors } from '../errors.js';
+import { deleteMediaFile } from '../wa/media.js';
 import { getReader } from '../http/server.js';
 import { Presenter } from './view.js';
 
@@ -104,6 +105,26 @@ export function registerChatRoutes(app: FastifyInstance, ctx: AppContext): void 
     if (!repo.getMessage(messageId)) throw Errors.notFound('Message');
     if (!ctx.wa.retryMedia(messageId)) throw Errors.conflict('This media cannot be retried.');
     return { ok: true };
+  });
+
+  // Storage controls: delete messages from the log (never from WhatsApp). Their ids are remembered so history sync
+  // doesn't log them again; their media files are deleted too.
+  app.post('/api/messages/delete', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req): Promise<DeleteMessagesResult> => {
+    const { ids } = z
+      .object({ ids: z.array(MessageIdParam.shape.messageId).min(1).max(500) })
+      .strict()
+      .parse(req.body);
+    const unique = [...new Set(ids)];
+    const out = repo.removeMessages(unique, Date.now(), true);
+    for (const p of out.paths) await deleteMediaFile(ctx, p).catch(() => undefined);
+    repo.audit('messages_deleted', req.ip, `${out.removed.length} messages`);
+    const chats = new Set<string>();
+    for (const r of out.removed) {
+      chats.add(r.chatId);
+      ctx.events.emit({ type: 'message_update', chatId: r.chatId, messageId: r.id, reason: 'deleted' });
+    }
+    for (const chatId of chats) ctx.events.emit({ type: 'chat_update', chatId });
+    return { deleted: out.removed.length };
   });
 
   app.get('/api/deleted', async (req) => {

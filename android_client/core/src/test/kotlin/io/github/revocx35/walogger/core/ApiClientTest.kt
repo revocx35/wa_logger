@@ -280,4 +280,28 @@ class ApiClientTest {
         assertEquals(true, WaJson.decodeFromString(Settings.serializer(), """{"recordCalls":true}""").recordCalls)
         assertEquals("""{"recordCalls":true}""", WaJson.encodeToString(SettingsPatch.serializer(), SettingsPatch(recordCalls = true)))
     }
+
+    @Test
+    fun deletesMessagesFromTheLogAndReadsRetentionSettings() = runBlocking {
+        api.csrfToken = "tok"
+        server.enqueue(json("""{"deleted":2}"""))
+        assertEquals(2, api.deleteMessages(listOf("false_1@c.us_A", "false_1@c.us_B")).deleted)
+        val post = server.takeRequest()
+        assertEquals("POST", post.method)
+        assertEquals("/api/messages/delete", post.target)
+        assertEquals("""{"ids":["false_1@c.us_A","false_1@c.us_B"]}""", post.body?.utf8())
+        assertEquals("tok", post.headers["X-CSRF-Token"])
+
+        val s = WaJson.decodeFromString(Settings.serializer(), """{"messageRetentionDays":30,"mediaRetentionDays":7}""")
+        assertEquals(30, s.messageRetentionDays)
+        assertEquals(7, s.mediaRetentionDays)
+        // An older server without storage controls: keep forever.
+        assertEquals(0, WaJson.decodeFromString(Settings.serializer(), "{}").messageRetentionDays)
+        assertEquals("""{"mediaRetentionDays":90}""", WaJson.encodeToString(SettingsPatch.serializer(), SettingsPatch(mediaRetentionDays = 90)))
+        val m = WaJson.decodeFromString(MediaInfo.serializer(), """{"status":"expired"}""")
+        assertEquals(MediaStatus.Expired, m.status)
+        assertEquals("Keep forever", retentionLabel(0))
+        assertEquals("30 days", retentionLabel(30))
+        assertEquals("2 years", retentionLabel(730))
+    }
 }

@@ -70,6 +70,7 @@ private fun statusText(s: MediaStatus): String = when (s) {
     MediaStatus.Skipped -> "History media not downloaded"
     MediaStatus.Unavailable -> "No longer available on WhatsApp"
     MediaStatus.ViewOnce -> "View-once media is not logged"
+    MediaStatus.Expired -> "Removed by your storage setting"
     else -> ""
 }
 

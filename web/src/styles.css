@@ -2035,3 +2035,25 @@ label.switch {
   border: 1px solid var(--border, rgba(127, 127, 127, 0.3));
   border-radius: 8px;
 }
+
+/* Settings → Storage */
+.retention p {
+  margin: 4px 0 0;
+}
+.retention .row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.retention .row-actions .warn-note {
+  flex-basis: 100%;
+}
+.warn-note {
+  color: var(--text);
+  background: var(--warn-bg);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  margin: 0;
+}

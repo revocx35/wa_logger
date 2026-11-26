@@ -30,6 +30,8 @@ import type {
   SendResult,
   SessionInfo,
   Settings,
+  DeleteMessagesRequest,
+  DeleteMessagesResult,
   SignupResponse,
   TotpSetupResponse,
   UploadResponse,
@@ -169,6 +171,8 @@ export const api = {
     }),
   react: (messageId: string, emoji: string) => request<{ ok: true }>('POST', `/api/messages/${enc(messageId)}/react`, { emoji }),
   revoke: (messageId: string) => request<{ ok: true }>('POST', `/api/messages/${enc(messageId)}/revoke`),
+  /** Deletes messages from the log only (not from WhatsApp). */
+  deleteMessages: (ids: string[]) => request<DeleteMessagesResult>('POST', '/api/messages/delete', { ids } satisfies DeleteMessagesRequest),
   editMessage: (messageId: string, text: string) => request<{ ok: true }>('POST', `/api/messages/${enc(messageId)}/edit`, { text }),
   markRead: (chatId: string) => request<{ ok: true }>('POST', `/api/chats/${enc(chatId)}/read`),
   newChat: (phone: string) => request<NewChatResponse>('POST', '/api/chats/new', { phone }),

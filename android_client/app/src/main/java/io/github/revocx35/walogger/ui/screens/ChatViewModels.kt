@@ -114,6 +114,8 @@ interface ChatState {
     fun loadNewer()
     fun jump(messageId: String)
     fun runSearch()
+    /** Storage control: deletes messages from the log (not from WhatsApp). */
+    fun deleteFromLog(ids: List<String>) {}
 }
 
 /** One chat's log (like the web's ChatView): paging both ways, jump to a message, live updates, in-chat search. */
@@ -281,6 +283,25 @@ class ChatViewModel(private val session: ServerSession, override val chatId: Str
             _scroll.tryEmit(ChatScroll.To(messageId, smooth = true))
         } else {
             loadInitial(messageId)
+        }
+    }
+
+    override fun deleteFromLog(ids: List<String>) {
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            try {
+                // The server takes 500 ids per request.
+                for (chunk in ids.chunked(500)) {
+                    session.api.deleteMessages(chunk)
+                    val gone = chunk.toHashSet()
+                    messages = messages.filter { it.id !in gone }
+                }
+                loadChatInfo()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                error = session.fail(javaClass.simpleName, e)
+            }
         }
     }
 

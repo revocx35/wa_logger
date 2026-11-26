@@ -348,6 +348,84 @@ function LoggingSection() {
   );
 }
 
+/** Storage: retention periods (days; 0 = keep forever). Shared presets with the Android app. */
+const RETENTION_PRESETS = [0, 1, 7, 14, 30, 90, 180, 365, 730];
+
+export function retentionLabel(days: number): string {
+  if (days === 0) return 'Keep forever';
+  if (days === 1) return '1 day';
+  if (days % 365 === 0) return days === 365 ? '1 year' : `${days / 365} years`;
+  return `${days} days`;
+}
+
+function RetentionPicker({ label, help, value, onSave }: { label: string; help: string; value: number; onSave: (days: number) => void }) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  const options = RETENTION_PRESETS.includes(value) ? RETENTION_PRESETS : [...RETENTION_PRESETS, value].sort((x, y) => x - y);
+  // Turning retention on or shortening it deletes data right away: ask once more.
+  const deletes = draft !== 0 && (value === 0 || draft < value);
+  return (
+    <div className="retention">
+      <label>
+        {label}
+        <select value={draft} onChange={(e) => setDraft(Number(e.target.value))}>
+          {options.map((d) => (
+            <option key={d} value={d}>
+              {retentionLabel(d)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p className="muted small">{help}</p>
+      {draft !== value ? (
+        <div className="row-actions">
+          {deletes ? <p className="warn-note small">Everything older than {retentionLabel(draft).toLowerCase()} will be deleted from the log now. This can’t be undone.</p> : null}
+          <button className={deletes ? 'btn tiny danger' : 'btn tiny primary'} onClick={() => onSave(draft)}>
+            {deletes ? 'Delete and save' : 'Save'}
+          </button>
+          <button className="btn tiny ghost" onClick={() => setDraft(value)}>
+            Cancel
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function StorageSection() {
+  const [s, setS] = useState<Settings | null>(null);
+  const a = useAsync();
+  useEffect(() => {
+    api.settings().then(setS, () => undefined);
+  }, []);
+  if (!s) return <Spinner />;
+  const save = (patch: Partial<Settings>) => a.run(async () => setS(await api.updateSettings(patch)), 'Saved.');
+  return (
+    <Section id="storage" title="Storage">
+      <div className="form narrow">
+        <RetentionPicker
+          label="Keep messages"
+          help="Older messages are deleted from the log together with their photos, videos and files. Older history is not imported again."
+          value={s.messageRetentionDays ?? 0}
+          onSave={(d) => save({ messageRetentionDays: d })}
+        />
+        <RetentionPicker
+          label="Keep photos and videos"
+          help="Older photos, videos, GIFs and stickers are deleted; the message, its caption and the small preview stay."
+          value={s.mediaRetentionDays ?? 0}
+          onSave={(d) => save({ mediaRetentionDays: d })}
+        />
+      </div>
+      <p className="muted small">
+        Old data is cleaned up every hour. To delete single messages, open a message’s menu → Delete from log, or select several in a chat (trash button). Messages deleted here are only removed from this
+        log, not from WhatsApp, and are not logged again.
+      </p>
+      <ErrorNote error={a.error} />
+      {a.ok ? <p className="ok-note">{a.ok}</p> : null}
+    </Section>
+  );
+}
+
 function WhatsAppSection() {
   const { wa } = useAppState();
   const a = useAsync();
@@ -598,6 +676,7 @@ export function SettingsPage() {
             ['recovery', 'Recovery key'],
             ['sessions', 'Sessions'],
             ['logging', 'Logging'],
+            ['storage', 'Storage'],
             ['whatsapp', 'WhatsApp'],
             ['api', 'API access'],
             ['audit', 'Security log'],
@@ -614,6 +693,7 @@ export function SettingsPage() {
       <RecoverySection />
       <SessionsSection />
       <LoggingSection />
+      <StorageSection />
       <WhatsAppSection />
       <ApiAccessSection />
       <AuditSection />

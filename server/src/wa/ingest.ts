@@ -1,4 +1,5 @@
 import type { AppContext } from '../context.js';
+import { RETAINED_MEDIA_TYPES, retentionCutoff } from '../retention.js';
 import { F, type MessageRow, type NewMessage } from '../db/repo.js';
 import { chatKind, jid, looksLikeBase64Blob, mapMessage, msgKey, type MappedMessage, type MediaRef, type RawMsg } from './mapper.js';
 
@@ -172,6 +173,10 @@ export class Ingest {
     if (!m.downloadable) return 'unavailable';
     if (m.media.size && m.media.size > this.ctx.mediaMaxBytes()) return 'too_large';
     if (source === 'history' && !this.ctx.settings.get().downloadHistoryMedia) return 'skipped';
+    if ((RETAINED_MEDIA_TYPES as readonly string[]).includes(m.type)) {
+      const cutoff = retentionCutoff(this.ctx.settings.get().mediaRetentionDays, Date.now());
+      if (cutoff !== null && m.ts < cutoff) return 'expired';
+    }
     return 'pending';
   }
 
@@ -206,6 +211,16 @@ export class Ingest {
     };
   }
 
+  /**
+   * Storage controls: the owner deleted this message from the log (it must not come back with the next history sync),
+   * or it is older than the message retention setting (the sweep would delete it again).
+   */
+  private notKept(id: string, ts: number): boolean {
+    const cutoff = retentionCutoff(this.ctx.settings.get().messageRetentionDays, Date.now());
+    if (cutoff !== null && ts > 0 && ts < cutoff) return true;
+    return this.ctx.repo.isMessageRemoved(id);
+  }
+
   /** Handles message_create / history / reconcile for one message. Returns the stored row id or null. */
   async message(raw: RawMsg, source: Source): Promise<string | null> {
     const w = this.writer;
@@ -213,6 +228,7 @@ export class Ingest {
     const m = mapMessage(raw);
     if (m.skip) return null;
     if (m.isStatus && !this.ctx.settings.get().logStatus) return null;
+    if (this.notKept(m.id, m.ts)) return null;
     if (await this.blockedMessage(m.chatId, m.senderId, m.fromMe)) return null;
 
     await this.ensureChat(m.chatId);
@@ -411,6 +427,7 @@ export class Ingest {
   async revoke(afterRaw: RawMsg, beforeRaw: RawMsg | null): Promise<void> {
     if (!this.writer) return;
     const after = mapMessage(afterRaw);
+    if (this.notKept(after.id, after.ts)) return;
     if (await this.blockedMessage(after.chatId, after.senderId, after.fromMe)) return;
     const { repo, events } = this.ctx;
     const now = Date.now();

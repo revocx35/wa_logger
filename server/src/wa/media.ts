@@ -361,9 +361,10 @@ export class MediaQueue {
       const out = await downloadMessageMedia(this.ctx, page, id, this.ctx.mediaMaxBytes(), this.refs.get(id) ?? null);
       if (out.status === 'ok') {
         this.refs.delete(id);
-        // The row may have been wiped while downloading, or (own sent media) got its file from the upload meanwhile.
+        // The row may have been wiped or deleted while downloading, its media expired by the retention setting, or
+        // (own sent media) it got its file from the upload meanwhile.
         const now = repo.getMessage(id);
-        if (!now || now.media_id) {
+        if (!now || now.media_id || now.media_status !== 'pending') {
           const m = repo.getMedia(out.mediaId);
           if (m) {
             repo.deleteMedia(m.id);

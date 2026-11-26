@@ -54,7 +54,9 @@ import io.github.revocx35.walogger.core.ApiClient
 import io.github.revocx35.walogger.core.AuditEntry
 import io.github.revocx35.walogger.core.SessionInfo
 import io.github.revocx35.walogger.core.Settings
+import io.github.revocx35.walogger.core.RETENTION_PRESETS
 import io.github.revocx35.walogger.core.SettingsPatch
+import io.github.revocx35.walogger.core.retentionLabel
 import io.github.revocx35.walogger.core.TotpSetupResponse
 import io.github.revocx35.walogger.core.WaStatus
 import io.github.revocx35.walogger.core.userMessage
@@ -130,7 +132,7 @@ fun SettingsScreen(deps: SettingsDeps) {
     val scroll = rememberScrollState()
     val scope = rememberCoroutineScope()
     val positions = remember { mutableStateMapOf<String, Int>() }
-    val toc = listOf("password" to "Password", "2fa" to "2FA", "recovery" to "Recovery key", "sessions" to "Sessions", "logging" to "Logging", "whatsapp" to "WhatsApp", "audit" to "Security log", "danger" to "Danger zone", "app" to "App")
+    val toc = listOf("password" to "Password", "2fa" to "2FA", "recovery" to "Recovery key", "sessions" to "Sessions", "logging" to "Logging", "storage" to "Storage", "whatsapp" to "WhatsApp", "audit" to "Security log", "danger" to "Danger zone", "app" to "App")
     fun Modifier.anchor(id: String) = onGloballyPositioned { positions[id] = it.positionInParent().y.toInt() }
 
     BoxWithConstraints(Modifier.fillMaxSize().background(Wa.colors.panel)) {
@@ -148,6 +150,7 @@ fun SettingsScreen(deps: SettingsDeps) {
             Column(Modifier.anchor("recovery")) { RecoverySection(deps) }
             Column(Modifier.anchor("sessions")) { SessionsSection(deps) }
             Column(Modifier.anchor("logging")) { LoggingSection(deps) }
+            Column(Modifier.anchor("storage")) { StorageSection(deps) }
             Column(Modifier.anchor("whatsapp")) { WhatsAppSection(deps) }
             Column(Modifier.anchor("audit")) { AuditSection(deps) }
             Column(Modifier.anchor("danger")) { DangerSection(deps) }
@@ -344,6 +347,70 @@ private fun LoggingSection(d: SettingsDeps) {
             NumberSetting("Messages to import per chat on first link", cur.historyPerChat, 0..5000) { save(SettingsPatch(historyPerChat = it)) }
         }
         MutedText("View-once photos and videos are never logged.", style = WaType.small)
+        ErrorNote(op.error)
+        OkNote(op.ok)
+    }
+}
+
+/** One retention picker (presets as chips, like the web's select): shortening it asks once more, it deletes data now. */
+@Composable
+internal fun RetentionPicker(label: String, help: String, value: Int, onSave: (Int) -> Unit) {
+    var draft by remember(value) { mutableStateOf(value) }
+    val options = if (value in RETENTION_PRESETS) RETENTION_PRESETS else (RETENTION_PRESETS + value).sorted()
+    val deletes = draft != 0 && (value == 0 || draft < value)
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(label, style = WaType.small, color = Wa.colors.text2)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (d in options) {
+                WaButton(retentionLabel(d), { draft = d }, tiny = true, style = if (d == draft) BtnStyle.Primary else BtnStyle.Ghost)
+            }
+        }
+        MutedText(help, style = WaType.small)
+        if (draft != value) {
+            if (deletes) {
+                Text(
+                    "Everything older than ${retentionLabel(draft).lowercase()} will be deleted from the log now. This can’t be undone.",
+                    style = WaType.small,
+                    color = Wa.colors.text,
+                    modifier = Modifier.fillMaxWidth().background(Wa.colors.warnBg, RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 8.dp),
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                WaButton(if (deletes) "Delete and save" else "Save", { onSave(draft) }, tiny = true, style = if (deletes) BtnStyle.Danger else BtnStyle.Primary)
+                WaButton("Cancel", { draft = value }, tiny = true, style = BtnStyle.Ghost)
+            }
+        }
+    }
+}
+
+@Composable
+private fun StorageSection(d: SettingsDeps) {
+    var s by remember { mutableStateOf<Settings?>(null) }
+    val op = rememberOp()
+    LaunchedEffect(Unit) { s = runCatching { d.api.settings() }.getOrNull() }
+    val cur = s
+    SectionCard("Storage") {
+        if (cur == null) {
+            Spinner()
+            return@SectionCard
+        }
+        fun save(p: SettingsPatch) = op.run("Saved.") { s = d.api.updateSettings(p) }
+        Column(Modifier.widthIn(max = 520.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            RetentionPicker(
+                "Keep messages",
+                "Older messages are deleted from the log together with their photos, videos and files. Older history is not imported again.",
+                cur.messageRetentionDays,
+            ) { save(SettingsPatch(messageRetentionDays = it)) }
+            RetentionPicker(
+                "Keep photos and videos",
+                "Older photos, videos, GIFs and stickers are deleted; the message, its caption and the small preview stay.",
+                cur.mediaRetentionDays,
+            ) { save(SettingsPatch(mediaRetentionDays = it)) }
+        }
+        MutedText(
+            "Old data is cleaned up every hour. To delete single messages, long-press a message → Delete from log, or Select messages to delete. Messages deleted here are only removed from this log, not from WhatsApp, and are not logged again.",
+            style = WaType.small,
+        )
         ErrorNote(op.error)
         OkNote(op.ok)
     }

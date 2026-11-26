@@ -23,6 +23,17 @@ sessions must be logged out live.
 cd server && npx tsx ../scripts/dev/live-updates.mts
 ```
 
+## storage-ui.mts — storage controls in a real browser (13 checks)
+
+Settings → Storage (both retention pickers, the "delete now" confirmation, saving), *Delete from log* from a message's menu,
+deleting two selected messages (still gone after a reload), the retention sweep's result in the chat (expired photo label) and
+the phone layout. `SHOTS=<dir>` saves screenshots.
+
+```bash
+(cd web && npm run build)
+cd server && npx tsx ../scripts/dev/storage-ui.mts
+```
+
 ## send-ui.mts — sending in a real browser (17 steps)
 
 The real server and `Sender` with a fake WhatsApp page whose operations behave like WhatsApp Web's (sent messages

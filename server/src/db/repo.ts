@@ -887,6 +887,85 @@ export class Repo implements DataKeyStore {
     return out;
   }
 
+  /* -------------------------------------------------------- storage controls */
+
+  /**
+   * Deletes messages from the log: rows, edit history, reactions and their media rows. With `remember`, the ids go to
+   * `removed_messages` so a later history sync doesn't log them again. Returns what the caller must clean up: media paths
+   * to unlink and the affected chat of every deleted id.
+   */
+  removeMessages(ids: string[], now: number, remember: boolean): { removed: { id: string; chatId: string }[]; paths: string[] } {
+    return this.transaction(() => {
+      const get = this.db.prepare('SELECT chat_id, media_id FROM messages WHERE id = ?');
+      const media = this.db.prepare('SELECT path FROM media WHERE id = ?');
+      const delReactions = this.db.prepare('DELETE FROM reactions WHERE message_id = ?');
+      const delEdits = this.db.prepare('DELETE FROM message_edits WHERE message_id = ?');
+      const delMsg = this.db.prepare('DELETE FROM messages WHERE id = ?');
+      const delMedia = this.db.prepare('DELETE FROM media WHERE id = ?');
+      const tomb = this.db.prepare('INSERT OR REPLACE INTO removed_messages (id, removed_at) VALUES (?, ?)');
+      const removed: { id: string; chatId: string }[] = [];
+      const paths: string[] = [];
+      for (const id of ids) {
+        const r = get.get(id) as { chat_id: string; media_id: number | null } | undefined;
+        if (remember) tomb.run(id, now);
+        if (!r) continue;
+        delReactions.run(id);
+        delEdits.run(id);
+        delMsg.run(id);
+        if (r.media_id) {
+          const m = media.get(r.media_id) as { path: string } | undefined;
+          delMedia.run(r.media_id);
+          if (m) paths.push(m.path);
+        }
+        removed.push({ id, chatId: r.chat_id });
+      }
+      return { removed, paths };
+    });
+  }
+
+  /** The owner deleted this message from the log: it must not be logged again. */
+  isMessageRemoved(id: string): boolean {
+    return !!this.db.prepare('SELECT 1 FROM removed_messages WHERE id = ?').get(id);
+  }
+
+  /** Ids of messages sent before `cutoff` (ms), oldest first. */
+  messageIdsBefore(cutoff: number, limit: number): string[] {
+    return (this.db.prepare('SELECT id FROM messages WHERE ts < ? ORDER BY ts LIMIT ?').all(cutoff, limit) as { id: string }[]).map((r) => r.id);
+  }
+
+  /** Photos/videos (by message type) sent before `cutoff` that still have a media file or are still queued. */
+  mediaMessagesBefore(cutoff: number, types: readonly string[], limit: number): { id: string; chat_id: string; media_id: number | null }[] {
+    return this.db
+      .prepare(
+        `SELECT id, chat_id, media_id FROM messages
+          WHERE ts < ? AND type IN (${types.map(() => '?').join(',')}) AND (media_id IS NOT NULL OR media_status IN ('pending', 'failed', 'skipped'))
+          ORDER BY ts LIMIT ?`,
+      )
+      .all(cutoff, ...types, limit) as { id: string; chat_id: string; media_id: number | null }[];
+  }
+
+  /** Removes the media file rows of these messages and marks them 'expired'. Returns media paths to unlink. */
+  expireMessageMedia(ids: string[], now: number): string[] {
+    return this.transaction(() => {
+      const get = this.db.prepare('SELECT media_id FROM messages WHERE id = ?');
+      const media = this.db.prepare('SELECT path FROM media WHERE id = ?');
+      const upd = this.db.prepare("UPDATE messages SET media_id = NULL, media_status = 'expired', updated_at = ? WHERE id = ?");
+      const delMedia = this.db.prepare('DELETE FROM media WHERE id = ?');
+      const paths: string[] = [];
+      for (const id of ids) {
+        const r = get.get(id) as { media_id: number | null } | undefined;
+        if (!r) continue;
+        upd.run(now, id);
+        if (r.media_id) {
+          const m = media.get(r.media_id) as { path: string } | undefined;
+          delMedia.run(r.media_id);
+          if (m) paths.push(m.path);
+        }
+      }
+      return paths;
+    });
+  }
+
   /* ------------------------------------------------------------- wipe */
 
   /**
@@ -922,6 +1001,7 @@ export class Repo implements DataKeyStore {
         DELETE FROM api_token_chats;
         DELETE FROM chats;
         DELETE FROM media;
+        DELETE FROM removed_messages;
       `);
       return paths;
     });

@@ -359,7 +359,10 @@ private val QUICK_REACTIONS = listOf("👍", "❤️", "😂", "😮", "😢", "
 private const val EDIT_WINDOW_MS = 15 * 60_000L
 private const val REVOKE_WINDOW_MS = 2 * 24 * 3600_000L
 
-/** Long-press menu of a message: reactions, reply, copy, edit, delete for everyone, select (photos/videos). */
+/**
+ * Long-press menu of a message: reactions, reply, copy, edit, delete for everyone, select (photos/videos), and the storage
+ * controls: delete this message from the log, or select several to delete.
+ */
 @Composable
 fun MessageMenu(
     msg: Message,
@@ -370,10 +373,13 @@ fun MessageMenu(
     onRevoke: () -> Unit,
     onSelect: (() -> Unit)?,
     onClose: () -> Unit,
+    onDeleteFromLog: (() -> Unit)? = null,
+    onSelectToDelete: (() -> Unit)? = null,
 ) {
     val c = Wa.colors
     val context = LocalContext.current
     var confirmRevoke by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
     val age = System.currentTimeMillis() - msg.ts
     val mine = msg.reactions.firstOrNull { it.fromMe }?.emoji
     WaDialog(previewOf(msg).ifBlank { "Message" }, onClose) {
@@ -421,6 +427,23 @@ fun MessageMenu(
                     }
                 } else {
                     MenuItem(WaIcons.deleted, "Delete for everyone…", danger = true) { confirmRevoke = true }
+                }
+            }
+            if (onSelectToDelete != null) {
+                MenuItem(WaIcons.check, "Select messages to delete") {
+                    onClose()
+                    onSelectToDelete()
+                }
+            }
+            if (onDeleteFromLog != null) {
+                if (confirmDelete) {
+                    MenuItem(WaIcons.deleted, "Yes, delete from the log", danger = true) {
+                        onClose()
+                        onDeleteFromLog()
+                    }
+                } else {
+                    // Only the logged copy here: the message stays on WhatsApp.
+                    MenuItem(WaIcons.deleted, "Delete from log…", danger = true) { confirmDelete = true }
                 }
             }
         }

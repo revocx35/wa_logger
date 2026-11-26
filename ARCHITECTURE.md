@@ -406,6 +406,26 @@ user's data directory (0600; protects a copy of the database alone, not a compro
 there, never messages. The list is stored per user in `blocked_contacts`; the gateway's admin routes only relay it and the admin
 log records the count, never numbers.
 
+### Storage controls (retention, deleting messages)
+Settings → *Storage* (web and `android_client` 0.12.0). Two settings, in days, `0` = keep forever (default, so nothing changes for
+existing installs): `messageRetentionDays` and `mediaRetentionDays` (0..3650; the UIs offer 1/7/14/30/90/180/365/730 days).
+* **Retention sweep** (`server/src/retention.ts`, `RetentionService`, started by the worker in `index.ts`): 30 s after start, every
+  hour and on every settings change. Messages with `ts` older than the message cutoff are deleted with their edits, reactions,
+  media row and file (`Repo.removeMessages`, batches of 500). Photo/video/GIF/sticker messages older than the media cutoff lose
+  their file (`Repo.expireMessageMedia`: `media_id = NULL`, `media_status = 'expired'`); text, caption and the small thumbnail
+  stay, and `expired` is not retryable. The audit log gets `retention_sweep` with counts; each touched chat gets a `chat_update`.
+* **History does not bring it back:** `Ingest.message`/`revoke` drop messages older than the message cutoff, and
+  `mediaStatusFor` marks old photos/videos `expired` instead of queuing them. Setting retention back to "forever" lets old history
+  be imported again (no tombstones for retention). A download that finishes after its row was expired or deleted throws its file
+  away (`MediaQueue.process` checks that the row is still `pending`).
+* **Deleting single messages:** `POST /api/messages/delete {ids[1..500]}` (session + CSRF, 60/min) deletes rows, edits,
+  reactions and media files, and records each id in `removed_messages` so history sync, reconcile, a late edit or a revoke never log
+  it again (`Ingest.notKept`). Only the log copy is deleted, never the message on WhatsApp. Each deleted id is announced as
+  `message_update` reason `deleted`; clients re-fetch it, get 404 and drop it (older clients already do this). The audit log records
+  `messages_deleted` with the count only. A data wipe clears `removed_messages`.
+* Threat notes: ids are WhatsApp's message keys (already stored in clear as `messages.id`), so the tombstone table adds no new
+  plaintext. SQLite's `secure_delete` overwrites the deleted rows; media files are unlinked (encrypted on disk anyway).
+
 ### API tokens (other apps sending text)
 Settings → *API access* (web only; see AGENTS.md) creates bearer tokens `walt_<tenant>_<43 base64url>` (256 random bits) for apps such
 as a poker tracker. A token is bound to a list of chats chosen at creation (direct chats and groups) and can do exactly two things:
@@ -685,6 +705,8 @@ call_recordings(id INTEGER PRIMARY KEY, call_id TEXT, chat_id TEXT, direction TE
 ```
 Tenant migration 7 adds `blocked_contacts(phone PRIMARY KEY, created_at)` and `contact_directory(id PRIMARY KEY, phone, label_enc, updated_at)`
 (see "Blocked contacts"; `wipeLoggedData` clears the directory, the block list is admin policy and survives).
+Tenant migration 9 adds `removed_messages(id PRIMARY KEY, removed_at)` (messages the owner deleted from the log; see "Storage
+controls") and the index `messages_ts(ts)` for the retention sweep.
 Tenant migration 8 adds `api_tokens(id, hash UNIQUE, name, created_at, last_used_at)` and `api_token_chats(token_id → api_tokens ON DELETE CASCADE, chat_id, kind, label_enc, PRIMARY KEY(token_id, chat_id))` (see "API tokens").
 Tenant migration 5 adds `pending_claim(id=1, username, mode 'new'|'reset', salt, auth_hash, failed_logins, locked_until,
 created_at)`: the admin-issued temporary credential (a salted scrypt-derived auth hash, never the password).
@@ -752,7 +774,8 @@ AAD context `msgbody|<messageId>`, so an edit can move the old ciphertext into `
 | POST | /api/calls/:callId/video | ✓ | `{on}`: camera on/off (in a voice call: ask to switch to video) |
 | WS | /api/calls/video | ✓ | call video both ways: header + H.264/VP8 frame per message (`CallVideoHello` first, `{type:'keyframe'}`) |
 | GET | /api/events | ✓ | SSE: `wa_state`, `message`, `message_update`, `chat_update`, `sync_progress`, `call` |
-| GET/PUT | /api/settings | ✓ | `{logStatus, downloadHistoryMedia, mediaMaxMb, historyPerChat, readReceipts}` |
+| GET/PUT | /api/settings | ✓ | `{logStatus, downloadHistoryMedia, mediaMaxMb, historyPerChat, readReceipts, recordCalls, messageRetentionDays, mediaRetentionDays}` |
+| POST | /api/messages/delete | ✓ | `{ids[1..500]}` → `{deleted}`: delete messages from the log only (not WhatsApp); not logged again |
 | GET/POST | /api/api-tokens | ✓ | list tokens (no secrets) · `{name, chatIds[1..50]}` → `{id, name, token}` (the only time the token is shown); DELETE /api/api-tokens/:id revokes |
 | GET | /api/v1/destinations | bearer | `TokenDestinations`: chats this API token may send to |
 | POST | /api/v1/send | bearer | `{chatId, text}` → `SendResult`; 404 for any chat not in the token |
@@ -934,6 +957,13 @@ API; wa_logger mobile implements the same interface locally), `ui/components/Com
 `MessageMenu`, `NewChatDialog`), `media/VoiceRecorder.kt` (MediaRecorder Ogg/Opus, Android 10+, `RECORD_AUDIO` asked on
 first use; the recording stays in the private cache and is deleted after sending). Files are streamed from their
 content URI (`RequestBody`), never loaded whole into memory.
+
+### Storage controls (0.12.0)
+`Settings.messageRetentionDays`/`mediaRetentionDays`, `MediaStatus.Expired`, `DeleteMessagesRequest/Result`, `RETENTION_PRESETS`,
+`retentionLabel` (core); ApiClient `deleteMessages`. UI: Settings → *Storage* (`RetentionPicker` chips; shortening asks "Delete and
+save"), the long-press menu's *Delete from log…* (second tap confirms) and *Select messages to delete*, which starts
+`MessageSelection` in `Mode.Delete` (any message; header button *Delete…* → *Delete N*). `ChatState.deleteFromLog` sends 500 ids
+per request and drops them locally.
 
 ### Blocked contacts (0.11.0)
 `AdminBlocking`/`AdminBlockedContact`, `CallInfo.recordingBlocked`; ApiClient `adminBlocking`, `adminSetBlocking` (whole list, like the

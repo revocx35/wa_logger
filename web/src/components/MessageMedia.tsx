@@ -14,6 +14,7 @@ const STATUS_TEXT: Record<string, string> = {
   skipped: 'History media not downloaded',
   unavailable: 'No longer available on WhatsApp',
   view_once: 'View-once media is not logged',
+  expired: 'Removed by your storage setting',
   none: '',
   downloaded: '',
 };

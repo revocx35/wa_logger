@@ -386,6 +386,8 @@ class ApiClient(baseClient: OkHttpClient, val baseUrl: HttpUrl) {
 
     suspend fun react(messageId: String, emoji: String): OkResponse = send("POST", "/api/messages/${enc(messageId)}/react", ReactRequest(emoji))
     suspend fun revoke(messageId: String): OkResponse = post("/api/messages/${enc(messageId)}/revoke")
+    /** Deletes messages from the log only (storage control), at most 500 per request. */
+    suspend fun deleteMessages(ids: List<String>): DeleteMessagesResult = send("POST", "/api/messages/delete", DeleteMessagesRequest(ids))
     suspend fun editMessage(messageId: String, text: String): OkResponse = send("POST", "/api/messages/${enc(messageId)}/edit", EditRequest(text))
     suspend fun markRead(chatId: String): OkResponse = post("/api/chats/${enc(chatId)}/read")
     suspend fun newChat(phone: String): NewChatResponse = send("POST", "/api/chats/new", NewChatRequest(phone))

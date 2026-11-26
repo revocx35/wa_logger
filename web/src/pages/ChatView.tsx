@@ -48,6 +48,17 @@ export function ChatView({ chatId }: { chatId: string }) {
   const stickToBottom = useRef(true);
   const scrollTarget = useRef<string | null>(null);
 
+  // Storage control: delete messages from this log (not from WhatsApp). The server sends message_update events too.
+  const deleteFromLog = async (ids: string[]) => {
+    try {
+      await api.deleteMessages(ids);
+      const gone = new Set(ids);
+      setMessages((cur) => cur.filter((m) => !gone.has(m.id)));
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  };
+
   const isGroup = chat?.kind === 'group' || chat?.kind === 'status' || chat?.kind === 'broadcast';
 
   // Sending as the linked account.
@@ -75,8 +86,10 @@ export function ChatView({ chatId }: { chatId: string }) {
       },
       onReact: (m, emoji) => void api.react(m.id, emoji).catch((e) => setError(errorMessage(e))),
       onRevoke: (m) => void api.revoke(m.id).catch((e) => setError(errorMessage(e))),
+      onDeleteLog: (m) => void deleteFromLog([m.id]),
+      canSend,
     }),
-    [],
+    [canSend],
   );
   // Read receipts only when the owner turned them on (Settings → Logging); off by default.
   useEffect(() => {
@@ -92,8 +105,11 @@ export function ChatView({ chatId }: { chatId: string }) {
     };
   }, [chatId]);
 
-  // Select photos/videos and download them as one ZIP (GET /api/media-zip, streamed by the server).
-  const [selecting, setSelecting] = useState(false);
+  // Select photos/videos and download them as one ZIP (GET /api/media-zip, streamed by the server), or select
+  // messages to delete from the log (storage control).
+  const [selectMode, setSelectMode] = useState<'download' | 'delete' | null>(null);
+  const selecting = selectMode !== null;
+  const [confirmBulk, setConfirmBulk] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const toggle = useCallback((id: string) => {
     setSelected((prev) => {
@@ -103,8 +119,9 @@ export function ChatView({ chatId }: { chatId: string }) {
     });
   }, []);
   const stopSelecting = useCallback(() => {
-    setSelecting(false);
+    setSelectMode(null);
     setSelected(new Set());
+    setConfirmBulk(false);
   }, []);
   useEffect(stopSelecting, [chatId, stopSelecting]);
   useEffect(() => {
@@ -277,18 +294,56 @@ export function ChatView({ chatId }: { chatId: string }) {
   }, [messages]);
 
   const title = chat?.name ?? '…';
-  const selectable = useMemo(() => messages.filter(isSelectable), [messages]);
+  const selectable = useMemo(
+    () => (selectMode === 'delete' ? messages.filter((m) => m.type !== 'system' && m.type !== 'call_log') : messages.filter(isSelectable)),
+    [messages, selectMode],
+  );
   // Media ids in chat order (oldest first); the server names the files.
-  const zipIds = selectable.filter((m) => selected.has(m.id)).map((m) => m.media!.url!.split('/').pop()).join(',');
+  const zipIds =
+    selectMode === 'download' ? selectable.filter((m) => selected.has(m.id) && m.media?.url).map((m) => m.media!.url!.split('/').pop()).join(',') : '';
   const selectionProps = useMemo(() => {
     const map = new Map<string, { selected: boolean; onToggle: (id: string) => void }>();
-    if (selecting) for (const m of selectable) map.set(m.id, { selected: selected.has(m.id), onToggle: toggle });
+    const label = selectMode === 'delete' ? 'Select message' : undefined;
+    if (selecting) for (const m of selectable) map.set(m.id, { selected: selected.has(m.id), onToggle: toggle, ...(label ? { label } : {}) });
     return map;
-  }, [selecting, selectable, selected, toggle]);
+  }, [selecting, selectMode, selectable, selected, toggle]);
+  const deleteIds = selectable.filter((m) => selected.has(m.id)).map((m) => m.id);
 
   return (
     <section className="chat-view" aria-label={`Chat ${title}`}>
-      {selecting ? (
+      {selectMode === 'delete' ? (
+        <header className="chat-head selecting">
+          <button className="icon-btn" onClick={stopSelecting} aria-label="Cancel selection">
+            <Icon name="close" />
+          </button>
+          <div className="chat-head-info">
+            <div className="chat-head-name">{selected.size ? `${selected.size} selected` : 'Select messages to delete'}</div>
+            <div className="muted small">Deleted from this log only, not from WhatsApp · Esc to cancel</div>
+          </div>
+          <button className="btn tiny ghost" onClick={() => setSelected(new Set(selectable.map((m) => m.id)))} disabled={!selectable.length}>
+            Select all
+          </button>
+          {confirmBulk ? (
+            <button
+              className="btn tiny danger"
+              onClick={() => {
+                const ids = deleteIds;
+                stopSelecting();
+                // The server takes 500 ids per request.
+                void (async () => {
+                  for (let i = 0; i < ids.length; i += 500) await deleteFromLog(ids.slice(i, i + 500));
+                })();
+              }}
+            >
+              <Icon name="deleted" size={16} /> Delete {deleteIds.length}
+            </button>
+          ) : (
+            <button className="btn tiny danger" onClick={() => setConfirmBulk(true)} disabled={!deleteIds.length}>
+              <Icon name="deleted" size={16} /> Delete from log…
+            </button>
+          )}
+        </header>
+      ) : selecting ? (
         <header className="chat-head selecting">
           <button className="icon-btn" onClick={stopSelecting} aria-label="Cancel selection">
             <Icon name="close" />
@@ -330,8 +385,11 @@ export function ChatView({ chatId }: { chatId: string }) {
               <CallButton chatId={chatId} name={title} />
             </>
           ) : null}
-          <button className="icon-btn" onClick={() => setSelecting(true)} aria-label="Select photos and videos to download" title="Select photos and videos to download">
+          <button className="icon-btn" onClick={() => setSelectMode('download')} aria-label="Select photos and videos to download" title="Select photos and videos to download">
             <Icon name="download" />
+          </button>
+          <button className="icon-btn" onClick={() => setSelectMode('delete')} aria-label="Select messages to delete from the log" title="Select messages to delete from the log">
+            <Icon name="deleted" />
           </button>
           <button className={searchOpen ? 'icon-btn active' : 'icon-btn'} onClick={() => setSearchOpen((v) => !v)} aria-label="Search in chat">
             <Icon name="search" />
@@ -383,7 +441,7 @@ export function ChatView({ chatId }: { chatId: string }) {
               highlighted={highlight === r.m.id}
               onJump={jump}
               selection={selectionProps.get(r.m.id)}
-              actions={canSend ? actions : undefined}
+              actions={actions}
             />
           ),
         )}

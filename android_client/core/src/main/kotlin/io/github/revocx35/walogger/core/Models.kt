@@ -183,6 +183,8 @@ enum class MediaStatus {
     @SerialName("skipped") Skipped,
     @SerialName("view_once") ViewOnce,
     @SerialName("unavailable") Unavailable,
+    /** The file was removed by the photo/video retention setting (Settings → Storage). */
+    @SerialName("expired") Expired,
 }
 
 @Serializable
@@ -313,6 +315,10 @@ data class Settings(
     val readReceipts: Boolean = false,
     /** Record every call automatically once it is connected. */
     val recordCalls: Boolean = false,
+    /** Storage: delete logged messages (with their media) older than this many days; 0 = keep forever. */
+    val messageRetentionDays: Int = 0,
+    /** Storage: delete photo/video/GIF/sticker files older than this many days (the message stays); 0 = keep forever. */
+    val mediaRetentionDays: Int = 0,
 )
 
 @Serializable
@@ -323,7 +329,23 @@ data class SettingsPatch(
     val historyPerChat: Int? = null,
     val readReceipts: Boolean? = null,
     val recordCalls: Boolean? = null,
+    val messageRetentionDays: Int? = null,
+    val mediaRetentionDays: Int? = null,
 )
+
+/** `POST /api/messages/delete`: deletes messages from the log only (not from WhatsApp); they are not logged again. 1..500 ids. */
+@Serializable data class DeleteMessagesRequest(val ids: List<String>)
+@Serializable data class DeleteMessagesResult(val deleted: Int = 0)
+
+/** Retention presets offered by the clients (days; 0 = keep forever), the same as the web's Settings → Storage. */
+val RETENTION_PRESETS: List<Int> = listOf(0, 1, 7, 14, 30, 90, 180, 365, 730)
+
+fun retentionLabel(days: Int): String = when {
+    days <= 0 -> "Keep forever"
+    days == 1 -> "1 day"
+    days % 365 == 0 -> if (days == 365) "1 year" else "${days / 365} years"
+    else -> "$days days"
+}
 
 /* ----------------------------------------------------------------- sending */
 

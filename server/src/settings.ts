@@ -9,6 +9,9 @@ export const SettingsSchema = z.object({
   historyPerChat: z.number().int().min(0).max(5000),
   readReceipts: z.boolean(),
   recordCalls: z.boolean(),
+  /** Storage controls: delete messages / photos and videos older than this many days; 0 = keep forever. */
+  messageRetentionDays: z.number().int().min(0).max(3650),
+  mediaRetentionDays: z.number().int().min(0).max(3650),
 });
 
 const KEY = 'settings';
@@ -31,6 +34,8 @@ export class SettingsStore {
       historyPerChat: this.defaults.historyPerChat,
       readReceipts: false,
       recordCalls: false,
+      messageRetentionDays: 0,
+      mediaRetentionDays: 0,
     };
     const raw = this.repo.getState(KEY);
     let stored: Partial<Settings> = {};

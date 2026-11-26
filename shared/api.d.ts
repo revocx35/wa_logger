@@ -141,8 +141,9 @@ export type MessageType =
  * none: no media · pending: queued/downloading · downloaded: available at `url` · failed: download failed (retryable)
  * too_large: above the size cap (retryable after raising it) · skipped: history media not downloaded (setting)
  * view_once: view-once media, never logged · unavailable: WhatsApp no longer has it (expired/deleted before download)
+ * expired: the file was removed by the photo/video retention setting (Settings → Storage)
  */
-export type MediaStatus = 'none' | 'pending' | 'downloaded' | 'failed' | 'too_large' | 'skipped' | 'view_once' | 'unavailable';
+export type MediaStatus = 'none' | 'pending' | 'downloaded' | 'failed' | 'too_large' | 'skipped' | 'view_once' | 'unavailable' | 'expired';
 
 export interface MediaInfo {
   status: MediaStatus;
@@ -393,7 +394,15 @@ export interface Settings {
   readReceipts: boolean;
   /** Record every call automatically once it is connected (audio, and the other side's picture). Default false. */
   recordCalls: boolean;
+  /** Storage: delete logged messages (with their media) older than this many days. 0 = keep forever (default). */
+  messageRetentionDays: number; // 0..3650
+  /** Storage: delete photo/video/GIF/sticker files older than this many days; the message, caption and thumbnail stay. 0 = keep forever. */
+  mediaRetentionDays: number; // 0..3650
 }
+
+/** `POST /api/messages/delete`: deletes messages from the log (not from WhatsApp). They are not logged again. */
+export interface DeleteMessagesRequest { ids: string[] } // 1..500
+export interface DeleteMessagesResult { deleted: number }
 
 export interface AuditEntry { id: number; ts: number; event: string; ip: string | null; detail: string | null }
 

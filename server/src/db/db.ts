@@ -255,6 +255,19 @@ const MIGRATIONS: { id: number; name: string; sql: string }[] = [
       );
     `,
   },
+  {
+    id: 9,
+    name: 'storage_controls',
+    // Storage controls: messages the owner deleted from the log are remembered by id (only the id, which WhatsApp's own
+    // message key already is) so history sync / reconcile don't log them again. `messages_ts` serves the retention sweep.
+    sql: `
+      CREATE TABLE removed_messages (
+        id TEXT PRIMARY KEY,
+        removed_at INTEGER NOT NULL
+      );
+      CREATE INDEX messages_ts ON messages (ts);
+    `,
+  },
 ];
 
 export function openDb(file: string): DB {

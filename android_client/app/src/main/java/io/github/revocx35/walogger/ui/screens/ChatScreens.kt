@@ -369,10 +369,23 @@ fun ChatPane(
                     IconBtn(WaIcons.close, "Cancel selection", selection::clear)
                     Text("${selection.count} selected", style = WaType.chatName, color = c.text, modifier = Modifier.weight(1f), maxLines = 1)
                     WaButton("Select all", { selection.selectAll(state.messages) }, tiny = true, style = BtnStyle.Ghost)
-                    IconBtn(WaIcons.download, "Save to gallery", {
-                        actions.saveToGallery(selection.messages)
-                        selection.clear()
-                    }, tint = c.accent)
+                    if (selection.mode == MessageSelection.Mode.Delete) {
+                        // Deletes from this log only; a second tap confirms.
+                        var armed by remember(selection.count) { mutableStateOf(false) }
+                        WaButton(if (armed) "Delete ${selection.count}" else "Delete…", {
+                            if (!armed) {
+                                armed = true
+                            } else {
+                                state.deleteFromLog(selection.messages.map { it.id })
+                                selection.clear()
+                            }
+                        }, tiny = true, style = BtnStyle.Danger, icon = WaIcons.deleted)
+                    } else {
+                        IconBtn(WaIcons.download, "Save to gallery", {
+                            actions.saveToGallery(selection.messages)
+                            selection.clear()
+                        }, tint = c.accent)
+                    }
                 }
             } else Row(
                 Modifier.fillMaxWidth().background(c.head).statusBarsPadding().height(60.dp).padding(start = if (onBack != null) 4.dp else 16.dp, end = 8.dp),
@@ -506,8 +519,10 @@ fun ChatPane(
                 },
                 onReact = { e -> act { sender?.react(m.id, e) } },
                 onRevoke = { act { sender?.revoke(m.id) } },
-                onSelect = if (selectableForMenu(m)) ({ selection.toggle(m) }) else null,
+                onSelect = if (selectableForMenu(m)) ({ selection.start(MessageSelection.Mode.Save, m) }) else null,
                 onClose = { menuFor = null },
+                onDeleteFromLog = { state.deleteFromLog(listOf(m.id)) },
+                onSelectToDelete = { selection.start(MessageSelection.Mode.Delete, m) },
             )
         }
     }

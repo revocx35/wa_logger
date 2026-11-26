@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { createApp } from './app.js';
 import { loadConfig } from './config.js';
 import { createLogger } from './log.js';
+import { RetentionService } from './retention.js';
 import { WaService } from './wa/client.js';
 
 async function main(): Promise<void> {
@@ -18,6 +19,8 @@ async function main(): Promise<void> {
   // Periodic cleanup of expired sessions.
   const sweep = setInterval(() => ctx.repo.deleteExpiredSessions(Date.now(), config.sessionIdleMs), 10 * 60_000);
   sweep.unref();
+  // Storage controls: messages / photos and videos older than the owner's retention settings.
+  new RetentionService(ctx).start();
 
   if (config.socketPath) {
     // Tenant worker behind the gateway: a unix socket inside a directory only the gateway's user can enter.

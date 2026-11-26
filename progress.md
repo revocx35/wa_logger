@@ -205,6 +205,14 @@ Update this file whenever a step is completed.
 - [ ] Android: sign-in after a temporary password is only possible in the web UI (the app shows a hint); a native
       choose-your-password screen is not built
 
+## Phase 18 — Storage controls (2026-11-26)
+- [x] Server: retention settings for messages and for photos/videos (hourly sweep, history import respects them), media status
+      `expired`, `POST /api/messages/delete` with `removed_messages` tombstones (migration 9); tests `api/storage.test.ts`
+- [x] Web: Settings → Storage, message menu *Delete from log…*, multi-select delete in a chat; `scripts/dev/storage-ui.mts` (13 checks)
+- [x] Android client 0.12.0: Storage section, delete from log / select to delete, `expired` label; unit + screenshot tests
+- [x] wa_logger_mobile: the same controls on the phone (separate repo, own release)
+- [ ] Owner: update the production instance (pull + up -d) and pick retention periods
+
 ## Next ideas (not started)
 - Android: push notifications for deletions (needs a server-side push channel; SSE only runs in the foreground)
 - Retry expired history media via WhatsApp's phone re-upload ("media retry") instead of marking it unavailable

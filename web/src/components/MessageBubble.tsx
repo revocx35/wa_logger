@@ -116,11 +116,16 @@ export interface MessageActions {
   onEdit: (m: Message) => void;
   onReact: (m: Message, emoji: string) => void;
   onRevoke: (m: Message) => void;
+  /** Delete from this log only (storage control); always offered. */
+  onDeleteLog: (m: Message) => void;
+  /** The chat accepts sending (reply, react, edit, delete for everyone are offered). */
+  canSend: boolean;
 }
 
 function ActionMenu({ msg, actions }: { msg: Message; actions: MessageActions }) {
   const [open, setOpen] = useState(false);
   const [confirmRevoke, setConfirmRevoke] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -134,8 +139,13 @@ function ActionMenu({ msg, actions }: { msg: Message; actions: MessageActions })
     };
   }, [open]);
   useEffect(() => {
-    if (!open) setConfirmRevoke(false);
+    if (!open) {
+      setConfirmRevoke(false);
+      setConfirmDelete(false);
+    }
   }, [open]);
+  // WhatsApp actions only work on a live message of a chat we can send to; deleting from the log always works.
+  const live = actions.canSend && msg.deletedAt === null && msg.type !== 'revoked' && msg.type !== 'ciphertext';
   const age = Date.now() - msg.ts;
   const mine = msg.reactions.find((r) => r.fromMe)?.emoji;
   const choose = (fn: () => void) => () => {
@@ -149,37 +159,54 @@ function ActionMenu({ msg, actions }: { msg: Message; actions: MessageActions })
       </button>
       {open ? (
         <div className="menu" role="menu">
-          <div className="menu-reactions">
-            {QUICK_REACTIONS.map((e) => (
-              <button key={e} role="menuitem" className={mine === e ? 'active' : ''} onClick={choose(() => actions.onReact(msg, mine === e ? '' : e))} aria-label={`React ${e}`}>
-                {e}
+          {live ? (
+            <>
+              <div className="menu-reactions">
+                {QUICK_REACTIONS.map((e) => (
+                  <button key={e} role="menuitem" className={mine === e ? 'active' : ''} onClick={choose(() => actions.onReact(msg, mine === e ? '' : e))} aria-label={`React ${e}`}>
+                    {e}
+                  </button>
+                ))}
+              </div>
+              <button role="menuitem" onClick={choose(() => actions.onReply(msg))}>
+                <Icon name="reply" size={16} /> Reply
               </button>
-            ))}
-          </div>
-          <button role="menuitem" onClick={choose(() => actions.onReply(msg))}>
-            <Icon name="reply" size={16} /> Reply
-          </button>
-          {msg.text ? (
+              {msg.text ? (
+                <button role="menuitem" onClick={choose(() => void navigator.clipboard?.writeText(msg.text ?? ''))}>
+                  <Icon name="file" size={16} /> Copy text
+                </button>
+              ) : null}
+              {msg.fromMe && msg.type === 'chat' && age < EDIT_WINDOW_MS ? (
+                <button role="menuitem" onClick={choose(() => actions.onEdit(msg))}>
+                  <Icon name="edit" size={16} /> Edit
+                </button>
+              ) : null}
+              {msg.fromMe && age < REVOKE_WINDOW_MS ? (
+                confirmRevoke ? (
+                  <button role="menuitem" className="danger" onClick={choose(() => actions.onRevoke(msg))}>
+                    <Icon name="deleted" size={16} /> Yes, delete for everyone
+                  </button>
+                ) : (
+                  <button role="menuitem" className="danger" onClick={() => setConfirmRevoke(true)}>
+                    <Icon name="deleted" size={16} /> Delete for everyone…
+                  </button>
+                )
+              ) : null}
+            </>
+          ) : msg.text ? (
             <button role="menuitem" onClick={choose(() => void navigator.clipboard?.writeText(msg.text ?? ''))}>
               <Icon name="file" size={16} /> Copy text
             </button>
           ) : null}
-          {msg.fromMe && msg.type === 'chat' && age < EDIT_WINDOW_MS ? (
-            <button role="menuitem" onClick={choose(() => actions.onEdit(msg))}>
-              <Icon name="edit" size={16} /> Edit
+          {confirmDelete ? (
+            <button role="menuitem" className="danger" onClick={choose(() => actions.onDeleteLog(msg))}>
+              <Icon name="deleted" size={16} /> Yes, delete from the log
             </button>
-          ) : null}
-          {msg.fromMe && age < REVOKE_WINDOW_MS ? (
-            confirmRevoke ? (
-              <button role="menuitem" className="danger" onClick={choose(() => actions.onRevoke(msg))}>
-                <Icon name="deleted" size={16} /> Yes, delete for everyone
-              </button>
-            ) : (
-              <button role="menuitem" className="danger" onClick={() => setConfirmRevoke(true)}>
-                <Icon name="deleted" size={16} /> Delete for everyone…
-              </button>
-            )
-          ) : null}
+          ) : (
+            <button role="menuitem" className="danger" onClick={() => setConfirmDelete(true)} title="Removes the logged copy here, not the message on WhatsApp">
+              <Icon name="deleted" size={16} /> Delete from log…
+            </button>
+          )}
         </div>
       ) : null}
     </div>
@@ -192,8 +219,8 @@ export interface BubbleProps {
   showSender: boolean;
   highlighted: boolean;
   onJump: (messageId: string) => void;
-  /** Selection mode (select photos/videos to download together): set only while selecting. */
-  selection?: { selected: boolean; onToggle: (messageId: string) => void };
+  /** Selection mode (photos/videos to download together, or messages to delete from the log): set only while selecting. */
+  selection?: { selected: boolean; onToggle: (messageId: string) => void; label?: string };
   /** Message actions (reply, react, edit, delete); not shown while selecting. */
   actions?: MessageActions;
 }
@@ -233,7 +260,7 @@ function BubbleImpl({ msg, isGroup, showSender, highlighted, onJump, selection, 
     ? {
         role: 'checkbox',
         'aria-checked': selection.selected,
-        'aria-label': msg.type === 'image' ? 'Select photo' : 'Select video',
+        'aria-label': selection.label ?? (msg.type === 'image' ? 'Select photo' : 'Select video'),
         tabIndex: 0,
         onClick: () => selection.onToggle(msg.id),
         onKeyDown: (e: KeyboardEvent) => {
@@ -253,7 +280,7 @@ function BubbleImpl({ msg, isGroup, showSender, highlighted, onJump, selection, 
         </span>
       ) : null}
       <div className={classes}>
-        {actions && !selection && !deleted && !neverCaptured && msg.type !== 'ciphertext' ? <ActionMenu msg={msg} actions={actions} /> : null}
+        {actions && !selection ? <ActionMenu msg={msg} actions={actions} /> : null}
         {deleted ? (
           <div className="deleted-banner" title={`Deleted ${formatDateTime(msg.deletedAt!)}`}>
             <Icon name="ban" size={14} /> {msg.deletedBy === 'admin' ? 'Deleted by a group admin' : 'Deleted for everyone'} ·{' '}

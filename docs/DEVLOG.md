@@ -433,3 +433,15 @@ model, and explicitly not in wa_logger mobile (Android WebView can't run WhatsAp
 - Not verified against a live WhatsApp account from here (production writes/downloads need the owner's go-ahead); the old
   `failed` rows can be re-tried from the UI after the deploy.
 
+## 2026-11-26 — storage controls (server, web, Android 0.12.0, wa_logger_mobile)
+- Asked for: choose how long messages and photos/videos are kept (separately), and delete single messages.
+- Server: `messageRetentionDays`/`mediaRetentionDays` (0 = forever, default) and `RetentionService` (start + hourly + on change);
+  `POST /api/messages/delete` with a `removed_messages` tombstone table (migration 9) so history sync can't re-log deleted
+  messages; `Ingest.notKept` and `mediaStatusFor` apply the cutoffs at import; new media status `expired`. Old Android builds
+  decode the unknown status as `none` (`coerceInputValues`), so nothing crashes.
+- Bug found by the browser check: in delete-selection mode the ZIP link code read `media.url` of text messages (crash). Fixed
+  before commit; `scripts/dev/storage-ui.mts` now covers both selection modes.
+- A download racing the sweep would have re-attached a file to an expired row: `MediaQueue.process` now drops the file unless
+  the row is still `pending`.
+- Host note: the default `java` on the LXC is now a JDK 25 runtime without a compiler; Gradle needs
+  `JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64`.

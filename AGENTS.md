@@ -29,7 +29,7 @@ docker-compose.yml    builds from source;  deploy/docker-compose.yml = prebuilt 
 ```
 
 ## Commands
-- Server: `cd server && PUPPETEER_SKIP_DOWNLOAD=true npm ci && npm test && npm run typecheck` (≈220 tests, ~5 s).
+- Server: `cd server && PUPPETEER_SKIP_DOWNLOAD=true npm ci && npm test && npm run typecheck` (≈240 tests, ~12 s).
 - Web: `cd web && npm test && npm run build`.
 - Chromium manager (Go, stdlib only): `cd chromium/manager && go test ./...` (also run in the image's build stage;
   Go is at `/usr/local/go/bin` on the dev LXC).
@@ -53,6 +53,13 @@ blocked number (1:1 chat or group sender) before writing, sync skips its chat, `
 admin sees contact names; never extend it to messages. A new place that writes messages/chats/contacts must call the block check
 (`Ingest.idBlocked`). Block list and directory are worker-side; the gateway only relays `/api/admin/users/:id/blocking`. Changes go to
 `android_client/` too (done in 0.11.0).
+
+## Storage controls
+Settings → Storage: `messageRetentionDays` / `mediaRetentionDays` (0 = forever, default) swept by `retention.ts` (hourly + on change);
+`POST /api/messages/delete` deletes from the log and remembers ids in `removed_messages`. A new place that inserts messages must go
+through `Ingest.message` (or check `Ingest.notKept`), or deleted/expired messages come back with the next history sync. Old
+photos/videos get media status `expired` (not retryable). Ported to `android_client/` (0.12.0) and to wa_logger_mobile.
+Browser check: `scripts/dev/storage-ui.mts`.
 
 ## API tokens
 `api/tokens.ts`, `wa/apitokens.ts`, gateway `apiTokenUser`: bearer tokens (`walt_<tenant>_…`) let another app list a few chosen chats and
